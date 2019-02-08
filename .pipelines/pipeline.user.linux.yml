@@ -23,3 +23,4 @@ build:
       artifacts:
         - include:
           - 'runhcs.exe'
+          - 'tar2ext4.exe'
