@@ -4,7 +4,7 @@ set -eux
 
 cd /source
 
-gitVersion=$(git describe --match 'v[0-9]*' --always --long)
+gitVersion=$(git describe --match 'v[0-9]*' --always --long --tags)
 timeStamp=$(date --utc +%Y%m%d)
 version=${gitVersion}-${timeStamp}-${CDP_DEFINITION_BUILD_COUNT}
 
