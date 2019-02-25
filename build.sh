@@ -15,5 +15,6 @@ cd /source
 mkdir -p $GOPATH/src/github.com/Microsoft
 ln -s /source $GOPATH/src/github.com/Microsoft/hcsshim
 
+go build github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
 go build github.com/Microsoft/hcsshim/cmd/runhcs
 go build github.com/Microsoft/hcsshim/cmd/tar2ext4
