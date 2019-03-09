@@ -28,3 +28,4 @@ build:
           - 'tar2ext4.exe'
           - 'containerd-shim-runhcs-v1.exe'
           - 'zapdir.exe'
+          - 'cri-containerd.test.exe'
