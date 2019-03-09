@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +38,7 @@ func newHcsExec(
 	id, bundle string,
 	isWCOW bool,
 	spec *specs.Process,
-	io *iorelay) shimExec {
+	io upstreamIO) shimExec {
 	logrus.WithFields(logrus.Fields{
 		"tid": tid,
 		"eid": id,
@@ -101,12 +102,13 @@ type hcsExec struct {
 	//
 	// This MUST be treated as read only in the lifetime of the exec.
 	spec *specs.Process
-	// io is the relay for copying between the upstream io and the downstream
-	// io. The upstream IO MUST already be connected at create time in order to
-	// be valid.
+	// io is the upstream io connections used for copying between the upstream
+	// io and the downstream io. The upstream IO MUST already be connected at
+	// create time in order to be valid.
 	//
 	// This MUST be treated as read only in the lifetime of the exec.
-	io                *iorelay
+	io                upstreamIO
+	ioWg              sync.WaitGroup
 	processCtx        context.Context
 	processDoneCancel context.CancelFunc
 
@@ -118,7 +120,6 @@ type hcsExec struct {
 	exitStatus uint32
 	exitedAt   time.Time
 	p          *hcs.Process
-	closedIO   bool
 
 	// exited is a wait block which waits async for the process to exit.
 	exited     chan struct{}
@@ -170,7 +171,7 @@ func (he *hcsExec) Status() *task.StateResponse {
 	}
 }
 
-func (he *hcsExec) Start(ctx context.Context) error {
+func (he *hcsExec) Start(ctx context.Context) (err error) {
 	logrus.WithFields(logrus.Fields{
 		"tid": he.tid,
 		"eid": he.id,
@@ -181,16 +182,25 @@ func (he *hcsExec) Start(ctx context.Context) error {
 	if he.state != shimExecStateCreated {
 		return newExecInvalidStateError(he.tid, he.id, he.state, "start")
 	}
+	defer func() {
+		if err != nil {
+			he.exitFromCreatedL(1)
+		}
+	}()
 	if he.id == he.tid {
 		// This is the init exec. We need to start the container itself
-		err := he.c.Start()
+		err = he.c.Start()
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if err != nil {
+				he.c.Terminate()
+			}
+		}()
 	}
 	var (
 		proc *hcs.Process
-		err  error
 	)
 	if he.isWCOW {
 		wpp := &hcsschema.ProcessParameters{
@@ -242,28 +252,63 @@ func (he *hcsExec) Start(ctx context.Context) error {
 		return err
 	}
 	he.p = proc
+	defer func() {
+		if err != nil {
+			he.p.Kill()
+			he.p.Close()
+		}
+	}()
 
 	in, out, serr, err := he.p.Stdio()
 	if err != nil {
-		he.p.Kill()
-		he.setExitedL(1)
-		he.close()
-
-		if he.id == he.tid {
-			// We just started the container as well. Force kill it here
-			he.c.Terminate()
-		}
 		return err
 	}
 
-	he.io.BeginRelay(in, out, serr)
+	if he.io.StdinPath() != "" {
+		go func() {
+			io.Copy(in, he.io.Stdin())
+			logrus.WithFields(logrus.Fields{
+				"tid": he.tid,
+				"eid": he.id,
+			}).Debug("hcsExec::Start::Stdin - Copy completed")
+			in.Close()
+			he.p.CloseStdin()
+			he.io.CloseStdin()
+		}()
+	}
+
+	if he.io.StdoutPath() != "" {
+		he.ioWg.Add(1)
+		go func() {
+			io.Copy(he.io.Stdout(), out)
+			logrus.WithFields(logrus.Fields{
+				"tid": he.tid,
+				"eid": he.id,
+			}).Debug("hcsExec::Start::Stdout - Copy completed")
+			out.Close()
+			he.ioWg.Done()
+		}()
+	}
+
+	if he.io.StderrPath() != "" {
+		he.ioWg.Add(1)
+		go func() {
+			io.Copy(he.io.Stderr(), serr)
+			logrus.WithFields(logrus.Fields{
+				"tid": he.tid,
+				"eid": he.id,
+			}).Debug("hcsExec::Start::Stderr - Copy completed")
+			serr.Close()
+			he.ioWg.Done()
+		}()
+	}
 
 	// Assign the PID and transition the state.
 	he.pid = he.p.Pid()
 	he.state = shimExecStateRunning
 
 	// Publish the task/exec start event. This MUST happen before waitForExit to
-	// avoid publishing the exit pervious to the start.
+	// avoid publishing the exit previous to the start.
 	if he.id != he.tid {
 		he.events(
 			runtime.TaskExecStartedEventTopic,
@@ -297,11 +342,7 @@ func (he *hcsExec) Kill(ctx context.Context, signal uint32) error {
 	defer he.sl.Unlock()
 	switch he.state {
 	case shimExecStateCreated:
-		// Created state kill is just a state transition
-		// TODO: What are the right values here?
-		he.state = shimExecStateExited
-		he.exitStatus = 1
-		he.exitedAt = time.Now()
+		he.exitFromCreatedL(1)
 		return nil
 	case shimExecStateRunning:
 		supported := false
@@ -353,19 +394,11 @@ func (he *hcsExec) CloseIO(ctx context.Context, stdin bool) error {
 		"stdin": stdin,
 	}).Debug("hcsExec::CloseIO")
 
-	he.sl.Lock()
-	defer he.sl.Unlock()
-
-	if !he.closedIO {
-		he.closedIO = true
-		he.io.CloseStdin()
-		if he.p != nil {
-			err := he.p.CloseStdin()
-			if err != nil {
-				return err
-			}
-		}
-	}
+	// If we have any upstream IO we close the upstream connection. This will
+	// unblock the `io.Copy` in the `Start()` call which will signal
+	// `he.p.CloseStdin()`. If `he.io.Stdin()` is already closed this is safe to
+	// call multiple times.
+	he.io.CloseStdin()
 	return nil
 }
 
@@ -379,66 +412,147 @@ func (he *hcsExec) Wait(ctx context.Context) *task.StateResponse {
 	return he.Status()
 }
 
-// waitForExit asynchronously waits for the `he.p` to exit. Once exited will set
-// `he.state`, `he.exitStatus`, and `he.exitedAt` if not already set.
+func (he *hcsExec) ForceExit(status int) {
+	he.sl.Lock()
+	defer he.sl.Unlock()
+	if he.state != shimExecStateExited {
+		// Avoid logging the force if we already exited gracefully
+		logrus.WithFields(logrus.Fields{
+			"tid":    he.tid,
+			"eid":    he.id,
+			"status": status,
+		}).Debug("hcsExec::ForceExit")
+		switch he.state {
+		case shimExecStateCreated:
+			he.exitFromCreatedL(status)
+		case shimExecStateRunning:
+			// Kill the process to unblock `he.waitForExit`
+			he.p.Kill()
+		}
+	}
+}
+
+// exitFromCreatedL transitions the shim to the exited state from the created
+// state. It is the callers responsibility to hold `he.sl` for the durration of
+// this transition.
+//
+// This call is idempotent and will not affect any state if the shim is already
+// in the `shimExecStateExited` state.
+//
+// To transition for a created state the following must be done:
+//
+// 1. Issue `he.processDoneCancel` to unblock the goroutine
+// `he.waitForContainerExit()``.
+//
+// 2. Set `he.state`, `he.exitStatus` and `he.exitedAt` to the exited values.
+//
+// 3. Release any upstream IO resources that were never used in a copy.
+//
+// 4. Close `he.exited` channel to unblock any waiters who might have called
+// `Create`/`Wait`/`Start` which is a valid pattern.
+//
+// We DO NOT send the async `TaskExit` event because we never would have sent
+// the `TaskStart`/`TaskExecStarted` event.
+func (he *hcsExec) exitFromCreatedL(status int) {
+	if he.state != shimExecStateExited {
+		// Unblock the container exit goroutine
+		he.processDoneCancel()
+		// Transition this exec
+		he.state = shimExecStateExited
+		he.exitStatus = uint32(status)
+		he.exitedAt = time.Now()
+		// Release all upstream IO connections (if any)
+		he.io.Close()
+		// Free any waiters
+		he.exitedOnce.Do(func() {
+			close(he.exited)
+		})
+	}
+}
+
+// waitForExit waits for the `he.p` to exit. This MUST only be called after a
+// successful call to `Create` and MUST not be called more than once.
 //
 // This MUST be called via a goroutine.
+//
+// In the case of an exit from a running process the following must be done:
+//
+// 1. Wait for `he.p` to exit.
+//
+// 2. Issue `he.processDoneCancel` to unblock the goroutine
+// `he.waitForContainerExit()` (if still running). We do this early to avoid the
+// container exit also attempting to kill the process. However this race
+// condition is safe and handled.
+//
+// 3. Capture the process exit code and set `he.state`, `he.exitStatus` and
+// `he.exitedAt` to the exited values.
+//
+// 4. Wait for all IO to complete and release any upstream IO connections.
+//
+// 5. Send the async `TaskExit` to upstream listeners of any events.
+//
+// 6. Close `he.exited` channel to unblock any waiters who might have called
+// `Create`/`Wait`/`Start` which is a valid pattern.
 func (he *hcsExec) waitForExit() {
 	err := he.p.Wait()
-	code := 1
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
 			"tid":           he.tid,
 			"eid":           he.id,
 			logrus.ErrorKey: err,
-		}).Error("hcsExec::waitForExit::Wait")
+		}).Error("hcsExec::waitForExit - Failed process Wait")
+	}
+
+	// Issue the process cancellation to unblock the container wait as early as
+	// possible.
+	he.processDoneCancel()
+
+	code, err := he.p.ExitCode()
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"tid":           he.tid,
+			"eid":           he.id,
+			logrus.ErrorKey: err,
+		}).Error("hcsExec::waitForExit - Failed to get ExitCode")
 	} else {
-		c, err := he.p.ExitCode()
-		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"tid":           he.tid,
-				"eid":           he.id,
-				logrus.ErrorKey: err,
-			}).Error("hcsExec::waitForExit::ExitCode")
-		} else {
-			code = c
-			logrus.WithFields(logrus.Fields{
-				"tid":      he.tid,
-				"eid":      he.id,
-				"exitCode": code,
-			}).Debug("hcsExec::waitForExit::ExitCode")
-		}
+		logrus.WithFields(logrus.Fields{
+			"tid":      he.tid,
+			"eid":      he.id,
+			"exitCode": code,
+		}).Debug("hcsExec::waitForExit - Exited")
 	}
+
+	// Close the process handle (we will never reference it again)
+	he.p.Close()
+
 	he.sl.Lock()
-	// If the exec closes before the container we set status here.
-	he.setExitedL(code)
+	he.state = shimExecStateExited
+	he.exitStatus = uint32(code)
+	he.exitedAt = time.Now()
 	he.sl.Unlock()
-	he.close()
+
+	// Wait for all IO copies to complete and free the resources.
+	he.ioWg.Wait()
+	he.io.Close()
+
+	// We had a valid process so send the exited notification.
+	he.events(
+		runtime.TaskExitEventTopic,
+		&eventstypes.TaskExit{
+			ContainerID: he.tid,
+			ID:          he.id,
+			Pid:         uint32(he.pid),
+			ExitStatus:  he.exitStatus,
+			ExitedAt:    he.exitedAt,
+		})
+	he.exitedOnce.Do(func() {
+		close(he.exited)
+	})
 }
 
-// setExitedL sets the process exit state.
-//
-// The caller MUST hold `he.sl` previous to calling this method.
-//
-// The caller MUST free `he.exited` in order to unblock waiters depending on
-// `he.io` state the caller MAY optionally wait for `he.io` to complete.
-func (he *hcsExec) setExitedL(code int) {
-	if he.state != shimExecStateExited {
-		he.state = shimExecStateExited
-		he.exitStatus = uint32(code)
-		he.exitedAt = time.Now()
-		if he.p != nil {
-			he.p.Close()
-		}
-
-		// Issue the process done cancellation so that the container wait is
-		// cleaned up.
-		he.processDoneCancel()
-	}
-}
-
-// waitForContainerExit asynchronously waits for `he.c` to exit. Once exited
-// will set `he.state`, `he.exitStatus`, and `he.exitedAt` if not already set.
+// waitForContainerExit waits for `he.c` to exit. Depending on the exec's state
+// will forcibly transition this exec to the exited state and unblock any
+// waiters.
 //
 // This MUST be called via a goroutine at exec create.
 func (he *hcsExec) waitForContainerExit() {
@@ -451,32 +565,18 @@ func (he *hcsExec) waitForContainerExit() {
 		// Container exited first. We need to force the process into the exited
 		// state and cleanup any resources
 		he.sl.Lock()
-		he.setExitedL(1)
+		switch he.state {
+		case shimExecStateCreated:
+			he.exitFromCreatedL(1)
+		case shimExecStateRunning:
+			// Kill the process to unblock `he.waitForExit`.
+			he.p.Kill()
+		}
 		he.sl.Unlock()
-		he.close()
 	case <-he.processCtx.Done():
-		// Process exited first. This is the normal case do nothing.
+		// Process exited first. This is the normal case do nothing because
+		// `he.waitForExit` will release any waiters.
 	}
-}
-
-func (he *hcsExec) close() {
-	he.exitedOnce.Do(func() {
-		he.io.Wait()
-
-		// Publish the exited event
-		status := he.Status()
-		he.events(
-			runtime.TaskExitEventTopic,
-			&eventstypes.TaskExit{
-				ContainerID: he.tid,
-				ID:          he.id,
-				Pid:         status.Pid,
-				ExitStatus:  status.ExitStatus,
-				ExitedAt:    status.ExitedAt,
-			})
-
-		close(he.exited)
-	})
 }
 
 // escapeArgs makes a Windows-style escaped command line from a set of arguments

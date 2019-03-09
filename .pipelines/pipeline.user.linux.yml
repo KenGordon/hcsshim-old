@@ -26,3 +26,5 @@ build:
         - include:
           - 'runhcs.exe'
           - 'tar2ext4.exe'
+          - 'containerd-shim-runhcs-v1.exe'
+          - 'zapdir.exe'
