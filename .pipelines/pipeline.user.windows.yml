@@ -1,0 +1,18 @@
+environment:
+  host:
+    os: 'windows'
+    flavor: 'unused'
+    version: 'unused'
+  runtime:
+    provider: 'appcontainer'
+    image: 'cdpxwin.azurecr.io/legacy/global/vse2017u5-ext-win14393.1884:1.0'
+    source_mode: 'link'
+
+version:
+  name: "hcsshim"
+  major: 1
+  minor: 0
+  system: 'patch'
+
+signing_options:
+  profile: 'internal_azure_service'
