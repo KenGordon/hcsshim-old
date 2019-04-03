@@ -8,11 +8,29 @@ environment:
     image: 'cdpxwin.azurecr.io/legacy/global/vse2017u5-ext-win14393.1884:1.0'
     source_mode: 'link'
 
+workspace_options:
+  download_current_artifacts: true
+
+static_analysis_options:
+  binskim_options:
+    files_to_scan:
+      - from: 'cdpx-artifacts'
+        exclude:
+          - '*'
+
 version:
   name: "hcsshim"
-  major: 1
-  minor: 0
-  system: 'patch'
+  system: 'custom'
 
 signing_options:
   profile: 'internal_azure_service'
+
+build:
+  commands:
+    - !!buildcommand
+      name: 'sign'
+      command: 'copy.cmd'
+      artifacts:
+        - from: 'cdpx-artifacts'
+          include:
+          - '*'

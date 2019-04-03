@@ -23,10 +23,6 @@ build:
       name: 'build'
       command: 'build.sh'
       artifacts:
-        - include:
-          - 'runhcs.exe'
-          - 'tar2ext4.exe'
-          - 'containerd-shim-runhcs-v1.exe'
-          - 'zapdir.exe'
-          - 'grantvmgroupaccess.exe'
-          - 'cri-containerd.test.exe'
+        - from: 'cdpx-artifacts'
+          include:
+          - '*'
