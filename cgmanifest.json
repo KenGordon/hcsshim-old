@@ -1,0 +1,284 @@
+{
+    "Registrations": [
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/Microsoft/go-winio",
+                    "version": "v0.4.15-0.20190919025122-fc70bd9a86b5"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/blang/semver",
+                    "version": "v3.1.0+incompatible"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/containerd/cgroups",
+                    "version": "v0.0.0-20190919134610-bf292b21730f"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/containerd/console",
+                    "version": "v0.0.0-20180822173158-c12b1e7919c1"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/containerd/containerd",
+                    "version": "v1.3.0-beta.2.0.20190828155532-0293cbd26c69"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/containerd/continuity",
+                    "version": "v0.0.0-20190426062206-aaeac12a7ffc"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/containerd/fifo",
+                    "version": "v0.0.0-20190226154929-a9fb20d87448"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/containerd/go-runc",
+                    "version": "v0.0.0-20180907222934-5a6d9f37cfa3"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/containerd/ttrpc",
+                    "version": "v0.0.0-20190828154514-0e0f228740de"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/containerd/typeurl",
+                    "version": "v0.0.0-20180627222232-a93fcdb778cd"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/gogo/protobuf",
+                    "version": "v1.2.1"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/hashicorp/errwrap",
+                    "version": "v0.0.0-20141028054710-7554cd9344ce"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/hashicorp/go-multierror",
+                    "version": "v0.0.0-20161216184304-ed905158d874"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/opencontainers/go-digest",
+                    "version": "v0.0.0-20180430190053-c9281466c8b2"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/opencontainers/runc",
+                    "version": "v0.0.0-20190115041553-12f6a991201f"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/opencontainers/runtime-spec",
+                    "version": "v0.1.2-0.20190507144316-5b71a03e2700"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/opencontainers/runtime-tools",
+                    "version": "v0.0.0-20181011054405-1d69bd0f9c39"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/pkg/errors",
+                    "version": "v0.8.1"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/prometheus/procfs",
+                    "version": "v0.0.5"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/sirupsen/logrus",
+                    "version": "v1.4.1"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/syndtr/gocapability",
+                    "version": "v0.0.0-20170704070218-db04d3cc01c8"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/urfave/cli",
+                    "version": "v0.0.0-20171014202726-7bc6a0acffa5"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/xeipuuv/gojsonpointer",
+                    "version": "v0.0.0-20180127040702-4e3ac2762d5f"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/xeipuuv/gojsonreference",
+                    "version": "v0.0.0-20180127040603-bd5ef7bd5415"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "github.com/xeipuuv/gojsonschema",
+                    "version": "v0.0.0-20180618132009-1d523034197f"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "go.opencensus.io",
+                    "version": "v0.22.0"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "golang.org/x/sync",
+                    "version": "v0.0.0-20190227155943-e225da77a7e6"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "golang.org/x/sys",
+                    "version": "v0.0.0-20190916202348-b4ddaad3f8a3"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "google.golang.org/grpc",
+                    "version": "v1.20.1"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "gotest.tools",
+                    "version": "v2.2.0+incompatible"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "git": {
+                    "name": "k8s.io/kubernetes",
+                    "version": "v1.13.0"
+                }
+            }
+        }
+    ],
+    "Version": 1
+}
