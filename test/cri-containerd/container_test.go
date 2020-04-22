@@ -63,6 +63,8 @@ func runContainerLifetime(t *testing.T, client runtime.RuntimeServiceClient, ctx
 }
 
 func Test_RotateLogs_LCOW(t *testing.T) {
+	requireFeatures(t, featureLCOW)
+
 	image := "alpine:latest"
 	dir, err := ioutil.TempDir("", "")
 	if err != nil {
@@ -140,6 +142,8 @@ func Test_RotateLogs_LCOW(t *testing.T) {
 }
 
 func Test_RunContainer_Events_LCOW(t *testing.T) {
+	requireFeatures(t, featureLCOW)
+
 	pullRequiredLcowImages(t, []string{imageLcowK8sPause, imageLcowAlpine})
 	client := newTestRuntimeClient(t)
 
@@ -218,6 +222,8 @@ func Test_RunContainer_Events_LCOW(t *testing.T) {
 }
 
 func Test_RunContainer_VirtualDevice_GPU_LCOW(t *testing.T) {
+	requireFeatures(t, featureLCOW)
+
 	if osversion.Get().Build < 19566 {
 		t.Skip("Requires build +19566")
 	}
@@ -310,6 +316,8 @@ func Test_RunContainer_VirtualDevice_GPU_LCOW(t *testing.T) {
 }
 
 func Test_RunContainer_ForksThenExits_ShowsAsExited_LCOW(t *testing.T) {
+	requireFeatures(t, featureLCOW)
+
 	pullRequiredLcowImages(t, []string{imageLcowK8sPause, imageLcowAlpine})
 	client := newTestRuntimeClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -367,6 +375,8 @@ func Test_RunContainer_ForksThenExits_ShowsAsExited_LCOW(t *testing.T) {
 }
 
 func Test_RunContainer_ZeroVPMEM_LCOW(t *testing.T) {
+	requireFeatures(t, featureLCOW)
+
 	pullRequiredLcowImages(t, []string{imageLcowK8sPause, imageLcowAlpine})
 
 	client := newTestRuntimeClient(t)
@@ -409,4 +419,60 @@ func Test_RunContainer_ZeroVPMEM_LCOW(t *testing.T) {
 
 	containerID := createContainer(t, client, ctx, request)
 	runContainerLifetime(t, client, ctx, containerID)
+}
+
+func Test_RunContainer_ZeroVPMEM_Multiple_LCOW(t *testing.T) {
+	requireFeatures(t, featureLCOW)
+
+	pullRequiredLcowImages(t, []string{imageLcowK8sPause, imageLcowAlpine})
+
+	client := newTestRuntimeClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sandboxRequest := &runtime.RunPodSandboxRequest{
+		Config: &runtime.PodSandboxConfig{
+			Metadata: &runtime.PodSandboxMetadata{
+				Name:      t.Name() + "-Sandbox",
+				Namespace: testNamespace,
+			},
+			Annotations: map[string]string{
+				"io.microsoft.virtualmachine.lcow.preferredrootfstype":         "initrd",
+				"io.microsoft.virtualmachine.devices.virtualpmem.maximumcount": "0",
+			},
+		},
+		RuntimeHandler: lcowRuntimeHandler,
+	}
+
+	podID := runPodSandbox(t, client, ctx, sandboxRequest)
+	defer removePodSandbox(t, client, ctx, podID)
+	defer stopPodSandbox(t, client, ctx, podID)
+
+	request := &runtime.CreateContainerRequest{
+		PodSandboxId: podID,
+		Config: &runtime.ContainerConfig{
+			Metadata: &runtime.ContainerMetadata{
+				Name: "",
+			},
+			Image: &runtime.ImageSpec{
+				Image: imageLcowAlpine,
+			},
+			Command: []string{
+				"top",
+			},
+		},
+		SandboxConfig: sandboxRequest.Config,
+	}
+
+	request.Config.Metadata.Name = "Container-1"
+	containerIDOne := createContainer(t, client, ctx, request)
+	defer removeContainer(t, client, ctx, containerIDOne)
+	startContainer(t, client, ctx, containerIDOne)
+	defer stopContainer(t, client, ctx, containerIDOne)
+
+	request.Config.Metadata.Name = "Container-2"
+	containerIDTwo := createContainer(t, client, ctx, request)
+	defer removeContainer(t, client, ctx, containerIDTwo)
+	startContainer(t, client, ctx, containerIDTwo)
+	defer stopContainer(t, client, ctx, containerIDTwo)
 }
