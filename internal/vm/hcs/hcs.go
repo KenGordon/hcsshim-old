@@ -29,7 +29,7 @@ var (
 
 type lcowSource struct{}
 
-func (s lcowSource) NewLinuxUVM(id string, owner string) vm.UVM {
+func (s lcowSource) NewLinuxUVM(id string, owner string) (vm.UVM, error) {
 	return &utilityVM{
 		id:    id,
 		state: vm.StatePreCreated,
@@ -58,7 +58,7 @@ func (s lcowSource) NewLinuxUVM(id string, owner string) vm.UVM {
 				},
 			},
 		},
-	}
+	}, nil
 }
 
 type utilityVM struct {
@@ -224,7 +224,9 @@ func (uvm *utilityVM) addSCSIDiskCreatedRunning(ctx context.Context, controller 
 
 func getSCSIDiskTypeString(typ vm.SCSIDiskType) (string, error) {
 	switch typ {
-	case vm.SCSIDiskTypeVirtualDisk:
+	case vm.SCSIDiskTypeVHD1:
+		fallthrough
+	case vm.SCSIDiskTypeVHDX:
 		return "VirtualDisk", nil
 	case vm.SCSIDiskTypePassThrough:
 		return "PassThru", nil

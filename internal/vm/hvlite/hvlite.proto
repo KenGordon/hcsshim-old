@@ -1,0 +1,80 @@
+syntax = 'proto3';
+
+package hvlite;
+option go_package = "hvlite";
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+option (gogoproto.goproto_stringer_all) = false;
+option (gogoproto.stringer_all) =  true;
+option (gogoproto.goproto_getters_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_unrecognized_all) = false;
+
+service VM {
+    rpc CreateVM(CreateVMRequest) returns (CreateVMResponse) {}
+    rpc StartVM(StartVMRequest) returns (StartVMResponse) {}
+    rpc StopVM(StopVMRequest) returns (StopVMResponse) {}
+    rpc WaitVM(WaitVMRequest) returns (WaitVMResponse) {}
+
+    rpc AddSCSIDisk(AddSCSIDiskRequest) returns (AddSCSIDiskResponse) {}
+    rpc HVSocketListen(HVSocketListenRequest) returns (HVSocketListenResponse) {}
+}
+
+message VMConfig {
+    string vm_id = 1;
+    uint64 memory_mb = 2;
+    uint64 processor_count = 3;
+    repeated SCSIDisk scsi_disks = 4;
+    string kernel_path = 5;
+    string initrd_path = 6;
+    string kernel_args = 7;
+}
+
+message SCSIDisk {
+    uint32 controller = 1;
+    uint32 lun = 2;
+    string path = 3;
+
+    enum DiskType {
+        SCSI_DISK_TYPE_UNSPECIFIED = 0;
+        SCSI_DISK_TYPE_VHD1 = 1;
+        SCSI_DISK_TYPE_VHDX = 2;
+    }
+
+    DiskType type = 4;
+    bool read_only = 5;
+}
+
+message CreateVMRequest {
+    VMConfig config = 2;
+}
+
+message CreateVMResponse {}
+
+message StartVMRequest {}
+
+message StartVMResponse {}
+
+message StopVMRequest {}
+
+message StopVMResponse {}
+
+message WaitVMRequest {}
+
+message WaitVMResponse {}
+
+message AddSCSIDiskRequest {
+    SCSIDisk disk = 1;
+}
+
+message AddSCSIDiskResponse {}
+
+message HVSocketListenRequest {
+    string service_id = 1;
+    string listener_path = 2;
+}
+
+message HVSocketListenResponse {}

@@ -24,7 +24,7 @@ require (
 	github.com/stretchr/testify v1.4.0 // indirect
 	github.com/urfave/cli v0.0.0-20171014202726-7bc6a0acffa5
 	go.opencensus.io v0.22.0
-	golang.org/x/net v0.0.0-20191004110552-13f9640d40b9 // indirect
+	golang.org/x/net v0.0.0-20191004110552-13f9640d40b9
 	golang.org/x/sync v0.0.0-20190423024810-112230192c58
 	golang.org/x/sys v0.0.0-20190916202348-b4ddaad3f8a3
 	google.golang.org/genproto v0.0.0-20190502173448-54afdca5d873 // indirect

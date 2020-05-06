@@ -3,6 +3,7 @@ package uvm
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 
 	"github.com/Microsoft/go-winio/pkg/security"
@@ -295,7 +296,14 @@ func (uvm *UtilityVM) addSCSIActual(ctx context.Context, hostPath, uvmPath, atta
 	var diskType vm.SCSIDiskType
 	switch attachmentType {
 	case "VirtualDisk":
-		diskType = vm.SCSIDiskTypeVirtualDisk
+		switch ext := filepath.Ext(sm.HostPath); ext {
+		case ".vhd":
+			diskType = vm.SCSIDiskTypeVHD1
+		case ".vhdx":
+			diskType = vm.SCSIDiskTypeVHDX
+		default:
+			return nil, fmt.Errorf("unsupported extension for virtual disk: %s", ext)
+		}
 	case "PassThru":
 		diskType = vm.SCSIDiskTypePassThrough
 	default:

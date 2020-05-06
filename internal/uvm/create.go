@@ -64,6 +64,8 @@ type Options struct {
 	// ExternalGuestConnection sets whether the guest RPC connection is performed
 	// internally by the OS platform or externally by this package.
 	ExternalGuestConnection bool
+
+	VMSource string
 }
 
 // newDefaultOptions returns the default base options for WCOW and LCOW.
@@ -79,6 +81,7 @@ func newDefaultOptions(id, owner string) *Options {
 		AllowOvercommit:      true,
 		EnableDeferredCommit: false,
 		ProcessorCount:       defaultProcessorCount(),
+		VMSource:             "hcs",
 	}
 
 	if opts.Owner == "" {

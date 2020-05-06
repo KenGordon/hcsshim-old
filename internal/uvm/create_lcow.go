@@ -18,6 +18,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/internal/vm/hcs"
+	"github.com/Microsoft/hcsshim/internal/vm/hvlite"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
@@ -211,8 +212,19 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 		return nil, fmt.Errorf("EnableColdDiscardHint is not supported on builds older than 18967")
 	}
 
-	s := hcs.LCOWSource
-	u := s.NewLinuxUVM(opts.ID, uvm.owner)
+	var s vm.UVMSource
+	switch opts.VMSource {
+	case "hcs":
+		s = hcs.LCOWSource
+	case "hvlite":
+		s = hvlite.LCOWSource
+	default:
+		return nil, fmt.Errorf("unknown VM source: %s", opts.VMSource)
+	}
+	u, err := s.NewLinuxUVM(opts.ID, uvm.owner)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new VM: %s", err)
+	}
 
 	// doc := &hcsschema.ComputeSystem{
 	// 	Owner:                             uvm.owner,
@@ -260,34 +272,40 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 
 	memoryConfigControl := u.(vm.MemoryConfigControl)
 	if !ok {
-		return nil, errors.New("VM interface does not support MemoryConfigControl")
-	}
-	backingType := vm.MemoryBackingTypeVirtual
-	if !opts.AllowOvercommit {
-		backingType = vm.MemoryBackingTypePhysical
-	}
-	if err := memoryConfigControl.SetMemoryConfig(ctx, &vm.MemoryConfig{
-		BackingType:     backingType,
-		DeferredCommit:  opts.EnableDeferredCommit,
-		ColdDiscardHint: opts.EnableColdDiscardHint,
-	}); err != nil {
-		return nil, fmt.Errorf("set memory config failed: %s", err)
+		log.G(ctx).Warn("VM interface does not support MemoryConfigControl")
+		// return nil, errors.New("VM interface does not support MemoryConfigControl")
+	} else {
+		backingType := vm.MemoryBackingTypeVirtual
+		if !opts.AllowOvercommit {
+			backingType = vm.MemoryBackingTypePhysical
+		}
+		if err := memoryConfigControl.SetMemoryConfig(ctx, &vm.MemoryConfig{
+			BackingType:     backingType,
+			DeferredCommit:  opts.EnableDeferredCommit,
+			ColdDiscardHint: opts.EnableColdDiscardHint,
+		}); err != nil {
+			return nil, fmt.Errorf("set memory config failed: %s", err)
+		}
 	}
 
 	mmio, ok := u.(vm.MMIOConfigControl)
 	if !ok {
-		return nil, errors.New("VM interface does not support MMIOConfigControl")
-	}
-	if err := mmio.SetMMIOConfig(ctx, opts.LowMMIOGapInMB, opts.HighMMIOBaseInMB, opts.HighMMIOGapInMB); err != nil {
-		return nil, fmt.Errorf("set MMIO config failed: %s", err)
+		log.G(ctx).Warn("VM interface does not support MMIOConfigControl")
+		// return nil, errors.New("VM interface does not support MMIOConfigControl")
+	} else {
+		if err := mmio.SetMMIOConfig(ctx, opts.LowMMIOGapInMB, opts.HighMMIOBaseInMB, opts.HighMMIOGapInMB); err != nil {
+			return nil, fmt.Errorf("set MMIO config failed: %s", err)
+		}
 	}
 
 	cpu, ok := u.(vm.ProcessorControl)
 	if !ok {
-		return nil, errors.New("VM interface does not support ProcessorControl")
-	}
-	if err := cpu.SetProcessorCount(ctx, uint64(uvm.processorCount)); err != nil {
-		return nil, fmt.Errorf("set processor count failed: %s", err)
+		log.G(ctx).Warn("VM interface does not support ProcessorControl")
+		// return nil, errors.New("VM interface does not support ProcessorControl")
+	} else {
+		if err := cpu.SetProcessorCount(ctx, uint64(uvm.processorCount)); err != nil {
+			return nil, fmt.Errorf("set processor count failed: %s", err)
+		}
 	}
 
 	// Handle StorageQoS if set

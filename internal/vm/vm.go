@@ -68,7 +68,8 @@ type SCSI interface {
 type SCSIDiskType uint8
 
 const (
-	SCSIDiskTypeVirtualDisk SCSIDiskType = iota
+	SCSIDiskTypeVHD1 SCSIDiskType = iota
+	SCSIDiskTypeVHDX
 	SCSIDiskTypePassThrough
 )
 

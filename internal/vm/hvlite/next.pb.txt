@@ -1,0 +1,839 @@
+file {
+  name: "github.com/gogo/protobuf/gogoproto/gogo.proto"
+  package: "gogoproto"
+  dependency: "google/protobuf/descriptor.proto"
+  extension {
+    name: "goproto_enum_prefix"
+    extendee: ".google.protobuf.EnumOptions"
+    number: 62001
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoEnumPrefix"
+  }
+  extension {
+    name: "goproto_enum_stringer"
+    extendee: ".google.protobuf.EnumOptions"
+    number: 62021
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoEnumStringer"
+  }
+  extension {
+    name: "enum_stringer"
+    extendee: ".google.protobuf.EnumOptions"
+    number: 62022
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "enumStringer"
+  }
+  extension {
+    name: "enum_customname"
+    extendee: ".google.protobuf.EnumOptions"
+    number: 62023
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+    json_name: "enumCustomname"
+  }
+  extension {
+    name: "enumdecl"
+    extendee: ".google.protobuf.EnumOptions"
+    number: 62024
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "enumdecl"
+  }
+  extension {
+    name: "enumvalue_customname"
+    extendee: ".google.protobuf.EnumValueOptions"
+    number: 66001
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+    json_name: "enumvalueCustomname"
+  }
+  extension {
+    name: "goproto_getters_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63001
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoGettersAll"
+  }
+  extension {
+    name: "goproto_enum_prefix_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63002
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoEnumPrefixAll"
+  }
+  extension {
+    name: "goproto_stringer_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63003
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoStringerAll"
+  }
+  extension {
+    name: "verbose_equal_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63004
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "verboseEqualAll"
+  }
+  extension {
+    name: "face_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63005
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "faceAll"
+  }
+  extension {
+    name: "gostring_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63006
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "gostringAll"
+  }
+  extension {
+    name: "populate_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63007
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "populateAll"
+  }
+  extension {
+    name: "stringer_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63008
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "stringerAll"
+  }
+  extension {
+    name: "onlyone_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63009
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "onlyoneAll"
+  }
+  extension {
+    name: "equal_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63013
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "equalAll"
+  }
+  extension {
+    name: "description_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63014
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "descriptionAll"
+  }
+  extension {
+    name: "testgen_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63015
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "testgenAll"
+  }
+  extension {
+    name: "benchgen_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63016
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "benchgenAll"
+  }
+  extension {
+    name: "marshaler_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63017
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "marshalerAll"
+  }
+  extension {
+    name: "unmarshaler_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63018
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "unmarshalerAll"
+  }
+  extension {
+    name: "stable_marshaler_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63019
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "stableMarshalerAll"
+  }
+  extension {
+    name: "sizer_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63020
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "sizerAll"
+  }
+  extension {
+    name: "goproto_enum_stringer_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63021
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoEnumStringerAll"
+  }
+  extension {
+    name: "enum_stringer_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63022
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "enumStringerAll"
+  }
+  extension {
+    name: "unsafe_marshaler_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63023
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "unsafeMarshalerAll"
+  }
+  extension {
+    name: "unsafe_unmarshaler_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63024
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "unsafeUnmarshalerAll"
+  }
+  extension {
+    name: "goproto_extensions_map_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63025
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoExtensionsMapAll"
+  }
+  extension {
+    name: "goproto_unrecognized_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63026
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoUnrecognizedAll"
+  }
+  extension {
+    name: "gogoproto_import"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63027
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "gogoprotoImport"
+  }
+  extension {
+    name: "protosizer_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63028
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "protosizerAll"
+  }
+  extension {
+    name: "compare_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63029
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "compareAll"
+  }
+  extension {
+    name: "typedecl_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63030
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "typedeclAll"
+  }
+  extension {
+    name: "enumdecl_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63031
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "enumdeclAll"
+  }
+  extension {
+    name: "goproto_registration"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63032
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoRegistration"
+  }
+  extension {
+    name: "messagename_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63033
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "messagenameAll"
+  }
+  extension {
+    name: "goproto_sizecache_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63034
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoSizecacheAll"
+  }
+  extension {
+    name: "goproto_unkeyed_all"
+    extendee: ".google.protobuf.FileOptions"
+    number: 63035
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoUnkeyedAll"
+  }
+  extension {
+    name: "goproto_getters"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64001
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoGetters"
+  }
+  extension {
+    name: "goproto_stringer"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64003
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoStringer"
+  }
+  extension {
+    name: "verbose_equal"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64004
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "verboseEqual"
+  }
+  extension {
+    name: "face"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64005
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "face"
+  }
+  extension {
+    name: "gostring"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64006
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "gostring"
+  }
+  extension {
+    name: "populate"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64007
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "populate"
+  }
+  extension {
+    name: "stringer"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 67008
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "stringer"
+  }
+  extension {
+    name: "onlyone"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64009
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "onlyone"
+  }
+  extension {
+    name: "equal"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64013
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "equal"
+  }
+  extension {
+    name: "description"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64014
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "description"
+  }
+  extension {
+    name: "testgen"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64015
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "testgen"
+  }
+  extension {
+    name: "benchgen"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64016
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "benchgen"
+  }
+  extension {
+    name: "marshaler"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64017
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "marshaler"
+  }
+  extension {
+    name: "unmarshaler"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64018
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "unmarshaler"
+  }
+  extension {
+    name: "stable_marshaler"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64019
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "stableMarshaler"
+  }
+  extension {
+    name: "sizer"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64020
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "sizer"
+  }
+  extension {
+    name: "unsafe_marshaler"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64023
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "unsafeMarshaler"
+  }
+  extension {
+    name: "unsafe_unmarshaler"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64024
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "unsafeUnmarshaler"
+  }
+  extension {
+    name: "goproto_extensions_map"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64025
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoExtensionsMap"
+  }
+  extension {
+    name: "goproto_unrecognized"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64026
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoUnrecognized"
+  }
+  extension {
+    name: "protosizer"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64028
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "protosizer"
+  }
+  extension {
+    name: "compare"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64029
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "compare"
+  }
+  extension {
+    name: "typedecl"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64030
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "typedecl"
+  }
+  extension {
+    name: "messagename"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64033
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "messagename"
+  }
+  extension {
+    name: "goproto_sizecache"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64034
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoSizecache"
+  }
+  extension {
+    name: "goproto_unkeyed"
+    extendee: ".google.protobuf.MessageOptions"
+    number: 64035
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "goprotoUnkeyed"
+  }
+  extension {
+    name: "nullable"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65001
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "nullable"
+  }
+  extension {
+    name: "embed"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65002
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "embed"
+  }
+  extension {
+    name: "customtype"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65003
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+    json_name: "customtype"
+  }
+  extension {
+    name: "customname"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65004
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+    json_name: "customname"
+  }
+  extension {
+    name: "jsontag"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65005
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+    json_name: "jsontag"
+  }
+  extension {
+    name: "moretags"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65006
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+    json_name: "moretags"
+  }
+  extension {
+    name: "casttype"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65007
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+    json_name: "casttype"
+  }
+  extension {
+    name: "castkey"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65008
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+    json_name: "castkey"
+  }
+  extension {
+    name: "castvalue"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65009
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+    json_name: "castvalue"
+  }
+  extension {
+    name: "stdtime"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65010
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "stdtime"
+  }
+  extension {
+    name: "stdduration"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65011
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "stdduration"
+  }
+  extension {
+    name: "wktpointer"
+    extendee: ".google.protobuf.FieldOptions"
+    number: 65012
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+    json_name: "wktpointer"
+  }
+  options {
+    java_package: "com.google.protobuf"
+    java_outer_classname: "GoGoProtos"
+    go_package: "github.com/gogo/protobuf/gogoproto"
+  }
+}
+file {
+  name: "github.com/Microsoft/hcsshim/internal/vm/hvlite/hvlite.proto"
+  package: "hvlite"
+  dependency: "github.com/gogo/protobuf/gogoproto/gogo.proto"
+  message_type {
+    name: "VMConfig"
+    field {
+      name: "vm_id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "vmId"
+    }
+    field {
+      name: "memory_mb"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT64
+      json_name: "memoryMb"
+    }
+    field {
+      name: "processor_count"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT64
+      json_name: "processorCount"
+    }
+    field {
+      name: "scsi_disks"
+      number: 4
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".hvlite.SCSIDisk"
+      json_name: "scsiDisks"
+    }
+    field {
+      name: "kernel_path"
+      number: 5
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "kernelPath"
+    }
+    field {
+      name: "initrd_path"
+      number: 6
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "initrdPath"
+    }
+    field {
+      name: "kernel_args"
+      number: 7
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "kernelArgs"
+    }
+  }
+  message_type {
+    name: "SCSIDisk"
+    field {
+      name: "controller"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "controller"
+    }
+    field {
+      name: "lun"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "lun"
+    }
+    field {
+      name: "path"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "path"
+    }
+    field {
+      name: "type"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_ENUM
+      type_name: ".hvlite.SCSIDisk.DiskType"
+      json_name: "type"
+    }
+    field {
+      name: "read_only"
+      number: 5
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "readOnly"
+    }
+    enum_type {
+      name: "DiskType"
+      value {
+        name: "SCSI_DISK_TYPE_UNSPECIFIED"
+        number: 0
+      }
+      value {
+        name: "SCSI_DISK_TYPE_VHD1"
+        number: 1
+      }
+      value {
+        name: "SCSI_DISK_TYPE_VHDX"
+        number: 2
+      }
+    }
+  }
+  message_type {
+    name: "CreateVMRequest"
+    field {
+      name: "config"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".hvlite.VMConfig"
+      json_name: "config"
+    }
+  }
+  message_type {
+    name: "CreateVMResponse"
+  }
+  message_type {
+    name: "StopVMRequest"
+  }
+  message_type {
+    name: "StopVMResponse"
+  }
+  message_type {
+    name: "WaitVMRequest"
+  }
+  message_type {
+    name: "WaitVMResponse"
+  }
+  message_type {
+    name: "AddSCSIDiskRequest"
+    field {
+      name: "disk"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".hvlite.SCSIDisk"
+      json_name: "disk"
+    }
+  }
+  message_type {
+    name: "AddSCSIDiskResponse"
+  }
+  message_type {
+    name: "HVSocketListenRequest"
+    field {
+      name: "service_id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "serviceId"
+    }
+    field {
+      name: "listener_path"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "listenerPath"
+    }
+  }
+  message_type {
+    name: "HVSocketListenResponse"
+  }
+  service {
+    name: "VM"
+    method {
+      name: "CreateVM"
+      input_type: ".hvlite.CreateVMRequest"
+      output_type: ".hvlite.CreateVMResponse"
+      options {
+      }
+    }
+    method {
+      name: "StopVM"
+      input_type: ".hvlite.StopVMRequest"
+      output_type: ".hvlite.StopVMResponse"
+      options {
+      }
+    }
+    method {
+      name: "WaitVM"
+      input_type: ".hvlite.WaitVMRequest"
+      output_type: ".hvlite.WaitVMResponse"
+      options {
+      }
+    }
+    method {
+      name: "AddSCSIDisk"
+      input_type: ".hvlite.AddSCSIDiskRequest"
+      output_type: ".hvlite.AddSCSIDiskResponse"
+      options {
+      }
+    }
+    method {
+      name: "HVSocketListen"
+      input_type: ".hvlite.HVSocketListenRequest"
+      output_type: ".hvlite.HVSocketListenResponse"
+      options {
+      }
+    }
+  }
+  options {
+    go_package: "hvlite"
+    63001: 1
+    63003: 0
+    63008: 1
+    63017: 1
+    63018: 1
+    63020: 1
+    63026: 0
+  }
+  syntax: "proto3"
+}
