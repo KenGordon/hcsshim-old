@@ -14,7 +14,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/hcs"
 	"github.com/Microsoft/hcsshim/internal/log"
-	"github.com/Microsoft/hcsshim/internal/oci"
+	// "github.com/Microsoft/hcsshim/internal/oci"
 	hcsschema "github.com/Microsoft/hcsshim/internal/schema2"
 	"github.com/Microsoft/hcsshim/internal/schemaversion"
 	"github.com/Microsoft/hcsshim/internal/uvm"
@@ -137,30 +137,30 @@ func CreateContainer(ctx context.Context, createOptions *CreateOptions) (_ cow.C
 		}
 		coi.actualNetworkNamespace = resources.netNS
 		if coi.HostingSystem != nil {
-			ct, _, err := oci.GetSandboxTypeAndID(coi.Spec.Annotations)
-			if err != nil {
-				return nil, resources, err
-			}
-			// Only add the network namespace to a standalone or sandbox
-			// container but not a workload container in a sandbox that inherits
-			// the namespace.
-			if ct == oci.KubernetesContainerTypeNone || ct == oci.KubernetesContainerTypeSandbox {
-				endpoints, err := GetNamespaceEndpoints(ctx, coi.actualNetworkNamespace)
-				if err != nil {
-					return nil, resources, err
-				}
-				err = coi.HostingSystem.AddNetNS(ctx, coi.actualNetworkNamespace)
-				if err != nil {
-					return nil, resources, err
-				}
-				err = coi.HostingSystem.AddEndpointsToNS(ctx, coi.actualNetworkNamespace, endpoints)
-				if err != nil {
-					// Best effort clean up the NS
-					coi.HostingSystem.RemoveNetNS(ctx, coi.actualNetworkNamespace)
-					return nil, resources, err
-				}
-				resources.addedNetNSToVM = true
-			}
+			// ct, _, err := oci.GetSandboxTypeAndID(coi.Spec.Annotations)
+			// if err != nil {
+			// 	return nil, resources, err
+			// }
+			// // Only add the network namespace to a standalone or sandbox
+			// // container but not a workload container in a sandbox that inherits
+			// // the namespace.
+			// if ct == oci.KubernetesContainerTypeNone || ct == oci.KubernetesContainerTypeSandbox {
+			// 	endpoints, err := GetNamespaceEndpoints(ctx, coi.actualNetworkNamespace)
+			// 	if err != nil {
+			// 		return nil, resources, err
+			// 	}
+			// 	err = coi.HostingSystem.AddNetNS(ctx, coi.actualNetworkNamespace)
+			// 	if err != nil {
+			// 		return nil, resources, err
+			// 	}
+			// 	err = coi.HostingSystem.AddEndpointsToNS(ctx, coi.actualNetworkNamespace, endpoints)
+			// 	if err != nil {
+			// 		// Best effort clean up the NS
+			// 		coi.HostingSystem.RemoveNetNS(ctx, coi.actualNetworkNamespace)
+			// 		return nil, resources, err
+			// 	}
+			// 	resources.addedNetNSToVM = true
+			// }
 		}
 	}
 

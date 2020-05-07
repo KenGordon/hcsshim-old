@@ -151,14 +151,14 @@ func (uvm *utilityVM) AddSCSIDisk(ctx context.Context, controller uint32, lun ui
 		Type:       diskType,
 		ReadOnly:   readOnly,
 	}
-	if uvm.state == vm.StateCreated {
+	if uvm.state == vm.StatePreCreated {
 		uvm.config.ScsiDisks = append(uvm.config.ScsiDisks, disk)
 	} else if uvm.state == vm.StateRunning {
 		if _, err := uvm.client.AddSCSIDisk(ctx, &AddSCSIDiskRequest{Disk: disk}); err != nil {
 			return fmt.Errorf("failed to add SCSI disk: %s", err)
 		}
 	} else {
-		return errors.New("VM is not in created or running state")
+		return errors.New("VM is not in pre-created or running state")
 	}
 	return nil
 }

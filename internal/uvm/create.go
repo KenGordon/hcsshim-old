@@ -14,6 +14,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/oc"
 	hcsschema "github.com/Microsoft/hcsshim/internal/schema2"
 	"github.com/Microsoft/hcsshim/internal/schemaversion"
+	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
 	"golang.org/x/sys/windows"
@@ -95,9 +96,13 @@ func newDefaultOptions(id, owner string) *Options {
 	return opts
 }
 
+func (uvm *UtilityVM) U() vm.UVM {
+	return uvm.u
+}
+
 // ID returns the ID of the VM's compute system.
 func (uvm *UtilityVM) ID() string {
-	return uvm.hcsSystem.ID()
+	return uvm.u.ID()
 }
 
 // OS returns the operating system of the utility VM.
@@ -144,7 +149,7 @@ func (uvm *UtilityVM) Close() (err error) {
 	windows.Close(uvm.vmmemProcess)
 
 	if uvm.hcsSystem != nil {
-		uvm.hcsSystem.Terminate(ctx)
+		uvm.u.Stop(ctx)
 		uvm.Wait()
 	}
 	if uvm.gc != nil {
@@ -207,7 +212,7 @@ func (uvm *UtilityVM) IsOCI() bool {
 
 // Terminate requests that the utility VM be terminated.
 func (uvm *UtilityVM) Terminate(ctx context.Context) error {
-	return uvm.hcsSystem.Terminate(ctx)
+	return uvm.u.Stop(ctx)
 }
 
 // ExitError returns an error if the utility VM has terminated unexpectedly.

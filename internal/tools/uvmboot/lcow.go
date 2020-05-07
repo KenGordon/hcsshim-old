@@ -8,6 +8,7 @@ import (
 
 	"github.com/Microsoft/hcsshim/internal/hcsoci"
 	"github.com/Microsoft/hcsshim/internal/uvm"
+	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/containerd/console"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
@@ -157,6 +158,13 @@ func runLCOW(ctx context.Context, options *uvm.OptionsLCOW, c *cli.Context) erro
 
 	if err := uvm.Start(ctx); err != nil {
 		return err
+	}
+
+	if path := c.GlobalString("vhd"); path != "" {
+		scsi := uvm.U().(vm.SCSI)
+		if err := scsi.AddSCSIDisk(ctx, 0, 10, path, vm.SCSIDiskTypeVHD1, true); err != nil {
+			panic(err)
+		}
 	}
 
 	if options.UseGuestConnection {

@@ -91,6 +91,9 @@ func main() {
 			Name:  "hvlite-path",
 			Usage: "Path to hvlite.exe",
 		},
+		cli.StringFlag{
+			Name: "vhd",
+		},
 	}
 
 	app.Commands = []cli.Command{
