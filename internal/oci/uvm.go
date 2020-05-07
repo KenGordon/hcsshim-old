@@ -124,6 +124,9 @@ const (
 	annotationStorageQoSBandwidthMaximum = "io.microsoft.virtualmachine.storageqos.bandwidthmaximum"
 	annotationStorageQoSIopsMaximum      = "io.microsoft.virtualmachine.storageqos.iopsmaximum"
 	annotationsVMSource                  = "io.microsoft.virtualmachine.vmsource"
+	annotationsHVLitePort                = "io.microsoft.virtualmachine.vmruntime.hvlite.port"
+	annotationsHVLiteCreateInstance      = "io.microsoft.virtualmachine.vmruntime.hvlite.createinstance"
+	annotationsHVLitePath                = "io.microsoft.virtualmachine.vmruntime.hvlite.path"
 )
 
 // parseAnnotationsBool searches `a` for `key` and if found verifies that the
@@ -288,6 +291,25 @@ func parseAnnotationsUint32(ctx context.Context, a map[string]string, key string
 	return def
 }
 
+// parseAnnotationsUint16 searches `a` for `key` and if found verifies that the
+// value is a 16 bit unsigned integer. If `key` is not found returns `def`.
+func parseAnnotationsUint16(ctx context.Context, a map[string]string, key string, def uint16) uint16 {
+	if v, ok := a[key]; ok {
+		countu, err := strconv.ParseUint(v, 10, 16)
+		if err == nil {
+			v := uint16(countu)
+			return v
+		}
+		log.G(ctx).WithFields(logrus.Fields{
+			logfields.OCIAnnotation: key,
+			logfields.Value:         v,
+			logfields.ExpectedType:  logfields.Uint16,
+			logrus.ErrorKey:         err,
+		}).Warning("annotation could not be parsed")
+	}
+	return def
+}
+
 // parseAnnotationsUint64 searches `a` for `key` and if found verifies that the
 // value is a 64 bit unsigned integer. If `key` is not found returns `def`.
 func parseAnnotationsUint64(ctx context.Context, a map[string]string, key string, def uint64) uint64 {
@@ -350,6 +372,9 @@ func SpecToUVMCreateOpts(ctx context.Context, s *specs.Spec, id, owner string) (
 		}
 		lopts.BootFilesPath = parseAnnotationsString(s.Annotations, annotationBootFilesRootPath, lopts.BootFilesPath)
 		lopts.VMSource = parseAnnotationsString(s.Annotations, annotationsVMSource, lopts.VMSource)
+		lopts.HVLitePort = parseAnnotationsUint16(ctx, s.Annotations, annotationsHVLitePort, lopts.HVLitePort)
+		lopts.HVLiteCreateInstance = parseAnnotationsBool(ctx, s.Annotations, annotationsHVLiteCreateInstance, lopts.HVLiteCreateInstance)
+		lopts.HVLitePath = parseAnnotationsString(s.Annotations, annotationsHVLitePath, lopts.HVLitePath)
 		return lopts, nil
 	} else if IsWCOW(s) {
 		wopts := uvm.NewDefaultOptionsWCOW(id, owner)
@@ -365,6 +390,9 @@ func SpecToUVMCreateOpts(ctx context.Context, s *specs.Spec, id, owner string) (
 		wopts.StorageQoSBandwidthMaximum = ParseAnnotationsStorageBps(ctx, s, annotationStorageQoSBandwidthMaximum, wopts.StorageQoSBandwidthMaximum)
 		wopts.StorageQoSIopsMaximum = ParseAnnotationsStorageIops(ctx, s, annotationStorageQoSIopsMaximum, wopts.StorageQoSIopsMaximum)
 		wopts.VMSource = parseAnnotationsString(s.Annotations, annotationsVMSource, wopts.VMSource)
+		wopts.HVLitePort = parseAnnotationsUint16(ctx, s.Annotations, annotationsHVLitePort, wopts.HVLitePort)
+		wopts.HVLiteCreateInstance = parseAnnotationsBool(ctx, s.Annotations, annotationsHVLiteCreateInstance, wopts.HVLiteCreateInstance)
+		wopts.HVLitePath = parseAnnotationsString(s.Annotations, annotationsHVLitePath, wopts.HVLitePath)
 		return wopts, nil
 	}
 	return nil, errors.New("cannot create UVM opts spec is not LCOW or WCOW")

@@ -65,7 +65,10 @@ type Options struct {
 	// internally by the OS platform or externally by this package.
 	ExternalGuestConnection bool
 
-	VMSource string
+	VMSource             string
+	HVLiteCreateInstance bool
+	HVLitePort           uint16
+	HVLitePath           string
 }
 
 // newDefaultOptions returns the default base options for WCOW and LCOW.
@@ -82,6 +85,7 @@ func newDefaultOptions(id, owner string) *Options {
 		EnableDeferredCommit: false,
 		ProcessorCount:       defaultProcessorCount(),
 		VMSource:             "hcs",
+		HVLiteCreateInstance: true,
 	}
 
 	if opts.Owner == "" {

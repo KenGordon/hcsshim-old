@@ -217,11 +217,18 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 	case "hcs":
 		s = hcs.LCOWSource
 	case "hvlite":
-		s = hvlite.LCOWSource
+		hvlitePath := opts.HVLitePath
+		if hvlitePath == "" {
+			hvlitePath = filepath.Join(filepath.Dir(os.Args[0]), "hvlite.exe")
+		}
+		s, err = hvlite.NewSource(hvlitePath, opts.HVLitePort, opts.HVLiteCreateInstance)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create VM source: %s", err)
+		}
 	default:
 		return nil, fmt.Errorf("unknown VM source: %s", opts.VMSource)
 	}
-	u, err := s.NewLinuxUVM(opts.ID, uvm.owner)
+	u, err := s.NewLinuxUVM(ctx, opts.ID, uvm.owner)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new VM: %s", err)
 	}
@@ -270,7 +277,7 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 		return nil, fmt.Errorf("set memory limit failed: %s", err)
 	}
 
-	memoryConfigControl := u.(vm.MemoryConfigControl)
+	memoryConfigControl, ok := u.(vm.MemoryConfigControl)
 	if !ok {
 		log.G(ctx).Warn("VM interface does not support MemoryConfigControl")
 		// return nil, errors.New("VM interface does not support MemoryConfigControl")

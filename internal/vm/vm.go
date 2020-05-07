@@ -8,7 +8,7 @@ import (
 )
 
 type UVMSource interface {
-	NewLinuxUVM(id string, owner string) (UVM, error)
+	NewLinuxUVM(ctx context.Context, id string, owner string) (UVM, error)
 }
 
 type UVM interface {
