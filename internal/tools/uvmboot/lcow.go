@@ -133,6 +133,10 @@ var lcowCommand = cli.Command{
 			if c.IsSet(consolePipeArgName) {
 				options.ConsolePipe = c.String(consolePipeArgName)
 			}
+			options.VMSource = c.GlobalString("vmruntime")
+			options.HVLiteCreateInstance = !c.GlobalBool("hvlite-external")
+			options.HVLitePort = uint16(c.GlobalInt("hvlite-port"))
+			options.HVLitePath = c.GlobalString("hvlite-path")
 
 			if err := runLCOW(context.TODO(), options, c); err != nil {
 				return err

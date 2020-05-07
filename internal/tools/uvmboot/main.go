@@ -74,6 +74,23 @@ func main() {
 			Name:  externalBridgeArgName,
 			Usage: "Use the external implementation of the guest connection",
 		},
+		cli.StringFlag{
+			Name:  "vmruntime",
+			Usage: "hcs or hvlite",
+			Value: "hcs",
+		},
+		cli.IntFlag{
+			Name:  "hvlite-port",
+			Usage: "Port to connect to hvlite on",
+		},
+		cli.BoolFlag{
+			Name:  "hvlite-external",
+			Usage: "Use an external instance of hvlite, rather than execing",
+		},
+		cli.StringFlag{
+			Name:  "hvlite-path",
+			Usage: "Path to hvlite.exe",
+		},
 	}
 
 	app.Commands = []cli.Command{
