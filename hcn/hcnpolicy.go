@@ -246,9 +246,12 @@ type SetPolicySetting struct {
 	Name   string
 	Type   SetPolicyType
 	Values string
+<<<<<<< HEAD
 }
 
 // VxlanPortPolicySetting allows configuring the VXLAN TCP port
 type VxlanPortPolicySetting struct {
 	Port uint16
+=======
+>>>>>>> updated formatting of files
 }
