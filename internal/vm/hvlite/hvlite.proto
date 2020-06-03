@@ -21,6 +21,7 @@ service VM {
 
     rpc AddSCSIDisk(AddSCSIDiskRequest) returns (AddSCSIDiskResponse) {}
     rpc HVSocketListen(HVSocketListenRequest) returns (HVSocketListenResponse) {}
+    rpc AddNIC(AddNICRequest) returns (AddNICResponse) {}
 }
 
 message VMConfig {
@@ -78,3 +79,12 @@ message HVSocketListenRequest {
 }
 
 message HVSocketListenResponse {}
+
+message AddNICRequest {
+    string nic_id = 1;
+    string endpoint_id = 2;
+    string mac = 3;
+    string port_id = 4;
+}
+
+message AddNICResponse {}

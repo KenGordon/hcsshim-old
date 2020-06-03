@@ -742,6 +742,12 @@ file {
     name: "CreateVMResponse"
   }
   message_type {
+    name: "StartVMRequest"
+  }
+  message_type {
+    name: "StartVMResponse"
+  }
+  message_type {
     name: "StopVMRequest"
   }
   message_type {
@@ -787,12 +793,53 @@ file {
   message_type {
     name: "HVSocketListenResponse"
   }
+  message_type {
+    name: "AddNICRequest"
+    field {
+      name: "nic_id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "nicId"
+    }
+    field {
+      name: "endpoint_id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "endpointId"
+    }
+    field {
+      name: "mac"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "mac"
+    }
+    field {
+      name: "port_id"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "portId"
+    }
+  }
+  message_type {
+    name: "AddNICResponse"
+  }
   service {
     name: "VM"
     method {
       name: "CreateVM"
       input_type: ".hvlite.CreateVMRequest"
       output_type: ".hvlite.CreateVMResponse"
+      options {
+      }
+    }
+    method {
+      name: "StartVM"
+      input_type: ".hvlite.StartVMRequest"
+      output_type: ".hvlite.StartVMResponse"
       options {
       }
     }
@@ -821,6 +868,13 @@ file {
       name: "HVSocketListen"
       input_type: ".hvlite.HVSocketListenRequest"
       output_type: ".hvlite.HVSocketListenResponse"
+      options {
+      }
+    }
+    method {
+      name: "AddNIC"
+      input_type: ".hvlite.AddNICRequest"
+      output_type: ".hvlite.AddNICResponse"
       options {
       }
     }

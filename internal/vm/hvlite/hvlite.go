@@ -2,6 +2,7 @@ package hvlite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Microsoft/go-winio/pkg/guid"
+	"github.com/Microsoft/hcsshim/hcn"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/sirupsen/logrus"
@@ -188,5 +190,33 @@ func (uvm *utilityVM) HVSocketListen(ctx context.Context, serviceID guid.GUID) (
 }
 
 func (uvm *utilityVM) AddNIC(ctx context.Context, nicID guid.GUID, endpointID string, mac string) error {
+	portID, err := guid.NewV4()
+	if err != nil {
+		return fmt.Errorf("failed to create port ID: %s", err)
+	}
+	vmEndpointRequest := hcn.VmEndpointRequest{
+		PortId:           portID,
+		VirtualNicName:   fmt.Sprintf("%s--%s", uvm.id, portID),
+		VirtualMachineId: guid.GUID{},
+	}
+	m, err := json.Marshal(vmEndpointRequest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal endpoint request json: %s", err)
+	}
+	if err := hcn.ModifyEndpointSettings(endpointID, &hcn.ModifyEndpointSettingRequest{
+		ResourceType: hcn.EndpointResourceTypePort,
+		RequestType:  hcn.RequestTypeAdd,
+		Settings:     json.RawMessage(m),
+	}); err != nil {
+		return fmt.Errorf("failed to configure switch port: %s", err)
+	}
+	if _, err := uvm.client.AddNIC(ctx, &AddNICRequest{
+		NicID:      nicID.String(),
+		EndpointID: endpointID,
+		Mac:        mac,
+		PortID:     portID.String(),
+	}); err != nil {
+		return fmt.Errorf("failed add nic call in hvlite: %s", err)
+	}
 	return nil
 }

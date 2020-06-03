@@ -50,6 +50,12 @@ var (
 	EndpointResourceTypePort EndpointResourceType = "Port"
 )
 
+type VmEndpointRequest struct {
+	PortId           guid.GUID `json:",omitempty"`
+	VirtualNicName   string    `json:",omitempty"`
+	VirtualMachineId guid.GUID `json:",omitempty"`
+}
+
 // ModifyEndpointSettingRequest is the structure used to send request to modify an endpoint.
 // Used to update policy/port on an endpoint.
 type ModifyEndpointSettingRequest struct {
