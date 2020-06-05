@@ -255,3 +255,8 @@ type VxlanPortPolicySetting struct {
 =======
 >>>>>>> updated formatting of files
 }
+
+// VxlanPortPolicySetting allows configuring the VXLAN TCP port
+type VxlanPortPolicySetting struct {
+	Port uint16
+}
