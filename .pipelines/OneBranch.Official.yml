@@ -1,0 +1,25 @@
+trigger: none
+
+variables:
+  WindowsContainerImage: cdpxwin1809.azurecr.io/global/vse2019:latest # for Windows jobs
+  LinuxContainerImage: cdpxlinux.azurecr.io/user/lsg-linux/lsg-yocto-project:latest # for Linux jobs
+
+resources:
+  repositories: 
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+extends:
+  template: v2/OneBranch.[Official|NonOfficial].CrossPlat.yml@templates
+  parameters:
+    stages:
+    - stage: build
+      jobs:
+      - job: main
+        pool:
+          type: windows
+        variables:
+          ob_outputDirectory: '$(Build.SourcesDirectory)\out'
+        steps: []
