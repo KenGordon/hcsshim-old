@@ -35,6 +35,6 @@ extends:
             publishDirectory: '$(Build.StagingDirectory)'
             feedsToUsePublish: 'internal'
             vstsFeedPublish: 'ContainerPlatform/ContainerPlat-Dev'
-            vstsFeedPackagePublish: 'kevpar/test'
+            vstsFeedPackagePublish: 'kevpar-test'
             versionOption: 'patch'
 
