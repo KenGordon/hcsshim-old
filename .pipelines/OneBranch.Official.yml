@@ -21,8 +21,11 @@ extends:
         pool:
           type: linux
         variables:
-          ob_outputDirectory: '$(Build.SourceDirectory)/out'
+          ob_outputDirectory: '$(Build.StagingDirectory)'
         steps:
         - script: |
-            mount
             env
+        - script: |
+            ls -la $BUILD_STAGINGDIRECTORY
+            mkdir $BUILD_STAGINGDIRECTORY
+            echo foo >$BUILD_STAGINGDIRECTORY/test.txt
