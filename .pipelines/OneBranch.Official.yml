@@ -1,8 +1,8 @@
 trigger: none
 
 variables:
-  WindowsContainerImage: cdpxwin1809.azurecr.io/global/vse2019:latest # for Windows jobs
-  LinuxContainerImage: cdpxlinux.azurecr.io/user/lsg-linux/lsg-yocto-project:latest # for Linux jobs
+  WindowsContainerImage: cdpxwin1809.azurecr.io/global/vse2019:latest
+  LinuxContainerImage: cdpxlinux.azurecr.io/user/container-plat/golang:1.13.10
 
 resources:
   repositories: 
@@ -12,14 +12,18 @@ resources:
       ref: refs/heads/main
 
 extends:
-  template: v2/OneBranch.[Official|NonOfficial].CrossPlat.yml@templates
+  template: v2/OneBranch.Official.CrossPlat.yml@templates
   parameters:
     stages:
-    - stage: build
+    - stage: foo
       jobs:
-      - job: main
+      - job: bar
         pool:
-          type: windows
+          type: linux
         variables:
           ob_outputDirectory: '$(Build.SourcesDirectory)\out'
-        steps: []
+        steps:
+        - script: |
+            mount
+            env
+            ls -laR /
