@@ -16,12 +16,12 @@ extends:
   parameters:
     stages:
     - stage: foo
-      variables:
-        ob_outputDirectory: '$(Build.SourceDirectory)/out'
       jobs:
       - job: bar
         pool:
           type: linux
+        variables:
+          ob_outputDirectory: '$(Build.SourceDirectory)/out'
         steps:
         - script: |
             mount
