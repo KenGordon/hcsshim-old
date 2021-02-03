@@ -20,10 +20,9 @@ extends:
       - job: bar
         pool:
           type: linux
-        variables:
-          ob_outputDirectory: '$(Build.SourcesDirectory)\out'
+    #    variables:
+    #      ob_outputDirectory: '$(Build.SourcesDirectory)\out'
         steps:
         - script: |
             mount
             env
-            ls -laR /
