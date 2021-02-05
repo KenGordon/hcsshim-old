@@ -1,25 +1,22 @@
 #!/bin/bash
 
-# CDPx treats any output to stderr as a warning, so redirect output from
-# "set -x" to stdout instead of stderr.
-BASH_XTRACEFD=1
-set -eux
+set -eu
+
+dir=$1
 
 export GOOS=windows
 export GOPROXY=off         # Prohibit downloads
 export GOFLAGS=-mod=vendor # Build using vendor directory
 
-mkdir -p /source/cdpx-artifacts
-cd /source/cdpx-artifacts
+mkdir -p $dir
 
-go build github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
-go build github.com/Microsoft/hcsshim/cmd/runhcs
-go build github.com/Microsoft/hcsshim/cmd/shimdiag
-go build github.com/Microsoft/hcsshim/cmd/tar2ext4
-GOOS=linux go build -buildmode=pie github.com/Microsoft/hcsshim/cmd/tar2ext4
-go build github.com/Microsoft/hcsshim/internal/tools/zapdir
-go build github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
+go build -o $dir github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+go build -o $dir github.com/Microsoft/hcsshim/cmd/runhcs
+go build -o $dir github.com/Microsoft/hcsshim/cmd/shimdiag
+go build -o $dir github.com/Microsoft/hcsshim/cmd/tar2ext4
+GOOS=linux go build -o $dir -buildmode=pie github.com/Microsoft/hcsshim/cmd/tar2ext4
+go build -o $dir github.com/Microsoft/hcsshim/internal/tools/zapdir
+go build -o $dir github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
 
-cd /source/test
-go test -c github.com/Microsoft/hcsshim/test/cri-containerd --tags functional
-mv ./cri-containerd.test.exe /source/cdpx-artifacts
+cd test
+go test -c -o $dir github.com/Microsoft/hcsshim/test/cri-containerd --tags functional
