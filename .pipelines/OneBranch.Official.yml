@@ -45,9 +45,8 @@ extends:
           inputs:
             command: 'sign'
             signing_environment: 'azure-ado'
-            files_to_sign: '**'
-            search_root: '$(Build.StagingDirectory)'
-            in_container: false
+            files_to_sign: '**/*.exe'
+            search_root: '$(Build.StagingDirectory)\prev'
 
       - job: package
         dependsOn: sign
