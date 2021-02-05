@@ -53,12 +53,11 @@ extends:
         variables:
           ob_outputDirectory: '$(Build.StagingDirectory)'
         steps:
-        - script: dir /s $(Build.StagingDirectory)
         - task: DownloadPipelineArtifact@2
           inputs:
             buildType: 'current'
             artifactName: 'drop_build_repo_build'
-            itemPattern: '**'
+            itemPattern: '/out/**'
             targetPath: '$(Build.StagingDirectory)'
         - script: dir /s $(Build.StagingDirectory)
         - task: onebranch.pipeline.signing@1
