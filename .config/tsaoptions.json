@@ -1,5 +1,5 @@
 {
-    "instanceUrl": "https://dev.azure.com/microsoft",
+    "instanceUrl": "https://microsoft.visualstudio.com",
     "projectName": "OS",
     "areaPath": "OS\\Core\\Base\\HYP-Virtualization\\CPlat-Container Platform",
     "iterationPath": "OS",
