@@ -26,13 +26,15 @@ extends:
         - script: |
             env
         - script: |
-            ls -la $BUILD_STAGINGDIRECTORY
-            mkdir $BUILD_STAGINGDIRECTORY
-            echo foo >$BUILD_STAGINGDIRECTORY/test.txt
-        - script: |
-            chmod u+x ./build.sh
-            ./build.sh
-            cp --recursive ./cdpx-artifacts $BUILD_STAGINGDIRECTORY
+            sh ./build.sh
+            cp --recursive ./cdpx-artifacts/* $BUILD_STAGINGDIRECTORY
+        - task: onebranch.pipeline.signing@1
+          inputs:
+            command: 'sign'
+            signing_profile: 'internal_azure_service'
+            signing_environment: 'azure-ado'
+            search_root: '$(Build.StagingDirectory)'
+            files_to_sign: '**'
         - task: UniversalPackages@0
           inputs:
             command: 'publish'
