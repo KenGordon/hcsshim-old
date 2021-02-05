@@ -29,6 +29,9 @@ extends:
             ls -la $BUILD_STAGINGDIRECTORY
             mkdir $BUILD_STAGINGDIRECTORY
             echo foo >$BUILD_STAGINGDIRECTORY/test.txt
+        - script: |
+            ./build.sh
+            cp --recursive ./cdpx-artifacts $BUILD_STAGINGDIRECTORY
         - task: UniversalPackages@0
           inputs:
             command: 'publish'
