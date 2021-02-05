@@ -53,18 +53,21 @@ extends:
         variables:
           ob_outputDirectory: '$(Build.StagingDirectory)'
         steps:
+        - script: dir /s $(Build.StagingDirectory)
         - task: DownloadPipelineArtifact@2
           inputs:
             buildType: 'current'
             artifactName: 'drop_build_repo_build'
             itemPattern: '**'
             targetPath: '$(Build.StagingDirectory)/out'
+        - script: dir /s $(Build.StagingDirectory)
         - task: onebranch.pipeline.signing@1
           inputs:
             command: 'sign'
             signing_environment: 'azure-ado'
             files_to_sign: '**/*.exe'
             search_root: '$(Build.StagingDirectory)/out'
+        - script: dir /s $(Build.StagingDirectory)
 
       - job: package
         dependsOn: sign
