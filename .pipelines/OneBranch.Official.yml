@@ -43,9 +43,7 @@ extends:
             pwd
             ls -laR
         - script: |
-            sh ./build.sh
-            mkdir $BUILD_STAGINGDIRECTORY/out
-            cp --recursive ./cdpx-artifacts/* $BUILD_STAGINGDIRECTORY/out
+            sh ./build.sh $BUILD_STAGINGDIRECTORY/out
 
       - job: sign
         dependsOn: build
