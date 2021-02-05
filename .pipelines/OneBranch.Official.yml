@@ -15,9 +15,10 @@ extends:
   template: v2/OneBranch.Official.CrossPlat.yml@templates
   parameters:
     stages:
-    - stage: foo
+    - stage: build repo
       jobs:
-      - job: bar
+
+      - job: build
         pool:
           type: linux
         variables:
@@ -28,6 +29,18 @@ extends:
         - script: |
             sh ./build.sh
             cp --recursive ./cdpx-artifacts/* $BUILD_STAGINGDIRECTORY
+
+      - job: sign
+        dependsOn: build
+        pool:
+          type: windows
+        variables:
+          ob_outputDirectory: '$(Build.StagingDirectory)'
+        steps:
+        - task: DownloadPipelineArtifact@2
+          inputs:
+            buildType: 'current'
+            targetPath: '$(Build.StagingDirectory)\prev'
         - task: onebranch.pipeline.signing@1
           inputs:
             command: 'sign'
@@ -35,6 +48,14 @@ extends:
             files_to_sign: '**'
             search_root: '$(Build.StagingDirectory)'
             in_container: false
+
+      - job: package
+        dependsOn: sign
+        pool:
+          type: linux
+        variables:
+          ob_outputDirectory: '$(Build.StagingDirectory)'
+        steps:
         - task: UniversalPackages@0
           inputs:
             command: 'publish'
@@ -43,4 +64,3 @@ extends:
             vstsFeedPublish: 'ContainerPlatform/ContainerPlat-Dev'
             vstsFeedPackagePublish: 'kevpar-test'
             versionOption: 'patch'
-
