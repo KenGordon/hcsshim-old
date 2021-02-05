@@ -39,7 +39,9 @@ extends:
         variables:
           ob_outputDirectory: '$(Build.StagingDirectory)'
         steps:
-        - script: ls -laR
+        - script: |
+            pwd
+            ls -laR
         - script: |
             sh ./build.sh
             mkdir $BUILD_STAGINGDIRECTORY/out
@@ -56,7 +58,7 @@ extends:
           inputs:
             buildType: 'current'
             artifactName: 'drop_build_repo_build'
-            itemPattern: '\out\**'
+            itemPattern: 'out/**'
             targetPath: '$(Build.StagingDirectory)'
         - task: onebranch.pipeline.signing@1
           inputs:
