@@ -23,7 +23,7 @@ extends:
           type: linux
         variables:
           ob_outputDirectory: '$(Build.StagingDirectory)'
-          runNumber: $[counter($(Build.SourceBranch), 1)]
+          runNumber: $[counter('$(Build.SourceBranch)', 1)]
         steps:
         - script: env
         - script: |
