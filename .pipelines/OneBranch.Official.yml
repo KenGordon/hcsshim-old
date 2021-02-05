@@ -15,7 +15,7 @@ extends:
   template: v2/OneBranch.Official.CrossPlat.yml@templates
   parameters:
     stages:
-    - stage: build repo
+    - stage: build_repo
       jobs:
 
       - job: build
