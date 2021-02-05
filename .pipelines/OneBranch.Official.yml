@@ -31,10 +31,10 @@ extends:
         - task: onebranch.pipeline.signing@1
           inputs:
             command: 'sign'
-            signing_profile: 'internal_azure_service'
             signing_environment: 'azure-ado'
-            search_root: '$(Build.StagingDirectory)'
             files_to_sign: '**'
+            search_root: '$(Build.StagingDirectory)'
+            in_container: false
         - task: UniversalPackages@0
           inputs:
             command: 'publish'
