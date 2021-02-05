@@ -26,14 +26,14 @@ extends:
         steps:
         - script: |
             export QQQ=zzz$(sh ./version.sh)
-            echo ##vso[task.setvariable variable=VER;]$QQQ
+            echo ##vso[task.setvariable variable=kevparversion]yyy$QQQ
             echo setting ver to $QQQ
         - script: |
             env
         - task: onebranch.pipeline.version@1
           inputs:
             system: 'Custom'
-            customVersion: '$(VER)'
+            customVersion: '$(kevparversion)'
 
       - job: build
         pool:
