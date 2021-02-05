@@ -30,6 +30,7 @@ extends:
             mkdir $BUILD_STAGINGDIRECTORY
             echo foo >$BUILD_STAGINGDIRECTORY/test.txt
         - script: |
+            chmod u+x ./build.sh
             ./build.sh
             cp --recursive ./cdpx-artifacts $BUILD_STAGINGDIRECTORY
         - task: UniversalPackages@0
