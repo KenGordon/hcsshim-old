@@ -59,7 +59,7 @@ extends:
             buildType: 'current'
             artifactName: 'drop_build_repo_build'
             itemPattern: '**'
-            targetPath: '$(Build.StagingDirectory)/out'
+            targetPath: '$(Build.StagingDirectory)'
         - script: dir /s $(Build.StagingDirectory)
         - task: onebranch.pipeline.signing@1
           inputs:
