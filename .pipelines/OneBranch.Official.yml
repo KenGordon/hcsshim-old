@@ -25,13 +25,13 @@ extends:
           ob_outputDirectory: '$(Build.StagingDirectory)'
         steps:
         - script: |
-            echo ##vso[task.setvariable variable=kevparversion]arandomversionstring
+            echo ##vso[task.setvariable variable=myversion]arandomversionstring
         - script: |
             env
         - task: onebranch.pipeline.version@1
           inputs:
             system: 'Custom'
-            customVersion: '$(kevparversion)'
+            customVersion: '$(myversion)'
 
       - job: build
         pool:
@@ -64,19 +64,3 @@ extends:
             signing_environment: 'azure-ado'
             files_to_sign: '**/*.exe;**/*.dll;**/*.ps1;**/*.psm1'
             search_root: '$(Build.StagingDirectory)/out'
-
-      - job: package
-        dependsOn: sign
-        pool:
-          type: linux
-        variables:
-          ob_outputDirectory: '$(Build.StagingDirectory)'
-        steps:
-        - task: UniversalPackages@0
-          inputs:
-            command: 'publish'
-            publishDirectory: '$(Build.StagingDirectory)'
-            feedsToUsePublish: 'internal'
-            vstsFeedPublish: 'ContainerPlatform/ContainerPlat-Dev'
-            vstsFeedPackagePublish: 'kevpar-test'
-            versionOption: 'patch'
