@@ -18,14 +18,25 @@ extends:
     - stage: build_repo
       jobs:
 
-      - job: build
+      - job: version
         pool:
           type: linux
         variables:
           ob_outputDirectory: '$(Build.StagingDirectory)'
         steps:
         - script: |
-            env
+            echo ##vso[task.setvariable variable=VER;]$(sh ./version.sh)
+        - task: onebranch.pipeline.version@1
+          inputs:
+            system: 'Custom'
+            customVersion: '$(VER)'
+
+      - job: build
+        pool:
+          type: linux
+        variables:
+          ob_outputDirectory: '$(Build.StagingDirectory)'
+        steps:
         - script: |
             sh ./build.sh
             cp --recursive ./cdpx-artifacts/* $BUILD_STAGINGDIRECTORY
