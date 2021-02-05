@@ -3,6 +3,7 @@
     "projectName": "OS",
     "areaPath": "OS\\Core\\Base\\HYP-Virtualization\\CPlat-Container Platform",
     "iterationPath": "OS",
+    "template": "VSTS_Microsoft_OSGS",
     "notificationAliases": [
         "kevpar@microsoft.com"
     ]
