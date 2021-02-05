@@ -57,7 +57,7 @@ extends:
           inputs:
             buildType: 'current'
             artifactName: 'drop_build_repo_build'
-            itemPattern: '/out'
+            itemPattern: '**'
             targetPath: '$(Build.StagingDirectory)/out'
         - task: onebranch.pipeline.signing@1
           inputs:
