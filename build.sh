@@ -19,4 +19,4 @@ go build -o $dir github.com/Microsoft/hcsshim/internal/tools/zapdir
 go build -o $dir github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
 
 cd test
-go test -c -o $dir github.com/Microsoft/hcsshim/test/cri-containerd --tags functional
+go test -c -o $dir/cri-containerd.test.exe github.com/Microsoft/hcsshim/test/cri-containerd --tags functional
