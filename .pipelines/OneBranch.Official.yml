@@ -39,6 +39,7 @@ extends:
         variables:
           ob_outputDirectory: '$(Build.StagingDirectory)'
         steps:
+        - script: ls -laR
         - script: |
             sh ./build.sh
             mkdir $BUILD_STAGINGDIRECTORY/out
