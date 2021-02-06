@@ -24,12 +24,15 @@ extends:
         variables:
           ob_outputDirectory: '$(Build.StagingDirectory)'
           runNumber: $[counter('$(Build.SourceBranch)', 1)]
-          # DECODE_PERCENTS: true
+          # Remove this in March 2021 after it becomes the default, before
+          # that we get a warning if we don't have this set.
+          DECODE_PERCENTS: true
         steps:
         - script: |
-            date --utc +%Y
-            pwd
-            echo '##vso[task.setvariable variable=foo]bar'
+            gitVersion=$(git describe --match 'v[0-9]*' --always --long --tags)
+            timeStamp=$(date --utc +%Y%m%d)
+            ver=ob-${gitVersion}-$BUILD_SOURCEBRANCH-${timeStamp}-$RUNNUMBER
+            echo '##vso[task.setvariable variable=versionString]'${ver//\//_}
         - task: onebranch.pipeline.version@1
           inputs:
             system: 'Custom'
