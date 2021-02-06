@@ -28,6 +28,7 @@ extends:
         steps:
         - script: |
             date --utc +%Y%m%d
+            pwd
         - task: onebranch.pipeline.version@1
           inputs:
             system: 'Custom'
