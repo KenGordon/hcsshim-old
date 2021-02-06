@@ -27,7 +27,7 @@ extends:
           # DECODE_PERCENTS: true
         steps:
         - script: |
-            date --utc +%Y%m%d
+            date --utc +%Y
             pwd
         - task: onebranch.pipeline.version@1
           inputs:
