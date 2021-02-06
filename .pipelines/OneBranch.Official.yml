@@ -29,6 +29,7 @@ extends:
         - script: |
             date --utc +%Y
             pwd
+            echo '##vso[task.setvariable variable=foo]bar'
         - task: onebranch.pipeline.version@1
           inputs:
             system: 'Custom'
