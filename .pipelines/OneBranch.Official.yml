@@ -27,6 +27,8 @@ extends:
           # DECODE_PERCENTS: true
         steps:
         - script: |
+            timeStamp=$(date --utc +%Y%m%d)
+            ver=ob-$BUILD_SOURCEBRANCH-${timeStamp}
             ver=foobar
             echo '##vso[task.setvariable variable=versionString]'$ver
         - task: onebranch.pipeline.version@1
