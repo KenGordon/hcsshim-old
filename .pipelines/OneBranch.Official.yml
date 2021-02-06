@@ -27,7 +27,7 @@ extends:
           # DECODE_PERCENTS: true
         steps:
         - script: |
-            timeStamp=$(date --utc +%Y%m%d)
+            date --utc +%Y%m%d
         - task: onebranch.pipeline.version@1
           inputs:
             system: 'Custom'
