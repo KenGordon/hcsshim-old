@@ -24,7 +24,7 @@ extends:
         variables:
           ob_outputDirectory: '$(Build.StagingDirectory)'
           runNumber: $[counter('$(Build.SourceBranch)', 1)]
-          DECODE_PERCENTS: true
+          # DECODE_PERCENTS: true
         steps:
         - script: |
             gitVersion=$(git describe --match 'v[0-9]*' --always --long --tags)
