@@ -30,7 +30,7 @@ extends:
             gitVersion=$(git describe --match 'v[0-9]*' --always --long --tags)
             timeStamp=$(date --utc +%Y%m%d)
             ver=ob-$BUILD_SOURCEBRANCH-${timeStamp}
-            echo '##vsotask.setvariable variable=versionString]'
+            echo '##[vsotask.setvariable variable=versionString]'$ver
         - task: onebranch.pipeline.version@1
           inputs:
             system: 'Custom'
