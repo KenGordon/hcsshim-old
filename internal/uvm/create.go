@@ -15,6 +15,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/oc"
 	hcsschema "github.com/Microsoft/hcsshim/internal/schema2"
 	"github.com/Microsoft/hcsshim/internal/schemaversion"
+	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
@@ -85,11 +86,28 @@ type Options struct {
 	// CPUGroupID set the ID of a CPUGroup on the host that the UVM should be added to on start.
 	// Defaults to an empty string which indicates the UVM should not be added to any CPUGroup.
 	CPUGroupID string
+
 	// NetworkConfigProxy holds the address of the network config proxy service.
 	// This != "" determines whether to start the ComputeAgent TTRPC service
 	// that receives the UVMs set of NICs from this proxy instead of enumerating
 	// the endpoints locally.
 	NetworkConfigProxy string
+
+	// VMSource signifies what virtstack to use to launch a utility VM. This is split into two options
+	// 1. hcs - The default if no option set explicitly.
+	// 2. remotevm - Talk to another virtstack that implements the vmservice ttrpc interface to launch
+	// VMs.
+	VMSource string
+
+	// VMServiceAddress specifies the address to connect to talk to a process implementing the vmservice
+	// ttrpc interface.
+	VMServiceAddress string
+
+	// VMServicePath specifies the path on disk of the binary to launch that implements the vmservice ttrpc
+	// interface. If this is ommited and VMServiceAddress is present, it's inferred that the binary is already
+	// up and running anhd another instance isn't needed. If there needs to be a new instance per virtual machine
+	// launched by the service, this will have to be provided.
+	VMServicePath string
 }
 
 // compares the create opts used during template creation with the create opts
@@ -190,6 +208,7 @@ func newDefaultOptions(id, owner string) *Options {
 		ProcessorCount:          defaultProcessorCount(),
 		ExternalGuestConnection: true,
 		FullyPhysicallyBacked:   false,
+		VMSource:                vm.HCS,
 	}
 
 	if opts.Owner == "" {

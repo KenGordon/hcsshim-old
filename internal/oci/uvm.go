@@ -162,6 +162,9 @@ const (
 	annotationTemplateID         = "io.microsoft.virtualmachine.templateid"
 	annotationNetworkConfigProxy = "io.microsoft.network.ncproxy"
 	AnnotationNcproxyContainerID = "io.microsoft.network.ncproxy.containerid"
+	annotationsVMSource          = "io.microsoft.virtualmachine.vmsource"
+	annotationVMServiceAddress   = "io.microsoft.virtualmachine.vmservice.address"
+	annotationVMServiceBinPath   = "io.microsoft.virtualmachine.vmservice.path"
 )
 
 // parseAnnotationsBool searches `a` for `key` and if found verifies that the
@@ -466,6 +469,9 @@ func SpecToUVMCreateOpts(ctx context.Context, s *specs.Spec, id, owner string) (
 		lopts.ExternalGuestConnection = parseAnnotationsBool(ctx, s.Annotations, annotationUseExternalGCSBridge, lopts.ExternalGuestConnection)
 		lopts.CPUGroupID = parseAnnotationsString(s.Annotations, annotationCPUGroupID, lopts.CPUGroupID)
 		lopts.NetworkConfigProxy = parseAnnotationsString(s.Annotations, annotationNetworkConfigProxy, lopts.NetworkConfigProxy)
+		lopts.VMSource = parseAnnotationsString(s.Annotations, annotationsVMSource, lopts.VMSource)
+		lopts.VMServiceAddress = parseAnnotationsString(s.Annotations, annotationVMServiceAddress, lopts.VMServiceAddress)
+		lopts.VMServicePath = parseAnnotationsString(s.Annotations, annotationVMServiceBinPath, lopts.VMServicePath)
 		handleAnnotationPreferredRootFSType(ctx, s.Annotations, lopts)
 		handleAnnotationKernelDirectBoot(ctx, s.Annotations, lopts)
 
@@ -490,6 +496,9 @@ func SpecToUVMCreateOpts(ctx context.Context, s *specs.Spec, id, owner string) (
 		wopts.DisableCompartmentNamespace = parseAnnotationsBool(ctx, s.Annotations, annotationDisableCompartmentNamespace, wopts.DisableCompartmentNamespace)
 		wopts.CPUGroupID = parseAnnotationsString(s.Annotations, annotationCPUGroupID, wopts.CPUGroupID)
 		wopts.NetworkConfigProxy = parseAnnotationsString(s.Annotations, annotationNetworkConfigProxy, wopts.NetworkConfigProxy)
+		wopts.VMSource = parseAnnotationsString(s.Annotations, annotationsVMSource, wopts.VMSource)
+		wopts.VMServiceAddress = parseAnnotationsString(s.Annotations, annotationVMServiceAddress, wopts.VMServiceAddress)
+		wopts.VMServicePath = parseAnnotationsString(s.Annotations, annotationVMServiceBinPath, wopts.VMServicePath)
 		handleAnnotationFullyPhysicallyBacked(ctx, s.Annotations, wopts)
 		if err := handleCloneAnnotations(ctx, s.Annotations, wopts); err != nil {
 			return nil, err
