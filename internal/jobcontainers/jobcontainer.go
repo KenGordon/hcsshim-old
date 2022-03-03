@@ -39,15 +39,6 @@ func splitArgs(cmdLine string) []string {
 	return r.FindAllString(cmdLine, -1)
 }
 
-// Convert environment map to a slice of environment variables in the form [Key1=val1, key2=val2]
-func envMapToSlice(m map[string]string) []string {
-	var s []string
-	for k, v := range m {
-		s = append(s, k+"="+v)
-	}
-	return s
-}
-
 const (
 	jobContainerNameFmt = "JobContainer_%s"
 	// Environment variable set in every process in the job detailing where the containers volume
@@ -63,16 +54,18 @@ type initProc struct {
 
 // JobContainer represents a lightweight container composed from a job object.
 type JobContainer struct {
-	id             string
-	spec           *specs.Spec          // OCI spec used to create the container
-	job            *jobobject.JobObject // Object representing the job object the container owns
-	sandboxMount   string               // Path to where the sandbox is mounted on the host
-	closedWaitOnce sync.Once
-	init           initProc
-	startTimestamp time.Time
-	exited         chan struct{}
-	waitBlock      chan struct{}
-	waitError      error
+	id               string
+	spec             *specs.Spec          // OCI spec used to create the container
+	job              *jobobject.JobObject // Object representing the job object the container owns
+	sandboxMount     string               // Path to where the sandbox is mounted on the host
+	closedWaitOnce   sync.Once
+	init             initProc
+	token            windows.Token
+	localUserAccount string
+	startTimestamp   time.Time
+	exited           chan struct{}
+	waitBlock        chan struct{}
+	waitError        error
 }
 
 var _ cow.ProcessHost = &JobContainer{}
@@ -214,25 +207,35 @@ func (c *JobContainer) CreateProcess(ctx context.Context, config interface{}) (_
 		return nil, errors.Wrapf(err, "failed to get application name from commandline %q", conf.CommandLine)
 	}
 
-	var token windows.Token
-	if getUserTokenInheritAnnotation(c.spec.Annotations) {
-		token, err = openCurrentProcessToken()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		token, err = processToken(conf.User)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create user process token")
+	// If we haven't grabbed a token yet this is the init process being launched. Skip grabbing another token afterwards if we've already
+	// done the work (c.token != 0), this would typically be for an exec being launched.
+	if c.token == 0 {
+		if inheritUserTokenIsSet(c.spec.Annotations) {
+			c.token, err = openCurrentProcessToken()
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			c.token, err = c.processToken(ctx, conf.User)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create user process token: %w", err)
+			}
 		}
 	}
-	defer token.Close()
 
-	env, err := defaultEnvBlock(token)
+	env, err := defaultEnvBlock(c.token)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get default environment block")
 	}
-	env = append(env, envMapToSlice(conf.Environment)...)
+
+	// Convert environment map to a slice of environment variables in the form [Key1=val1, key2=val2]
+	var envs []string
+	for k, v := range conf.Environment {
+		expanded, _ := c.replaceWithMountPoint(v)
+		envs = append(envs, k+"="+expanded)
+	}
+	env = append(env, envs...)
+
 	env = append(env, sandboxMountPointEnvVar+"="+c.sandboxMount)
 
 	// exec.Cmd internally does its own path resolution and as part of this checks some well known file extensions on the file given (e.g. if
@@ -258,7 +261,7 @@ func (c *JobContainer) CreateProcess(ctx context.Context, config interface{}) (_
 		commandLine,
 		exec.WithDir(workDir),
 		exec.WithEnv(env),
-		exec.WithToken(token),
+		exec.WithToken(c.token),
 		exec.WithJobObject(c.job),
 		exec.WithConPty(cpty),
 		exec.WithProcessFlags(windows.CREATE_BREAKAWAY_FROM_JOB),
@@ -315,15 +318,36 @@ func (c *JobContainer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Close closes any open handles.
+// Close free's up any resources (handles, temporary accounts).
 func (c *JobContainer) Close() error {
+	// Do not return the first error so we can finish cleaning up.
+
+	var closeErr bool
 	if err := c.job.Close(); err != nil {
-		return err
+		log.G(context.Background()).WithError(err).WithField("cid", c.id).Warning("failed to close job object")
+		closeErr = true
 	}
+
+	if err := c.token.Close(); err != nil {
+		log.G(context.Background()).WithError(err).WithField("cid", c.id).Warning("failed to close token")
+		closeErr = true
+	}
+
+	// Delete the containers local account if one was created
+	if c.localUserAccount != "" {
+		if err := winapi.NetUserDel("", c.localUserAccount); err != nil {
+			log.G(context.Background()).WithError(err).WithField("cid", c.id).Warning("failed to delete local account")
+			closeErr = true
+		}
+	}
+
 	c.closedWaitOnce.Do(func() {
 		c.waitError = hcs.ErrAlreadyClosed
 		close(c.waitBlock)
 	})
+	if closeErr {
+		return errors.New("failed to close one or more job container resources")
+	}
 	return nil
 }
 
@@ -603,7 +627,7 @@ func systemProcessInformation() ([]*winapi.SYSTEM_PROCESS_INFORMATION, error) {
 	return procInfos, nil
 }
 
-// Takes a string and replaces any occurences of CONTAINER_SANDBOX_MOUNT_POINT with where the containers volume is mounted, as well as returning
+// Takes a string and replaces any occurrences of CONTAINER_SANDBOX_MOUNT_POINT with where the containers' volume is mounted, as well as returning
 // if the string actually contained the environment variable.
 func (c *JobContainer) replaceWithMountPoint(str string) (string, bool) {
 	newStr := strings.ReplaceAll(str, "%"+sandboxMountPointEnvVar+"%", c.sandboxMount[:len(c.sandboxMount)-1])

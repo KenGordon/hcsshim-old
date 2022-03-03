@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,6 +94,13 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 	f.Close()
 
 	spec = oci.UpdateSpecFromOptions(spec, shimOpts)
+	//expand annotations after defaults have been loaded in from options
+	err = oci.ProcessAnnotations(ctx, &spec)
+	// since annotation expansion is used to toggle security features
+	// raise it rather than suppress and move on
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to process OCI Spec annotations")
+	}
 
 	if len(req.Rootfs) == 0 {
 		// If no mounts are passed via the snapshotter its the callers full
@@ -206,17 +214,29 @@ func (s *service) startInternal(ctx context.Context, req *task.StartRequest) (*t
 }
 
 func (s *service) deleteInternal(ctx context.Context, req *task.DeleteRequest) (*task.DeleteResponse, error) {
-	// TODO: JTERRY75 we need to send this to the POD for isSandbox
-
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
 	}
+
 	pid, exitStatus, exitedAt, err := t.DeleteExec(ctx, req.ExecID)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: We should be removing the task after this right?
+
+	// if the delete is for a task and not an exec, remove the pod sandbox's reference to the task
+	if s.isSandbox && req.ExecID == "" {
+		p, err := s.getPod()
+		if err != nil {
+			return nil, errors.Wrapf(err, "could not get pod %q to delete task %q", s.tid, req.ID)
+		}
+		err = p.DeleteTask(ctx, req.ID)
+		if err != nil {
+			return nil, fmt.Errorf("could not delete task %q in pod %q: %w", req.ID, s.tid, err)
+		}
+	}
+	// TODO: check if the pod's workload tasks is empty, and, if so, reset p.taskOrPod to nil
+
 	return &task.DeleteResponse{
 		Pid:        uint32(pid),
 		ExitStatus: exitStatus,
@@ -447,12 +467,13 @@ func (s *service) shutdownInternal(ctx context.Context, req *task.ShutdownReques
 		return empty, nil
 	}
 
-	if req.Now {
-		os.Exit(0)
-	}
-	// TODO: JTERRY75 if we dont use `now` issue a Shutdown to the ttrpc
-	// connection to drain any active requests.
-	os.Exit(0)
+	s.shutdownOnce.Do(func() {
+		// TODO: should taskOrPod be deleted/set to nil?
+		// TODO: is there any extra leftovers of the shimTask/Pod to clean? ie: verify all handles are closed?
+		s.gracefulShutdown = !req.Now
+		close(s.shutdown)
+	})
+
 	return empty, nil
 }
 

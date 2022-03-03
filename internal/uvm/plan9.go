@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/Microsoft/hcsshim/internal/guestrequest"
+	"github.com/Microsoft/hcsshim/internal/hcs"
 	"github.com/Microsoft/hcsshim/internal/hcs/resourcepaths"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
-	"github.com/Microsoft/hcsshim/internal/requesttype"
+	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
+	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/Microsoft/hcsshim/osversion"
 )
 
@@ -41,6 +42,9 @@ func (uvm *UtilityVM) AddPlan9(ctx context.Context, hostPath string, uvmPath str
 	if uvmPath == "" {
 		return nil, fmt.Errorf("uvmPath must be passed to AddPlan9")
 	}
+	if !readOnly && uvm.NoWritableFileShares() {
+		return nil, fmt.Errorf("adding writable shares is denied: %w", hcs.ErrOperationDenied)
+	}
 
 	// TODO: JTERRY75 - These are marked private in the schema. For now use them
 	// but when there are public variants we need to switch to them.
@@ -69,7 +73,7 @@ func (uvm *UtilityVM) AddPlan9(ctx context.Context, hostPath string, uvmPath str
 	name := strconv.FormatUint(index, 10)
 
 	modification := &hcsschema.ModifySettingRequest{
-		RequestType: requesttype.Add,
+		RequestType: guestrequest.RequestTypeAdd,
 		Settings: hcsschema.Plan9Share{
 			Name:         name,
 			AccessName:   name,
@@ -79,10 +83,10 @@ func (uvm *UtilityVM) AddPlan9(ctx context.Context, hostPath string, uvmPath str
 			AllowedFiles: allowedNames,
 		},
 		ResourcePath: resourcepaths.Plan9ShareResourcePath,
-		GuestRequest: guestrequest.GuestRequest{
-			ResourceType: guestrequest.ResourceTypeMappedDirectory,
-			RequestType:  requesttype.Add,
-			Settings: guestrequest.LCOWMappedDirectory{
+		GuestRequest: guestrequest.ModificationRequest{
+			ResourceType: guestresource.ResourceTypeMappedDirectory,
+			RequestType:  guestrequest.RequestTypeAdd,
+			Settings: guestresource.LCOWMappedDirectory{
 				MountPath: uvmPath,
 				ShareName: name,
 				Port:      plan9Port,
@@ -110,17 +114,17 @@ func (uvm *UtilityVM) RemovePlan9(ctx context.Context, share *Plan9Share) error 
 	}
 
 	modification := &hcsschema.ModifySettingRequest{
-		RequestType: requesttype.Remove,
+		RequestType: guestrequest.RequestTypeRemove,
 		Settings: hcsschema.Plan9Share{
 			Name:       share.name,
 			AccessName: share.name,
 			Port:       plan9Port,
 		},
 		ResourcePath: resourcepaths.Plan9ShareResourcePath,
-		GuestRequest: guestrequest.GuestRequest{
-			ResourceType: guestrequest.ResourceTypeMappedDirectory,
-			RequestType:  requesttype.Remove,
-			Settings: guestrequest.LCOWMappedDirectory{
+		GuestRequest: guestrequest.ModificationRequest{
+			ResourceType: guestresource.ResourceTypeMappedDirectory,
+			RequestType:  guestrequest.RequestTypeRemove,
+			Settings: guestresource.LCOWMappedDirectory{
 				MountPath: share.uvmPath,
 				ShareName: share.name,
 				Port:      plan9Port,

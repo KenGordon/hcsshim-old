@@ -8,6 +8,13 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/containerd/cgroups"
+	v1 "github.com/containerd/cgroups/stats/v1"
+	oci "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"go.opencensus.io/trace"
+
 	"github.com/Microsoft/hcsshim/internal/guest/gcserr"
 	"github.com/Microsoft/hcsshim/internal/guest/prot"
 	"github.com/Microsoft/hcsshim/internal/guest/runtime"
@@ -15,11 +22,9 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guest/storage"
 	"github.com/Microsoft/hcsshim/internal/guest/transport"
 	"github.com/Microsoft/hcsshim/internal/log"
-	"github.com/containerd/cgroups"
-	v1 "github.com/containerd/cgroups/stats/v1"
-	oci "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
-	"go.opencensus.io/trace"
+	"github.com/Microsoft/hcsshim/internal/logfields"
+	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
+	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 )
 
 type Container struct {
@@ -40,6 +45,7 @@ type Container struct {
 }
 
 func (c *Container) Start(ctx context.Context, conSettings stdio.ConnectionSettings) (int, error) {
+	log.G(ctx).WithField(logfields.ContainerID, c.id).Info("opengcs::Container::Start")
 	stdioSet, err := stdio.Connect(c.vsock, conSettings)
 	if err != nil {
 		return -1, err
@@ -62,6 +68,7 @@ func (c *Container) Start(ctx context.Context, conSettings stdio.ConnectionSetti
 }
 
 func (c *Container) ExecProcess(ctx context.Context, process *oci.Process, conSettings stdio.ConnectionSettings) (int, error) {
+	log.G(ctx).WithField(logfields.ContainerID, c.id).Info("opengcs::Container::ExecProcess")
 	stdioSet, err := stdio.Connect(c.vsock, conSettings)
 	if err != nil {
 		return -1, err
@@ -102,6 +109,11 @@ func (c *Container) ExecProcess(ctx context.Context, process *oci.Process, conSe
 // GetProcess returns the Process with the matching 'pid'. If the 'pid' does
 // not exit returns error.
 func (c *Container) GetProcess(pid uint32) (Process, error) {
+	//todo: thread a context to this function call
+	logrus.WithFields(logrus.Fields{
+		logfields.ContainerID: c.id,
+		logfields.ProcessID:   pid,
+	}).Info("opengcs::Container::GetProcesss")
 	if c.initProcess.pid == pid {
 		return c.initProcess, nil
 	}
@@ -118,6 +130,7 @@ func (c *Container) GetProcess(pid uint32) (Process, error) {
 
 // GetAllProcessPids returns all process pids in the container namespace.
 func (c *Container) GetAllProcessPids(ctx context.Context) ([]int, error) {
+	log.G(ctx).WithField(logfields.ContainerID, c.id).Info("opengcs::Container::GetAllProcessPids")
 	state, err := c.container.GetAllProcesses()
 	if err != nil {
 		return nil, err
@@ -131,6 +144,7 @@ func (c *Container) GetAllProcessPids(ctx context.Context) ([]int, error) {
 
 // Kill sends 'signal' to the container process.
 func (c *Container) Kill(ctx context.Context, signal syscall.Signal) error {
+	log.G(ctx).WithField(logfields.ContainerID, c.id).Info("opengcs::Container::Kill")
 	err := c.container.Kill(signal)
 	if err != nil {
 		return err
@@ -140,21 +154,25 @@ func (c *Container) Kill(ctx context.Context, signal syscall.Signal) error {
 }
 
 func (c *Container) Delete(ctx context.Context) error {
+	entity := log.G(ctx).WithField(logfields.ContainerID, c.id)
+	entity.Info("opengcs::Container::Delete")
 	if c.isSandbox {
 		// remove user mounts in sandbox container
 		if err := storage.UnmountAllInPath(ctx, getSandboxMountsDir(c.id), true); err != nil {
-			log.G(ctx).WithError(err).Error("failed to unmount sandbox mounts")
+			entity.WithError(err).Error("failed to unmount sandbox mounts")
 		}
 
 		// remove hugepages mounts in sandbox container
 		if err := storage.UnmountAllInPath(ctx, getSandboxHugePageMountsDir(c.id), true); err != nil {
-			log.G(ctx).WithError(err).Error("failed to unmount hugepages mounts")
+			entity.WithError(err).Error("failed to unmount hugepages mounts")
 		}
 	}
+
 	return c.container.Delete()
 }
 
 func (c *Container) Update(ctx context.Context, resources interface{}) error {
+	log.G(ctx).WithField(logfields.ContainerID, c.id).Info("opengcs::Container::Update")
 	return c.container.Update(resources)
 }
 
@@ -162,7 +180,7 @@ func (c *Container) Update(ctx context.Context, resources interface{}) error {
 func (c *Container) Wait() prot.NotificationType {
 	_, span := trace.StartSpan(context.Background(), "opengcs::Container::Wait")
 	defer span.End()
-	span.AddAttributes(trace.StringAttribute("cid", c.id))
+	span.AddAttributes(trace.StringAttribute(logfields.ContainerID, c.id))
 
 	c.initProcess.writersWg.Wait()
 	c.etL.Lock()
@@ -198,6 +216,6 @@ func (c *Container) GetStats(ctx context.Context) (*v1.Metrics, error) {
 	return cg.Stat(cgroups.IgnoreNotExist)
 }
 
-func (c *Container) modifyContainerConstraints(ctx context.Context, rt prot.ModifyRequestType, cc *prot.ContainerConstraintsV2) (err error) {
+func (c *Container) modifyContainerConstraints(ctx context.Context, rt guestrequest.RequestType, cc *guestresource.LCOWContainerConstraints) (err error) {
 	return c.Update(ctx, cc.Linux)
 }

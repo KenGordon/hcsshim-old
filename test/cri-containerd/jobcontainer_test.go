@@ -16,6 +16,7 @@ import (
 
 	"github.com/Microsoft/go-winio/vhd"
 	"github.com/Microsoft/hcsshim/hcn"
+	"github.com/Microsoft/hcsshim/internal/winapi"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 )
@@ -30,7 +31,11 @@ func getJobContainerPodRequestWCOW(t *testing.T) *runtime.RunPodSandboxRequest {
 	)
 }
 
-func getJobContainerRequestWCOW(t *testing.T, podID string, podConfig *runtime.PodSandboxConfig, image string, mounts []*runtime.Mount) *runtime.CreateContainerRequest {
+func getJobContainerRequestWCOW(t *testing.T, podID string, podConfig *runtime.PodSandboxConfig, image string, user string, mounts []*runtime.Mount) *runtime.CreateContainerRequest {
+	inheritUser := "true"
+	if user != "" {
+		inheritUser = "false"
+	}
 	return &runtime.CreateContainerRequest{
 		Config: &runtime.ContainerConfig{
 			Metadata: &runtime.ContainerMetadata{
@@ -49,9 +54,13 @@ func getJobContainerRequestWCOW(t *testing.T, podID string, podConfig *runtime.P
 			Mounts: mounts,
 			Annotations: map[string]string{
 				annotations.HostProcessContainer:   "true",
-				annotations.HostProcessInheritUser: "true",
+				annotations.HostProcessInheritUser: inheritUser,
 			},
-			Windows: &runtime.WindowsContainerConfig{},
+			Windows: &runtime.WindowsContainerConfig{
+				SecurityContext: &runtime.WindowsContainerSecurityContext{
+					RunAsUsername: user,
+				},
+			},
 		},
 		PodSandboxId:  podID,
 		SandboxConfig: podConfig,
@@ -72,7 +81,7 @@ func Test_RunContainer_InheritUser_JobContainer_WCOW(t *testing.T) {
 	defer removePodSandbox(t, client, podctx, podID)
 	defer stopPodSandbox(t, client, podctx, podID)
 
-	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, nil)
+	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -111,7 +120,7 @@ func Test_RunContainer_Hostname_JobContainer_WCOW(t *testing.T) {
 	defer removePodSandbox(t, client, podctx, podID)
 	defer stopPodSandbox(t, client, podctx, podID)
 
-	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, nil)
+	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -131,6 +140,85 @@ func Test_RunContainer_Hostname_JobContainer_WCOW(t *testing.T) {
 	}
 }
 
+func makeLocalGroup(name string) error {
+	output, err := exec.Command("net", "localgroup", name, "/add").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to create localgroup %s with %s, output %s", name, err, string(output))
+	}
+	return nil
+}
+
+func deleteLocalGroup(name string) error {
+	output, err := exec.Command("net", "localgroup", name, "/delete").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to delete localgroup %s with %s, output %s", name, err, string(output))
+	}
+	return nil
+}
+
+// Checks if userName is present in the group `groupName`
+func checkLocalGroupMember(groupName, userName string) error {
+	output, err := exec.Command("net", "localgroup", groupName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to check members for localgroup %s with %s, output %s", groupName, err, string(output))
+	}
+	if !strings.Contains(string(output), userName) {
+		return fmt.Errorf("user %s not present in the local group %s", userName, groupName)
+	}
+	return nil
+}
+
+func Test_RunContainer_GroupName_JobContainer_WCOW(t *testing.T) {
+	requireFeatures(t, featureWCOWProcess, featureHostProcess)
+
+	pullRequiredImages(t, []string{imageWindowsNanoserver})
+	client := newTestRuntimeClient(t)
+
+	// This test validates that we can create a group, pass the group name to the container and have it run as a local user account in the group.
+	podctx := context.Background()
+	sandboxRequest := getJobContainerPodRequestWCOW(t)
+
+	podID := runPodSandbox(t, client, podctx, sandboxRequest)
+	defer removePodSandbox(t, client, podctx, podID)
+	defer stopPodSandbox(t, client, podctx, podID)
+
+	groupName := "jobcontainer_test"
+	// Make the local group the container will be creating a local account in.
+	if err := makeLocalGroup(groupName); err != nil {
+		t.Fatalf("failed to make local group: %s", err)
+	}
+
+	defer func() {
+		if err := deleteLocalGroup(groupName); err != nil {
+			t.Fatalf("failed to delete local group: %s", err)
+		}
+	}()
+
+	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, groupName, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	containerID := createContainer(t, client, ctx, containerRequest)
+	defer removeContainer(t, client, ctx, containerID)
+	startContainer(t, client, ctx, containerID)
+	defer stopContainer(t, client, ctx, containerID)
+
+	execResponse := execSync(t, client, ctx, &runtime.ExecSyncRequest{
+		ContainerId: containerID,
+		Cmd:         []string{"whoami"},
+	})
+	containerStdout := strings.Trim(string(execResponse.Stdout), " \r\n")
+	expectedUserName := containerID[:winapi.UserNameCharLimit]
+	if !strings.Contains(containerStdout, expectedUserName) {
+		t.Fatalf("expected whoami to be %s. got %s", expectedUserName, containerStdout)
+	}
+
+	// Check if user is in the group.
+	if err := checkLocalGroupMember(groupName, expectedUserName); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func Test_RunContainer_HNS_JobContainer_WCOW(t *testing.T) {
 	requireFeatures(t, featureWCOWProcess, featureHostProcess)
 
@@ -144,7 +232,7 @@ func Test_RunContainer_HNS_JobContainer_WCOW(t *testing.T) {
 	defer removePodSandbox(t, client, podctx, podID)
 	defer stopPodSandbox(t, client, podctx, podID)
 
-	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageJobContainerHNS, nil)
+	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageJobContainerHNS, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -191,15 +279,11 @@ func Test_RunContainer_VHD_JobContainer_WCOW(t *testing.T) {
 	defer removePodSandbox(t, client, podctx, podID)
 	defer stopPodSandbox(t, client, podctx, podID)
 
-	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageJobContainerVHD, nil)
+	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageJobContainerVHD, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	dir, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	vhdPath := filepath.Join(dir, "test.vhdx")
 	containerRequest.Config.Command = []string{
@@ -242,18 +326,14 @@ func Test_RunContainer_ETW_JobContainer_WCOW(t *testing.T) {
 	defer removePodSandbox(t, client, podctx, podID)
 	defer stopPodSandbox(t, client, podctx, podID)
 
-	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageJobContainerETW, nil)
+	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageJobContainerETW, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	// For this test we'll launch an image that has a wprp file inside that we'll use to take an etw trace.
 	// After the etl file is generated we'll use tracerpt to create a report/dump file of the trace. This is
 	// just to verify that a common use case of grabbing host traces/diagnostics can be achieved.
-	dir, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	// Need for network name is solely because the only provider defined in the image is for HNS, so
 	// we do a simple HNS operation to get some output.
 	var (
@@ -297,7 +377,7 @@ func Test_RunContainer_HostVolumes_JobContainer_WCOW(t *testing.T) {
 	defer removePodSandbox(t, client, podctx, podID)
 	defer stopPodSandbox(t, client, podctx, podID)
 
-	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, nil)
+	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -328,11 +408,7 @@ func Test_RunContainer_HostVolumes_JobContainer_WCOW(t *testing.T) {
 func Test_RunContainer_JobContainer_VolumeMount(t *testing.T) {
 	client := newTestRuntimeClient(t)
 
-	dir, err := ioutil.TempDir("", "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	tmpfn := filepath.Join(dir, "tmpfile")
 	if err := ioutil.WriteFile(tmpfn, []byte("test"), 0777); err != nil {
@@ -414,7 +490,84 @@ func Test_RunContainer_JobContainer_VolumeMount(t *testing.T) {
 			defer removePodSandbox(t, client, podctx, podID)
 			defer stopPodSandbox(t, client, podctx, podID)
 
-			containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, test.mounts)
+			containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, "", test.mounts)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+
+			containerID := createContainer(t, client, ctx, containerRequest)
+			defer removeContainer(t, client, ctx, containerID)
+			startContainer(t, client, ctx, containerID)
+			defer stopContainer(t, client, ctx, containerID)
+
+			r := execSync(t, client, ctx, &runtime.ExecSyncRequest{
+				ContainerId: containerID,
+				Cmd:         test.exec,
+			})
+			if r.ExitCode != 0 {
+				t.Fatalf("failed with exit code %d checking for job container mount: %s", r.ExitCode, string(r.Stderr))
+			}
+		})
+	}
+}
+
+func Test_RunContainer_JobContainer_Environment(t *testing.T) {
+	client := newTestRuntimeClient(t)
+
+	type config struct {
+		name             string
+		containerName    string
+		requiredFeatures []string
+		sandboxImage     string
+		containerImage   string
+		env              []*runtime.KeyValue
+		exec             []string
+	}
+
+	tests := []config{
+		{
+			name:             "JobContainer_Env_NoMountPoint",
+			containerName:    t.Name() + "-Container-WithNoMountPoint",
+			requiredFeatures: []string{featureWCOWProcess, featureHostProcess},
+			sandboxImage:     imageWindowsNanoserver,
+			containerImage:   imageWindowsNanoserver,
+			env: []*runtime.KeyValue{
+				{
+					Key: "PATH", Value: "C:\\Windows\\system32;C:\\Windows",
+				},
+			},
+			exec: []string{"cmd", "/c", "IF", "%PATH%", "==", "C:\\Windows\\system32;C:\\Windows", "( exit 0 )", "ELSE", "(exit -1)"},
+		},
+		{
+			name:             "JobContainer_VolumeMount_WithMountPoint",
+			containerName:    t.Name() + "-Container-WithMountPoint",
+			requiredFeatures: []string{featureWCOWProcess, featureHostProcess},
+			sandboxImage:     imageWindowsNanoserver,
+			containerImage:   imageWindowsNanoserver,
+			env: []*runtime.KeyValue{
+				{
+					Key: "PATH", Value: "%CONTAINER_SANDBOX_MOUNT_POINT%\\apps\\vim\\;C:\\Windows\\system32;C:\\Windows",
+				},
+			},
+			exec: []string{"cmd", "/c", "IF", "%PATH%", "==", "%CONTAINER_SANDBOX_MOUNT_POINT%\\apps\\vim\\;C:\\Windows\\system32;C:\\Windows", "( exit -1 )", "ELSE", "(exit 0)"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requireFeatures(t, test.requiredFeatures...)
+
+			requiredImages := []string{test.sandboxImage, test.containerImage}
+			pullRequiredImages(t, requiredImages)
+
+			podctx := context.Background()
+			sandboxRequest := getJobContainerPodRequestWCOW(t)
+
+			podID := runPodSandbox(t, client, podctx, sandboxRequest)
+			defer removePodSandbox(t, client, podctx, podID)
+			defer stopPodSandbox(t, client, podctx, podID)
+
+			containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageWindowsNanoserver, "", nil)
+			containerRequest.Config.Envs = test.env
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 
@@ -543,7 +696,7 @@ func Test_DoubleQuoting_JobContainer_WCOW(t *testing.T) {
 	defer removePodSandbox(t, client, podctx, podID)
 	defer stopPodSandbox(t, client, podctx, podID)
 
-	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageJobContainerCmdline, nil)
+	containerRequest := getJobContainerRequestWCOW(t, podID, sandboxRequest.Config, imageJobContainerCmdline, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
