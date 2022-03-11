@@ -1,7 +1,7 @@
 {
   "instanceUrl": "https://microsoft.visualstudio.com",
   "projectName": "OS",
-  "areaPath": "OS\\Core\\Base\\HYP-Virtualization\\CPlat-Container Platform",
+  "areaPath": "OS\\Core\\Base\\VMAC - Virtual Machines and Containers\\CPlat-Container Platform",
   "iterationPath": "OS",
   "template": "VSTS_Microsoft_OSGS",
   "notificationAliases": [

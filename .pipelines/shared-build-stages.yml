@@ -1,5 +1,10 @@
-# Build stages shared between Official and Buddy builds.
+# Build stages shared between Official, Buddy and nightly builds.
+# For nightly builds, parameters.Nightly will be set to True
 # The parent template must include ContainerPlatform/ContainerPlatform repository with "cplat" alias
+parameters:
+  - name: Nightly
+    type: boolean
+    default: false
 
 stages:
   - stage: build_repo
@@ -13,6 +18,18 @@ stages:
         variables:
           ob_outputDirectory: '$(Build.StagingDirectory)'
         steps:
+          - ${{ if eq(parameters.Nightly, true) }}:
+            - script: |
+                set -eux
+
+                git config user.email "containerplat-dev@microsoft.com"
+                git config user.name "ContainerPlat"
+                # Pull upstream changes
+                git remote add upstream https://github.com/microsoft/hcsshim.git
+                git fetch upstream
+                git merge upstream/master
+              displayName: Merge upstream changes for nightly build
+
           - script: |
               set -eux
 

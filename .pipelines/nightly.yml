@@ -1,5 +1,12 @@
-trigger:
-  - master
+trigger: none
+
+schedules:
+  - cron: "0 2 * * 2,3,4,5,6" # runs at 7PM PST Mon-Fri
+    displayName: Daily build
+    branches:
+      include:
+        - master
+    always: true
 
 variables:
   WindowsContainerImage: cdpxwin1809.azurecr.io/global/vse2019:latest
@@ -17,7 +24,7 @@ resources:
       ref: refs/heads/master
 
 extends:
-  template: v2/OneBranch.Official.CrossPlat.yml@ob-templates
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
   parameters:
     globalSdl:
       suppression:
@@ -25,3 +32,5 @@ extends:
         suppressionSet: default
     stages:
       - template: shared-build-stages.yml@self
+        parameters:
+          Nightly: true

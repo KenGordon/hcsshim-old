@@ -3,7 +3,7 @@ trigger:
 
 variables:
   WindowsContainerImage: cdpxwin1809.azurecr.io/global/vse2019:latest
-  LinuxContainerImage: cdpxlinux.azurecr.io/user/container-plat/golang:1.17.0
+  LinuxContainerImage: cdpxlinux.azurecr.io/user/container-plat/golang:1.17.3
 
 resources:
   repositories:

@@ -4,7 +4,7 @@
     "default": {
       "name": "default",
       "createdDate": "2021-06-18 22:27:56Z",
-      "lastUpdatedDate": "2021-06-18 22:27:56Z"
+      "lastUpdatedDate": "2021-11-17 01:35:22Z"
     }
   },
   "results": {
@@ -47,6 +47,20 @@
       "ruleId": "CSCAN-GENERAL0060",
       "justification": "This is a false positive and not managed by Microsoft.",
       "createdDate": "2021-06-18 22:27:56Z",
+      "expirationDate": null,
+      "type": null
+    },
+    "017e16e16457f4a678f671f22265319a30b21b8a1cc0c92afdf53f60ec2b0cdd": {
+      "signature": "017e16e16457f4a678f671f22265319a30b21b8a1cc0c92afdf53f60ec2b0cdd",
+      "alternativeSignatures": [],
+      "target": "vendor/go.etcd.io/bbolt/README.md",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "policheck",
+      "ruleId": "183125",
+      "justification": "Not managed by Microsoft.",
+      "createdDate": "2021-11-17 01:35:22Z",
       "expirationDate": null,
       "type": null
     }
