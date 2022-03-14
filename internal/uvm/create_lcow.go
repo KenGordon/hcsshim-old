@@ -382,6 +382,10 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 		initArgs += fmt.Sprintf(" -e %d", linuxLogVsockPort)
 	}
 
+	if log.IsScrubbingEnabled() {
+		opts.ExecCommandLine += " --scrub-logs"
+	}
+
 	initArgs += " " + opts.ExecCommandLine
 
 	if opts.ProcessDumpLocation != "" {

@@ -16,6 +16,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guest/runtime/hcsv2"
 	"github.com/Microsoft/hcsshim/internal/guest/runtime/runc"
 	"github.com/Microsoft/hcsshim/internal/guest/transport"
+	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/containerd/cgroups"
 	cgroupstats "github.com/containerd/cgroups/stats/v1"
@@ -92,6 +93,7 @@ func main() {
 	v4 := flag.Bool("v4", false, "enable the v4 protocol support and v2 schema")
 	rootMemReserveBytes := flag.Uint64("root-mem-reserve-bytes", 75*1024*1024, "the amount of memory reserved for the orchestration, the rest will be assigned to containers")
 	gcsMemLimitBytes := flag.Uint64("gcs-mem-limit-bytes", 50*1024*1024, "the maximum amount of memory the gcs can use")
+	scrubLogs := flag.Bool("scrub-logs", false, "If true, scrub potentially sensitive information from logging")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "\nUsage of %s:\n", os.Args[0])
@@ -140,6 +142,8 @@ func main() {
 	}
 
 	logrus.SetLevel(level)
+
+	log.SetScrubbing(*scrubLogs)
 
 	baseLogPath := "/run/gcs/c"
 

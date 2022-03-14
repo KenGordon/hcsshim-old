@@ -93,6 +93,9 @@ message Options {
 	// logrus log levels: "trace", "debug", "info", "warn", "error", "fatal", "panic". This setting will override
 	// the `debug` field if both are specified, unless the level specified is also "debug", as these are equivalent.
 	string log_level = 16;
+
+	// scrub_logs enables removing environment variables and other protentially sensitive information from logs
+	bool scrub_logs = 20;
 }
 
 // ProcessDetails contains additional information about a process. This is the additional
