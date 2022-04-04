@@ -49,7 +49,7 @@ func FormatWritableLayerVhd(ctx context.Context, vhdHandle windows.Handle) (err 
 
 	h := vhdHandle
 	// On RS5 HcsFormatWritableLayerVhd expects to receive a disk handle instead of a vhd handle.
-	if osversion.Build() < osversion.V19H1 {
+	if false && osversion.Build() < osversion.V19H1 {
 		if err := vhd.AttachVirtualDisk(syscall.Handle(vhdHandle), vhd.AttachVirtualDiskFlagNone, &vhd.AttachVirtualDiskParameters{Version: 1}); err != nil {
 			return err
 		}
