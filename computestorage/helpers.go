@@ -174,13 +174,8 @@ func SetupUtilityVMBaseLayer(ctx context.Context, uvmPath, baseVhdPath, diffVhdP
 		return errors.Wrapf(err, "failed to attach virtual disk")
 	}
 
-	options := OsLayerOptions{
-		Type:                       OsLayerTypeVM,
-		DisableCiCacheOptimization: true,
-		SkipUpdateBcdForBoot:       true,
-	}
-	if err := SetupBaseOSLayer(ctx, uvmPath, windows.Handle(handle), options); err != nil {
-		return err
+	if err := hcsFormatWritableLayerVhd(windows.Handle(handle)); err != nil {
+		return errors.Wrapf(err, "failed to format vhd")
 	}
 
 	// Detach and close the handle after setting up the layer as we don't need the handle

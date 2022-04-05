@@ -1,6 +1,7 @@
 package cim
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -23,6 +24,8 @@ import (
 // uvm config doesn't work.
 func enableCimBoot(layerPath, hivePath string) (err error) {
 	dataZero := make([]byte, 4)
+	dataFour := make([]byte, 4)
+	binary.LittleEndian.PutUint32(dataFour, 4)
 
 	regChanges := []struct {
 		keyPath   string
@@ -32,6 +35,8 @@ func enableCimBoot(layerPath, hivePath string) (err error) {
 		dataLen   uint32
 	}{
 		{"ControlSet001\\Services\\CimFS", "Start", winapi.REG_TYPE_DWORD, &dataZero[0], uint32(len(dataZero))},
+		{"ControlSet001\\Services\\wcifs", "Start", winapi.REG_TYPE_DWORD, &dataFour[0], uint32(len(dataFour))},
+		{"ControlSet001\\Services\\UnionFS", "Start", winapi.REG_TYPE_DWORD, &dataZero[0], uint32(len(dataZero))},
 	}
 
 	var storeHandle winapi.OrHKey

@@ -91,15 +91,15 @@ func addBootFromCimRegistryChanges(layerFolders []string, reg *hcsschema.Registr
 			Type_:      "DWord",
 			DWordValue: 1,
 		},
-		{
-			Key: &hcsschema.RegistryKey{
-				Hive: "System",
-				Name: "ControlSet001\\Control\\HVSI",
-			},
-			Name:       "WCIFSContainerMode",
-			Type_:      "DWord",
-			DWordValue: 1,
-		},
+		// {
+		// 	Key: &hcsschema.RegistryKey{
+		// 		Hive: "System",
+		// 		Name: "ControlSet001\\Control\\HVSI",
+		// 	},
+		// 	Name:       "WCIFSContainerMode",
+		// 	Type_:      "DWord",
+		// 	DWordValue: 1,
+		// },
 		{
 			Key: &hcsschema.RegistryKey{
 				Hive: "System",
