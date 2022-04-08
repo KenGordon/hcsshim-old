@@ -325,6 +325,11 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uv
 					},
 				},
 				VirtualSmb: virtualSMB,
+				ComPorts: map[string]hcsschema.ComPort{
+					"0": {
+						NamedPipe: "\\\\.\\pipe\\debugpipe",
+					},
+				},
 			},
 		},
 	}

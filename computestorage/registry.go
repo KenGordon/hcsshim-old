@@ -47,6 +47,22 @@ func setBcdOsArcDevice(storePath string, diskID, partitionID guid.GUID) error {
 	return bcdExec(storePath, "/set", "{default}", "osarcdevice", fmt.Sprintf("gpt_partition={%s};{%s}", diskID, partitionID))
 }
 
+func setDebugOn(storePath string) error {
+	if err := bcdExec(storePath, "/set", "{default}", "testsigning", "on"); err != nil {
+		return err
+	}
+	if err := bcdExec(storePath, "/set", "{default}", "bootdebug", "on"); err != nil {
+		return err
+	}
+	if err := bcdExec(storePath, "/set", "{bootmgr}", "bootdebug", "on"); err != nil {
+		return err
+	}
+	if err := bcdExec(storePath, "/dbgsettings", "SERIAL", "DEBUGPORT:1", "BAUDRATE:115200"); err != nil {
+		return err
+	}
+	return bcdExec(storePath, "/set", "{default}", "debug", "on")
+}
+
 // updateBcdStoreForBoot Updates the bcd store at path `storePath` to boot with the disk
 // with given ID and given partitionID.
 func updateBcdStoreForBoot(storePath string, diskID, partitionID guid.GUID) error {
@@ -61,5 +77,5 @@ func updateBcdStoreForBoot(storePath string, diskID, partitionID guid.GUID) erro
 	if err := setBcdOsArcDevice(storePath, diskID, partitionID); err != nil {
 		return err
 	}
-	return nil
+	return setDebugOn(storePath)
 }
