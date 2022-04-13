@@ -6,11 +6,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/Microsoft/go-winio/vhd"
 	"github.com/Microsoft/hcsshim/internal/memory"
 	"github.com/Microsoft/hcsshim/internal/vhdx"
+	"github.com/Microsoft/hcsshim/internal/wclayer"
 	"github.com/pkg/errors"
 	"golang.org/x/sys/windows"
 
@@ -117,6 +119,25 @@ func SetupContainerBaseLayer(ctx context.Context, layerPath, baseVhdPath, diffVh
 	return nil
 }
 
+// createDirectoryOnVolume creates a directory on volume at `volumePath` at path `dirPath`.
+// So the complete directory path becomes volumePath\\dirPath.
+func createDirectoryOnVolume(dirPath, volumePath string) error {
+	tokens := strings.Split(filepath.Clean(dirPath), `\`)
+	parentPath := volumePath
+	for _, tok := range tokens {
+		path := filepath.Join(parentPath, tok)
+		utfPath, err := windows.UTF16PtrFromString(path)
+		if err != nil {
+			return err
+		}
+		if err = windows.CreateDirectory(utfPath, nil); err != nil {
+			return err
+		}
+		parentPath = filepath.Join(parentPath, tok)
+	}
+	return nil
+}
+
 // SetupUtilityVMBaseLayer is a helper to setup a UVMs scratch space. It will create and
 // format the vhdx inside and the size is configurable by the sizeInGB parameter. It
 // expects to find a BCD file at path `baseVhdDir` +
@@ -152,6 +173,11 @@ func SetupUtilityVMBaseLayer(ctx context.Context, uvmPath, baseVhdPath, diffVhdP
 			BlockSizeInBytes: defaultVHDXBlockSizeInMB * memory.MiB,
 		},
 	}
+
+	// rename baseVHD path temporarily so that we can use ActivateLayer API to mount
+	// the disk.
+	origBaseVhdPath := baseVhdPath
+	baseVhdPath = filepath.Join(filepath.Dir(baseVhdPath), "sandbox.vhdx")
 	handle, err := vhd.CreateVirtualDisk(baseVhdPath, vhd.VirtualDiskAccessNone, vhd.CreateVirtualDiskFlagNone, createParams)
 	if err != nil {
 		return errors.Wrap(err, "failed to create vhdx")
@@ -165,27 +191,40 @@ func SetupUtilityVMBaseLayer(ctx context.Context, uvmPath, baseVhdPath, diffVhdP
 		}
 	}()
 
-	// If it is a UtilityVM layer then the base vhdx must be attached when calling
-	// `SetupBaseOSLayer`
-	attachParams := &vhd.AttachVirtualDiskParameters{
-		Version: 2,
-	}
-	if err := vhd.AttachVirtualDisk(handle, vhd.AttachVirtualDiskFlagNone, attachParams); err != nil {
-		return errors.Wrapf(err, "failed to attach virtual disk")
+	if err = FormatWritableLayerVhd(ctx, windows.Handle(handle)); err != nil {
+		return err
 	}
 
-	if err := hcsFormatWritableLayerVhd(windows.Handle(handle)); err != nil {
-		return errors.Wrapf(err, "failed to format vhd")
+	if err = wclayer.ActivateLayer(ctx, filepath.Dir(baseVhdPath)); err != nil {
+		return err
+	}
+	defer wclayer.DeactivateLayer(ctx, filepath.Dir(baseVhdPath))
+
+	volPath, err := wclayer.GetLayerMountPath(ctx, filepath.Dir(baseVhdPath))
+	if err != nil {
+		return err
 	}
 
-	// Detach and close the handle after setting up the layer as we don't need the handle
-	// for anything else and we no longer need to be attached either.
-	if err = vhd.DetachVirtualDisk(handle); err != nil {
-		return errors.Wrap(err, "failed to detach vhdx")
+	dirPath := filepath.Join("Windows", "System32", "drivers")
+	if err = createDirectoryOnVolume(dirPath, volPath); err != nil {
+		return errors.Wrapf(err, "failed to create windows/system32/drivers directory")
 	}
+
+	// Detach and close the handle after setting up the layer as we don't need the
+	// handle for anything else and we no longer need to be attached either.
+	if err = wclayer.DeactivateLayer(ctx, filepath.Dir(baseVhdPath)); err != nil {
+		return err
+	}
+
 	if err = syscall.CloseHandle(handle); err != nil {
 		return errors.Wrap(err, "failed to close vhdx handle")
 	}
+
+	// rename baseVhd
+	if err = os.Rename(baseVhdPath, origBaseVhdPath); err != nil {
+		return err
+	}
+	baseVhdPath = origBaseVhdPath
 
 	partitionInfo, err := vhdx.GetScratchVhdPartitionInfo(ctx, baseVhdPath)
 	if err != nil {
