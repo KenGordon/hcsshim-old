@@ -63,8 +63,9 @@ stages:
           - script: |
               set -eoux
 
-              make out/delta.tar.gz CC=musl-gcc # First make the linux gcs bits
+              make out/delta-dev.tar.gz CC=musl-gcc # First make the linux gcs bits
               cp out/delta.tar.gz $OUT_DIR
+              cp out/delta-dev.tar.gz $OUT_DIR
               cp hack/catcpio.sh $OUT_DIR
             env:
               GOPROXY: off
