@@ -6,6 +6,7 @@ package hcsv2
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/containerd/cgroups"
@@ -18,6 +19,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guest/gcserr"
 	"github.com/Microsoft/hcsshim/internal/guest/prot"
 	"github.com/Microsoft/hcsshim/internal/guest/runtime"
+	specInternal "github.com/Microsoft/hcsshim/internal/guest/spec"
 	"github.com/Microsoft/hcsshim/internal/guest/stdio"
 	"github.com/Microsoft/hcsshim/internal/guest/storage"
 	"github.com/Microsoft/hcsshim/internal/guest/transport"
@@ -25,6 +27,18 @@ import (
 	"github.com/Microsoft/hcsshim/internal/logfields"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
+)
+
+// containerStatus has been introduced to enable parallel container creation
+type containerStatus uint32
+
+const (
+	// containerCreating is the default status set on a Container object, when
+	// no underlying runtime container or init process has been assigned
+	containerCreating containerStatus = iota
+	// containerCreated is the status when a runtime container and init process
+	// have been assigned, but runtime start command has not been issued yet
+	containerCreated
 )
 
 type Container struct {
@@ -42,6 +56,9 @@ type Container struct {
 
 	processesMutex sync.Mutex
 	processes      map[uint32]*containerProcess
+
+	// Only access atomically through getStatus/setStatus.
+	status containerStatus
 }
 
 func (c *Container) Start(ctx context.Context, conSettings stdio.ConnectionSettings) (int, error) {
@@ -158,12 +175,12 @@ func (c *Container) Delete(ctx context.Context) error {
 	entity.Info("opengcs::Container::Delete")
 	if c.isSandbox {
 		// remove user mounts in sandbox container
-		if err := storage.UnmountAllInPath(ctx, getSandboxMountsDir(c.id), true); err != nil {
+		if err := storage.UnmountAllInPath(ctx, specInternal.SandboxMountsDir(c.id), true); err != nil {
 			entity.WithError(err).Error("failed to unmount sandbox mounts")
 		}
 
 		// remove hugepages mounts in sandbox container
-		if err := storage.UnmountAllInPath(ctx, getSandboxHugePageMountsDir(c.id), true); err != nil {
+		if err := storage.UnmountAllInPath(ctx, specInternal.HugePagesMountsDir(c.id), true); err != nil {
 			entity.WithError(err).Error("failed to unmount hugepages mounts")
 		}
 	}
@@ -218,4 +235,13 @@ func (c *Container) GetStats(ctx context.Context) (*v1.Metrics, error) {
 
 func (c *Container) modifyContainerConstraints(ctx context.Context, rt guestrequest.RequestType, cc *guestresource.LCOWContainerConstraints) (err error) {
 	return c.Update(ctx, cc.Linux)
+}
+
+func (c *Container) getStatus() containerStatus {
+	val := atomic.LoadUint32((*uint32)(&c.status))
+	return containerStatus(val)
+}
+
+func (c *Container) setStatus(st containerStatus) {
+	atomic.StoreUint32((*uint32)(&c.status), uint32(st))
 }

@@ -16,12 +16,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mattn/go-shellwords"
-	"github.com/pkg/errors"
-
 	"github.com/Microsoft/hcsshim/internal/guest/gcserr"
+	"github.com/Microsoft/hcsshim/internal/guest/policy"
 	"github.com/Microsoft/hcsshim/internal/guest/prot"
 	"github.com/Microsoft/hcsshim/internal/guest/runtime"
+	"github.com/Microsoft/hcsshim/internal/guest/spec"
 	"github.com/Microsoft/hcsshim/internal/guest/stdio"
 	"github.com/Microsoft/hcsshim/internal/guest/storage"
 	"github.com/Microsoft/hcsshim/internal/guest/storage/overlay"
@@ -34,6 +33,8 @@ import (
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
+	"github.com/mattn/go-shellwords"
+	"github.com/pkg/errors"
 )
 
 // UVMContainerID is the ContainerID that will be sent on any prot.MessageBase
@@ -95,6 +96,19 @@ func (h *Host) SetSecurityPolicy(base64Policy string) error {
 		return err
 	}
 
+	hostData, err := securitypolicy.NewSecurityPolicyDigest(base64Policy)
+	if err != nil {
+		return err
+	}
+
+	if err := validateHostData(hostData[:]); err != nil {
+		return err
+	}
+
+	if err := p.ExtendDefaultMounts(policy.DefaultCRIMounts()); err != nil {
+		return err
+	}
+
 	h.securityPolicyEnforcer = p
 	h.securityPolicyEnforcerSet = true
 
@@ -108,23 +122,34 @@ func (h *Host) RemoveContainer(id string) {
 	delete(h.containers, id)
 }
 
-func (h *Host) getContainerLocked(id string) (*Container, error) {
+func (h *Host) GetCreatedContainer(id string) (*Container, error) {
+	h.containersMutex.Lock()
+	defer h.containersMutex.Unlock()
+
 	if c, ok := h.containers[id]; !ok {
 		return nil, gcserr.NewHresultError(gcserr.HrVmcomputeSystemNotFound)
 	} else {
+		if c.getStatus() != containerCreated {
+			return nil, fmt.Errorf("container is not in state \"created\": %w",
+				gcserr.NewHresultError(gcserr.HrVmcomputeInvalidState))
+		}
 		return c, nil
 	}
 }
 
-func (h *Host) GetContainer(id string) (*Container, error) {
+func (h *Host) AddContainer(id string, c *Container) error {
 	h.containersMutex.Lock()
 	defer h.containersMutex.Unlock()
 
-	return h.getContainerLocked(id)
+	if _, ok := h.containers[id]; ok {
+		return gcserr.NewHresultError(gcserr.HrVmcomputeSystemAlreadyExists)
+	}
+	h.containers[id] = c
+	return nil
 }
 
 func setupSandboxMountsPath(id string) (err error) {
-	mountPath := getSandboxMountsDir(id)
+	mountPath := spec.SandboxMountsDir(id)
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
 		return errors.Wrapf(err, "failed to create sandboxMounts dir in sandbox %v", id)
 	}
@@ -138,7 +163,7 @@ func setupSandboxMountsPath(id string) (err error) {
 }
 
 func setupSandboxHugePageMountsPath(id string) error {
-	mountPath := getSandboxHugePageMountsDir(id)
+	mountPath := spec.HugePagesMountsDir(id)
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
 		return errors.Wrapf(err, "failed to create hugepage Mounts dir in sandbox %v", id)
 	}
@@ -147,12 +172,25 @@ func setupSandboxHugePageMountsPath(id string) error {
 }
 
 func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VMHostedContainerSettingsV2) (_ *Container, err error) {
-	h.containersMutex.Lock()
-	defer h.containersMutex.Unlock()
-
-	if _, ok := h.containers[id]; ok {
-		return nil, gcserr.NewHresultError(gcserr.HrVmcomputeSystemAlreadyExists)
+	criType, isCRI := settings.OCISpecification.Annotations[annotations.KubernetesContainerType]
+	c := &Container{
+		id:        id,
+		vsock:     h.vsock,
+		spec:      settings.OCISpecification,
+		isSandbox: criType == "sandbox",
+		exitType:  prot.NtUnexpectedExit,
+		processes: make(map[uint32]*containerProcess),
+		status:    containerCreating,
 	}
+
+	if err := h.AddContainer(id, c); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			h.RemoveContainer(id)
+		}
+	}()
 
 	err = h.securityPolicyEnforcer.EnforceCreateContainerPolicy(
 		id,
@@ -160,13 +198,13 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		settings.OCISpecification.Process.Env,
 		settings.OCISpecification.Process.Cwd,
 	)
-
 	if err != nil {
 		return nil, errors.Wrapf(err, "container creation denied due to policy")
 	}
 
 	var namespaceID string
-	criType, isCRI := settings.OCISpecification.Annotations[annotations.KubernetesContainerType]
+	// for sandbox container sandboxID is same as container id
+	sandboxID := id
 	if isCRI {
 		switch criType {
 		case "sandbox":
@@ -178,7 +216,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 			}
 			defer func() {
 				if err != nil {
-					_ = os.RemoveAll(getSandboxRootDir(id))
+					_ = os.RemoveAll(spec.SandboxRootDir(id))
 				}
 			}()
 
@@ -189,8 +227,13 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 			if err = setupSandboxHugePageMountsPath(id); err != nil {
 				return nil, err
 			}
+
+			if err := policy.ExtendPolicyWithNetworkingMounts(id, h.securityPolicyEnforcer, settings.OCISpecification); err != nil {
+				return nil, err
+			}
 		case "container":
 			sid, ok := settings.OCISpecification.Annotations[annotations.KubernetesSandboxID]
+			sandboxID = sid
 			if !ok || sid == "" {
 				return nil, errors.Errorf("unsupported 'io.kubernetes.cri.sandbox-id': '%s'", sid)
 			}
@@ -202,6 +245,9 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 					_ = os.RemoveAll(getWorkloadRootDir(id))
 				}
 			}()
+			if err := policy.ExtendPolicyWithNetworkingMounts(sandboxID, h.securityPolicyEnforcer, settings.OCISpecification); err != nil {
+				return nil, err
+			}
 		default:
 			return nil, errors.Errorf("unsupported 'io.kubernetes.cri.container-type': '%s'", criType)
 		}
@@ -218,6 +264,9 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		}()
 	}
 
+	if err := h.securityPolicyEnforcer.EnforceMountPolicy(sandboxID, id, settings.OCISpecification); err != nil {
+		return nil, err
+	}
 	// Export security policy as one of the process's environment variables so that application and sidecar
 	// containers can have access to it. The security policy is required by containers which need to extract
 	// init-time claims found in the security policy.
@@ -262,15 +311,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		return nil, errors.Wrapf(err, "failed to get container init process")
 	}
 
-	c := &Container{
-		id:        id,
-		vsock:     h.vsock,
-		spec:      settings.OCISpecification,
-		isSandbox: criType == "sandbox",
-		container: con,
-		exitType:  prot.NtUnexpectedExit,
-		processes: make(map[uint32]*containerProcess),
-	}
+	c.container = con
 	c.initProcess = newProcess(c, settings.OCISpecification.Process, init, uint32(c.container.Pid()), true)
 
 	// Sandbox or standalone, move the networks to the container namespace
@@ -290,7 +331,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		}
 	}
 
-	h.containers[id] = c
+	c.setStatus(containerCreated)
 	return c, nil
 }
 
@@ -309,7 +350,7 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 	case guestresource.ResourceTypeVPCIDevice:
 		return modifyMappedVPCIDevice(ctx, req.RequestType, req.Settings.(*guestresource.LCOWMappedVPCIDevice))
 	case guestresource.ResourceTypeContainerConstraints:
-		c, err := h.GetContainer(containerID)
+		c, err := h.GetCreatedContainer(containerID)
 		if err != nil {
 			return err
 		}
@@ -327,7 +368,7 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 }
 
 func (h *Host) modifyContainerSettings(ctx context.Context, containerID string, req *guestrequest.ModificationRequest) error {
-	c, err := h.GetContainer(containerID)
+	c, err := h.GetCreatedContainer(containerID)
 	if err != nil {
 		return err
 	}
