@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 import (
@@ -315,6 +313,7 @@ func (s *service) ConfigureContainerNetworking(ctx context.Context, req *nodenet
 		}, nil
 	} else if req.RequestType == nodenetsvc.RequestType_Teardown {
 		return s.teardownConfigureContainerNetworking(ctx, req)
+
 	}
 	return nil, fmt.Errorf("invalid request type %v", req.RequestType)
 }
@@ -362,6 +361,7 @@ func (s *service) addHelper(ctx context.Context, req *nodenetsvc.ConfigureNetwor
 			}
 			s.endpointToNicID[endpointName] = nicID.String()
 		}
+
 	}
 
 	defer func() {
@@ -371,6 +371,7 @@ func (s *service) addHelper(ctx context.Context, req *nodenetsvc.ConfigureNetwor
 	}()
 
 	return &nodenetsvc.ConfigureNetworkingResponse{}, nil
+
 }
 
 func (s *service) teardownHelper(ctx context.Context, req *nodenetsvc.ConfigureNetworkingRequest, containerNamespaceID string) (*nodenetsvc.ConfigureNetworkingResponse, error) {

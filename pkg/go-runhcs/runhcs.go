@@ -1,5 +1,3 @@
-//go:build windows
-
 package runhcs
 
 import (
@@ -22,7 +20,7 @@ type Format string
 
 const (
 	none Format = ""
-	// Text is the default text log output.
+	// Text is the default text log ouput.
 	Text Format = "text"
 	// JSON is the JSON formatted log output.
 	JSON Format = "json"
@@ -142,7 +140,7 @@ func (r *Runhcs) runOrError(cmd *exec.Cmd) error {
 		}
 		status, err := runc.Monitor.Wait(cmd, ec)
 		if err == nil && status != 0 {
-			err = fmt.Errorf("%s did not terminate successfully", cmd.Args[0])
+			err = fmt.Errorf("%s did not terminate sucessfully", cmd.Args[0])
 		}
 		return err
 	}
@@ -168,7 +166,7 @@ func cmdOutput(cmd *exec.Cmd, combined bool) ([]byte, error) {
 
 	status, err := runc.Monitor.Wait(cmd, ec)
 	if err == nil && status != 0 {
-		err = fmt.Errorf("%s did not terminate successfully", cmd.Args[0])
+		err = fmt.Errorf("%s did not terminate sucessfully", cmd.Args[0])
 	}
 
 	return b.Bytes(), err

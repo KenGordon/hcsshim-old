@@ -1,5 +1,3 @@
-//go:build windows
-
 package runhcs
 
 import (
@@ -84,7 +82,7 @@ func (r *Runhcs) Exec(context context.Context, id, processFile string, opts *Exe
 	}
 	status, err := runc.Monitor.Wait(cmd, ec)
 	if err == nil && status != 0 {
-		err = fmt.Errorf("%s did not terminate successfully", cmd.Args[0])
+		err = fmt.Errorf("%s did not terminate sucessfully", cmd.Args[0])
 	}
 	return err
 }

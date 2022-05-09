@@ -1,5 +1,5 @@
-//go:build windows && functional
-// +build windows,functional
+//go:build functional
+// +build functional
 
 package cri_containerd
 

@@ -1,5 +1,5 @@
-//go:build windows && admin
-// +build windows,admin
+//go:build admin
+// +build admin
 
 package safefile
 

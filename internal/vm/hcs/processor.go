@@ -1,5 +1,3 @@
-//go:build windows
-
 package hcs
 
 func (uvmb *utilityVMBuilder) SetProcessorCount(count uint32) error {

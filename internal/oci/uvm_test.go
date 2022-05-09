@@ -1,5 +1,3 @@
-//go:build windows
-
 package oci
 
 import (
@@ -47,6 +45,7 @@ func Test_SpecUpdate_MemorySize_NoAnnotation_WithOpts(t *testing.T) {
 }
 
 func Test_SpecUpdate_ProcessorCount_WithAnnotation_WithOpts(t *testing.T) {
+
 	opts := &runhcsopts.Options{
 		VmProcessorCount: 4,
 	}
@@ -64,6 +63,7 @@ func Test_SpecUpdate_ProcessorCount_WithAnnotation_WithOpts(t *testing.T) {
 }
 
 func Test_SpecUpdate_ProcessorCount_NoAnnotation_WithOpts(t *testing.T) {
+
 	opts := &runhcsopts.Options{
 		VmProcessorCount: 4,
 	}
@@ -186,4 +186,5 @@ func Test_SpecToUVMCreateOptions_Common(t *testing.T) {
 			}
 		})
 	}
+
 }

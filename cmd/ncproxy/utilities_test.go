@@ -32,6 +32,7 @@ func networkExists(targetName string, networks []*ncproxygrpc.GetNetworkResponse
 				return true
 			}
 		}
+
 	}
 	return false
 }
@@ -49,6 +50,7 @@ func endpointExists(targetName string, endpoints []*ncproxygrpc.GetEndpointRespo
 				return true
 			}
 		}
+
 	}
 	return false
 }

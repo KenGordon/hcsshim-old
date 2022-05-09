@@ -1,5 +1,3 @@
-//go:build windows
-
 package uvm
 
 import (
@@ -255,7 +253,7 @@ func (uvm *UtilityVM) Start(ctx context.Context) (err error) {
 		gcc := &gcs.GuestConnectionConfig{
 			Conn:           conn,
 			Log:            log.G(ctx).WithField(logfields.UVMID, uvm.id),
-			IoListen:       gcs.HvsockIoListen(uvm.runtimeID),
+			IoListen:       gcs.VMSockIoListen(uvm.runtimeID),
 			InitGuestState: initGuestState,
 		}
 		uvm.gc, err = gcc.Connect(ctx, !uvm.IsClone)

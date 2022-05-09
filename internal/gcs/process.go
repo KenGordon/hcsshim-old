@@ -1,5 +1,3 @@
-//go:build windows
-
 package gcs
 
 import (
@@ -10,7 +8,6 @@ import (
 	"io"
 	"sync"
 
-	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/logfields"
@@ -80,24 +77,24 @@ func (gc *GuestConnection) exec(ctx context.Context, cid string, params interfac
 		if err != nil {
 			return nil, err
 		}
-		g := winio.VsockServiceID(vsockSettings.StdIn)
-		hvsockSettings.StdIn = &g
+		// g := winio.VsockServiceID(vsockSettings.StdIn)
+		// hvsockSettings.StdIn = &g
 	}
 	if bp.CreateStdOutPipe {
 		p.stdout, vsockSettings.StdOut, err = gc.newIoChannel()
 		if err != nil {
 			return nil, err
 		}
-		g := winio.VsockServiceID(vsockSettings.StdOut)
-		hvsockSettings.StdOut = &g
+		// g := winio.VsockServiceID(vsockSettings.StdOut)
+		// hvsockSettings.StdOut = &g
 	}
 	if bp.CreateStdErrPipe {
 		p.stderr, vsockSettings.StdErr, err = gc.newIoChannel()
 		if err != nil {
 			return nil, err
 		}
-		g := winio.VsockServiceID(vsockSettings.StdErr)
-		hvsockSettings.StdErr = &g
+		// g := winio.VsockServiceID(vsockSettings.StdErr)
+		// hvsockSettings.StdErr = &g
 	}
 
 	var resp containerExecuteProcessResponse

@@ -1,5 +1,3 @@
-//go:build windows
-
 package oci
 
 import (
@@ -287,7 +285,7 @@ func SpecToUVMCreateOpts(ctx context.Context, s *specs.Spec, id, owner string) (
 		handleAnnotationFullyPhysicallyBacked(ctx, s.Annotations, lopts)
 
 		// SecurityPolicy is very sensitive to other settings and will silently change those that are incompatible.
-		// Eg VMPem device count, overridden kernel option cannot be respected.
+		// Eg VMPem device count, overriden kernel option cannot be respected.
 		handleSecurityPolicy(ctx, s.Annotations, lopts)
 
 		// override the default GuestState filename if specified

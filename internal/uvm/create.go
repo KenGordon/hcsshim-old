@@ -1,5 +1,3 @@
-//go:build windows
-
 package uvm
 
 import (
@@ -76,7 +74,7 @@ type Options struct {
 	// far as the container is concerned and it is only able to view the NICs in the compartment it's assigned to.
 	// This is the compartment setup (and behavior) that is followed for V1 HCS schema containers (docker) so
 	// this change brings parity as well. This behavior is gated behind a registry key currently to avoid any
-	// unnecessary behavior and once this restriction is removed then we can remove the need for this variable
+	// unneccessary behavior and once this restriction is removed then we can remove the need for this variable
 	// and the associated annotation as well.
 	DisableCompartmentNamespace bool
 

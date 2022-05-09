@@ -1,13 +1,13 @@
-//go:build windows
-
 package remotevm
 
 import (
+	"context"
+
 	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/internal/vmservice"
 )
 
-func (uvmb *utilityVMBuilder) SetMemoryLimit(memoryMB uint64) error {
+func (uvmb *utilityVMBuilder) SetMemoryLimit(ctx context.Context, memoryMB uint64) error {
 	if uvmb.config.MemoryConfig == nil {
 		uvmb.config.MemoryConfig = &vmservice.MemoryConfig{}
 	}

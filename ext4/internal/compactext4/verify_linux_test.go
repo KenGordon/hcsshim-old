@@ -1,5 +1,3 @@
-//go:build linux
-
 package compactext4
 
 import (
