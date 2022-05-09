@@ -1,9 +1,10 @@
 //go:build !windows
+// +build !windows
 
 package main
 
 import (
-	gocontext "context"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,12 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/Microsoft/go-winio"
-	"github.com/Microsoft/hcsshim/internal/oci"
-	"github.com/Microsoft/hcsshim/pkg/annotations"
 	"github.com/containerd/containerd/runtime/v2/shim"
-	"github.com/containerd/containerd/runtime/v2/task"
-	"github.com/containerd/ttrpc"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
@@ -35,14 +31,10 @@ The start command MUST return an address to a shim for containerd to issue API r
 The start command can either start a new shim or return an address to an existing shim based on the shim's logic.
 `,
 	SkipArgReorder: true,
-	Action: func(context *cli.Context) (err error) {
+	Action: func(cliCtx *cli.Context) (err error) {
 		// We cant write anything to stdout/stderr for this cmd.
+		ctx := context.Background()
 		logrus.SetOutput(ioutil.Discard)
-
-		var (
-			shimAddress string
-			shimPid     int
-		)
 
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -54,13 +46,17 @@ The start command can either start a new shim or return an address to an existin
 			return err
 		}
 
-		ct, sbid, err := oci.GetSandboxTypeAndID(a)
+		containerType := ""
+		sandboxID := ""
+
+		// need to refactor stuff
+		/*containerType, sandboxID, err := oci.GetSandboxTypeAndID(a)
 		if err != nil {
 			return err
-		}
+		}*/
 
 		// TODO katiewasnothere: what are the scenarios in which this code block is executed?
-		if ct == oci.KubernetesContainerTypeContainer {
+		/*if ct == oci.KubernetesContainerTypeContainer {
 			// TODO katiewasnothere: use better variable names so this address is not confused with
 			// addressFlag
 			address = fmt.Sprintf(addrFmt, namespaceFlag, sbid)
@@ -82,97 +78,107 @@ The start command can either start a new shim or return an address to an existin
 				return errors.Wrap(err, "failed to get shim pid from hosting shim")
 			}
 			pid = int(cr.ShimPid)
-		}
+		}*/
 
 		// We need to serve a new one.
-		if address == "" {
-			isSandbox := ct == oci.KubernetesContainerTypeSandbox
-			if isSandbox && idFlag != sbid {
-				return errors.Errorf(
-					"'id' and '%s' must match for '%s=%s'",
-					annotations.KubernetesSandboxID,
-					annotations.KubernetesContainerType,
-					oci.KubernetesContainerTypeSandbox)
-			}
+		/*isSandbox := containerType == oci.KubernetesContainerTypeSandbox
+		if isSandbox && idFlag != sandboxID {
+			return errors.Errorf(
+				"'id' and '%s' must match for '%s=%s'",
+				annotations.KubernetesSandboxID,
+				annotations.KubernetesContainerType,
+				oci.KubernetesContainerTypeSandbox)
+		}*/
+		isSandbox := true
 
-			self, err := os.Executable()
-			if err != nil {
-				return err
-			}
-
-			// TODO katiewasnothere: where does stdio go to
-
-			// construct socket name
-
-			// create a new socket
-
-			r, w, err := os.Pipe()
-			if err != nil {
-				return err
-			}
-			defer r.Close()
-			defer w.Close()
-
-			f, err := os.Create(filepath.Join(cwd, "panic.log"))
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-
-			address = fmt.Sprintf(addrFmt, namespaceFlag, idFlag)
-			args := []string{
-				self,
-				"--namespace", namespaceFlag,
-				"--address", addressFlag,
-				"--publish-binary", containerdBinaryFlag,
-				"--id", idFlag,
-				"serve",
-				"--socket", address,
-			}
-			if isSandbox {
-				args = append(args, "--is-sandbox")
-			}
-			cmd := &exec.Cmd{
-				Path:   self,
-				Args:   args,
-				Env:    os.Environ(),
-				Dir:    cwd,
-				Stdin:  os.Stdin,
-				Stdout: w,
-				Stderr: f,
-			}
-
-			if err := cmd.Start(); err != nil {
-				return err
-			}
-			w.Close()
-			defer func() {
-				if err != nil {
-					_ = cmd.Process.Kill()
-				}
-			}()
-
-			// TODO katiewasnothere: what does this do?
-			// Forward the invocation stderr until the serve command closes it.
-			_, err = io.Copy(os.Stderr, r)
-			if err != nil {
-				return err
-			}
-			pid = cmd.Process.Pid
+		// construct socket name
+		// TODO katiewasnothere: not sure if idFlag or sandboxID should be used here?
+		shimSocketAddr, err := shim.SocketAddress(ctx, addressFlag, idFlag)
+		if err != nil {
+			return err
 		}
 
-		// TODO katiewasnothere: do we need this
+		// create a new socket
+		shimSocket, err := shim.NewSocket(shimSocketAddr)
+		if err != nil {
+			return err
+		}
+
+		// get socket file so serve command can inheriet
+		socketFile, err := shimSocket.File()
+		if err != nil {
+			return err
+		}
+
+		self, err := os.Executable()
+		if err != nil {
+			return err
+		}
+
+		r, w, err := os.Pipe()
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+		defer w.Close()
+
+		// TODO katiewasnothere: where does stdio go to
+		panicLogFile, err := os.Create(filepath.Join(cwd, "panic.log"))
+		if err != nil {
+			return err
+		}
+		defer panicLogFile.Close()
+
+		args := []string{
+			self,
+			"--namespace", namespaceFlag,
+			"--address", addressFlag,
+			"--publish-binary", containerdBinaryFlag,
+			"--id", idFlag,
+			"serve",
+			"--socket", shimSocketAddr,
+		}
+		if isSandbox {
+			args = append(args, "--is-sandbox")
+		}
+		cmd := &exec.Cmd{
+			Path:   self,
+			Args:   args,
+			Env:    os.Environ(),
+			Dir:    cwd,
+			Stdin:  os.Stdin,
+			Stdout: w,
+			Stderr: panicLogFile,
+		}
+
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		w.Close()
+		defer func() {
+			if err != nil {
+				_ = cmd.Process.Kill()
+			}
+		}()
+
+		// TODO katiewasnothere: what does this do? Forward the invocation stderr until the serve command closes it.
+		_, err = io.Copy(os.Stderr, r)
+		if err != nil {
+			return err
+		}
+
+		pid := cmd.Process.Pid
+
 		if err := shim.WritePidFile(filepath.Join(cwd, "shim.pid"), pid); err != nil {
 			return err
 		}
 
-		// TODO katiewasnothere: is this right
-		if err := shim.WriteAddress(filepath.Join(cwd, "address"), address); err != nil {
+		if err := shim.WriteAddress(filepath.Join(cwd, "address"), shimSocketAddr); err != nil {
 			return err
 		}
 
 		// Write the address new or existing to stdout
-		if _, err := fmt.Fprint(os.Stdout, address); err != nil {
+		if _, err := fmt.Fprint(os.Stdout, shimSocketAddr); err != nil {
 			return err
 		}
 		return nil

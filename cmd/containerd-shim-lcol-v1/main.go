@@ -1,22 +1,17 @@
 //go:build !windows
+// +build !windows
 
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/Microsoft/go-winio/pkg/etw"
-	"github.com/Microsoft/go-winio/pkg/etwlogrus"
-	"github.com/Microsoft/go-winio/pkg/guid"
 	"github.com/Microsoft/hcsshim/internal/oc"
-	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"go.opencensus.io/trace"
 )
