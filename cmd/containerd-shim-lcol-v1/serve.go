@@ -4,11 +4,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
+	"time"
 
 	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
@@ -23,6 +26,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
+
+// copied from upstream
+const socketPathLimit = 106
 
 var serveCommand = cli.Command{
 	Name:           "serve",
@@ -84,18 +90,12 @@ var serveCommand = cli.Command{
 			}
 		}()
 
-		// create new ttrpc server for hosting the task service
-
-		// register the services that the ttrpc server will host
-
-		// configure ttrpc server to listen on socket that was created during start command
-
 		socket := ctx.String("socket")
 		if !strings.HasSuffix(socket, `.sock`) {
 			return errors.New("socket is required to be a linux socket address")
 		}
 
-		// Setup the ttrpc server
+		// create new ttrpc server for hosting the task service
 		svc, err := NewService(shimservice.WithEventPublisher(ttrpcEventPublisher),
 			shimservice.WithTID(idFlag),
 			shimservice.WithIsSandbox(ctx.Bool("is-sandbox")))
@@ -108,17 +108,85 @@ var serveCommand = cli.Command{
 			return err
 		}
 		defer s.Close()
+
+		// register the services that the ttrpc server will host
 		task.RegisterTaskService(s, svc)
 		extendedtask.RegisterExtendedTaskService(s, svc)
 
 		// listen on socket
+		shimListener, err := serveListener(socket)
+		if err != nil {
+			return err
+		}
+		defer shimListener.Close()
 
-		// wait for the shim to exit
+		serrs := make(chan error, 1)
+		defer close(serrs)
+		go func() {
+			// Serve loops infinitely unless s.Shutdown or s.Close are called.
+			// Passed in context is used as parent context for handling requests,
+			// but canceliing does not bring down ttrpc service.
+
+			// configure ttrpc server to listen on socket that was created during start command
+			if err := s.Serve(context.Background(), shimListener); err != nil {
+				logrus.WithError(err).Fatal("containerd-shim: ttrpc server failure")
+				serrs <- err
+				return
+			}
+			serrs <- nil
+		}()
+
+		// wait briefly to see if we immediately run into any errors serving the task service
+		select {
+		case err := <-serrs:
+			return err
+		case <-time.After(2 * time.Millisecond):
+			// This is our best indication that we have not errored on creation
+			// and are successfully serving the API.
+			// Closing stdout signals to containerd that shim started successfully
+			os.Stdout.Close()
+		}
 
 		// wait for ttrpc server to be shutdown
+		select {
+		case err = <-serrs:
+			// the ttrpc server shutdown without processing a shutdown request
+		case <-svc.Done():
+			if !svc.gracefulShutdown {
+				// Return immediately, but still close ttrpc server, pipes, and spans
+				// Shouldn't need to os.Exit without clean up (ie, deferred `.Close()`s)
+				return nil
+			}
+			// currently the ttrpc shutdown is the only clean up to wait on
+			sctx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
+			defer cancel()
+			err = s.Shutdown(sctx)
+		}
 
 		return nil
 	},
+}
+
+// taken from https://github.com/containerd/containerd/blob/6fda809e1b81928722de452a756df33aa9a5c998/runtime/v2/shim/shim_unix.go
+func serveListener(path string) (net.Listener, error) {
+	var (
+		l   net.Listener
+		err error
+	)
+	if path == "" {
+		l, err = net.FileListener(os.NewFile(3, "socket"))
+		path = "[inherited from parent]"
+	} else {
+		if len(path) > socketPathLimit {
+			return nil, fmt.Errorf("%q: unix socket path too long (> %d)", path, socketPathLimit)
+		}
+		l, err = net.Listen("unix", path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	logrus.WithField("socket", path).Debug("serving api on socket")
+	return l, nil
 }
 
 // readOptions reads in bytes from the reader and converts it to a shim options

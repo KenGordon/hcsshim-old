@@ -1,4 +1,4 @@
-package service
+package shimservice
 
 import "github.com/containerd/containerd/events"
 

@@ -1,6 +1,4 @@
-//go:build windows
-
-package main
+package shimservice
 
 import (
 	"context"

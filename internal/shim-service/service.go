@@ -1,6 +1,4 @@
-//go:build windows
-
-package main
+package shimservice
 
 import (
 	"context"
@@ -13,7 +11,6 @@ import (
 
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	"github.com/Microsoft/hcsshim/internal/oc"
-	shimservice "github.com/Microsoft/hcsshim/internal/shim-service"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/events"
@@ -60,8 +57,8 @@ type service struct {
 
 var _ = (task.TaskService)(&service{})
 
-func NewService(o ...shimservice.Option) (svc *service, err error) {
-	var opts shimservice.Options
+func NewService(o ...Option) (svc *service, err error) {
+	var opts Options
 	for _, op := range o {
 		op(&opts)
 	}
