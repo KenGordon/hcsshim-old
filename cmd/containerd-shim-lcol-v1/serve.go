@@ -11,9 +11,16 @@ import (
 	"strings"
 
 	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
+	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
+	"github.com/Microsoft/hcsshim/internal/extendedtask"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim-service"
+	"github.com/Microsoft/hcsshim/pkg/octtrpc"
+	"github.com/containerd/containerd/runtime/v2/task"
+	"github.com/containerd/ttrpc"
 	"github.com/containerd/typeurl"
 	"github.com/gogo/protobuf/proto"
 	"github.com/gogo/protobuf/types"
+	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
@@ -50,9 +57,32 @@ var serveCommand = cli.Command{
 
 		// setup logging for shim
 
+		// If log level is specified, set the corresponding logrus logging level. This overrides the debug option
+		// (unless the level being asked for IS debug also, then this doesn't do much).
+		if shimOpts.LogLevel != "" {
+			lvl, err := logrus.ParseLevel(shimOpts.LogLevel)
+			if err != nil {
+				return fmt.Errorf("failed to parse shim log level %q: %w", shimOpts.LogLevel, err)
+			}
+			logrus.SetLevel(lvl)
+		}
+
+		// close stdin since we've read everything we need from it
+		os.Stdin.Close()
+
 		// hook up to panic.log
 
 		// create an event publisher for ttrpc address to containerd
+		ttrpcAddress := os.Getenv(ttrpcAddressEnv)
+		ttrpcEventPublisher, err := eventpublisher.NewEventPublisher(ttrpcAddress, namespaceFlag)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				ttrpcEventPublisher.Close()
+			}
+		}()
 
 		// create new ttrpc server for hosting the task service
 
@@ -64,6 +94,24 @@ var serveCommand = cli.Command{
 		if !strings.HasSuffix(socket, `.sock`) {
 			return errors.New("socket is required to be a linux socket address")
 		}
+
+		// Setup the ttrpc server
+		svc, err := NewService(shimservice.WithEventPublisher(ttrpcEventPublisher),
+			shimservice.WithTID(idFlag),
+			shimservice.WithIsSandbox(ctx.Bool("is-sandbox")))
+		if err != nil {
+			return fmt.Errorf("failed to create new service: %w", err)
+		}
+
+		s, err := ttrpc.NewServer(ttrpc.WithUnaryServerInterceptor(octtrpc.ServerInterceptor()))
+		if err != nil {
+			return err
+		}
+		defer s.Close()
+		task.RegisterTaskService(s, svc)
+		extendedtask.RegisterExtendedTaskService(s, svc)
+
+		// listen on socket
 
 		// wait for the shim to exit
 

@@ -13,39 +13,17 @@ import (
 
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	"github.com/Microsoft/hcsshim/internal/oc"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim-service"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/runtime/v2/task"
 	google_protobuf1 "github.com/gogo/protobuf/types"
 	"go.opencensus.io/trace"
 )
 
-type ServiceOptions struct {
-	Events    publisher
-	TID       string
-	IsSandbox bool
-}
-
-type ServiceOption func(*ServiceOptions)
-
-func WithEventPublisher(e publisher) ServiceOption {
-	return func(o *ServiceOptions) {
-		o.Events = e
-	}
-}
-func WithTID(tid string) ServiceOption {
-	return func(o *ServiceOptions) {
-		o.TID = tid
-	}
-}
-func WithIsSandbox(s bool) ServiceOption {
-	return func(o *ServiceOptions) {
-		o.IsSandbox = s
-	}
-}
-
 type service struct {
-	events publisher
+	events events.Publisher
 	// tid is the original task id to be served. This can either be a single
 	// task or represent the POD sandbox task id. The first call to Create MUST
 	// match this id or the shim is considered to be invalid.
@@ -82,8 +60,8 @@ type service struct {
 
 var _ = (task.TaskService)(&service{})
 
-func NewService(o ...ServiceOption) (svc *service, err error) {
-	var opts ServiceOptions
+func NewService(o ...shimservice.Option) (svc *service, err error) {
+	var opts shimservice.Options
 	for _, op := range o {
 		op(&opts)
 	}

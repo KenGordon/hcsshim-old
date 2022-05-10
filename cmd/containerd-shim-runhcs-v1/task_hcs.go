@@ -239,7 +239,7 @@ func newHcsTask(
 	go ht.waitInitExit(!isTemplate)
 
 	// Publish the created event
-	if err := ht.events.publishEvent(
+	if err := ht.events.Publish(
 		ctx,
 		runtime.TaskCreateEventTopic,
 		&eventstypes.TaskCreate{
@@ -363,7 +363,7 @@ func newClonedHcsTask(
 	go ht.waitInitExit(true)
 
 	// Publish the created event
-	if err := ht.events.publishEvent(
+	if err := ht.events.Publish(
 		ctx,
 		runtime.TaskCreateEventTopic,
 		&eventstypes.TaskCreate{
@@ -499,7 +499,7 @@ func (ht *hcsTask) CreateExec(ctx context.Context, req *task.ExecProcessRequest,
 	ht.execs.Store(req.ExecID, he)
 
 	// Publish the created event
-	return ht.events.publishEvent(
+	return ht.events.Publish(
 		ctx,
 		runtime.TaskExecAddedEventTopic,
 		&eventstypes.TaskExecAdded{
@@ -633,7 +633,7 @@ func (ht *hcsTask) DeleteExec(ctx context.Context, eid string) (int, uint32, tim
 	}
 
 	// Publish the deleted event
-	if err := ht.events.publishEvent(
+	if err := ht.events.Publish(
 		ctx,
 		runtime.TaskDeleteEventTopic,
 		&eventstypes.TaskDelete{
@@ -837,7 +837,7 @@ func (ht *hcsTask) closeHost(ctx context.Context) {
 		// Send the `init` exec exit notification always.
 		exit := ht.init.Status()
 
-		if err := ht.events.publishEvent(
+		if err := ht.events.Publish(
 			ctx,
 			runtime.TaskExitEventTopic,
 			&eventstypes.TaskExit{

@@ -152,7 +152,7 @@ func createPod(ctx context.Context, events publisher, req *task.CreateTaskReques
 	} else if oci.IsJobContainer(s) {
 		// If we're making a job container fake a task (i.e reuse the wcowPodSandbox logic)
 		p.sandboxTask = newWcowPodSandboxTask(ctx, events, req.ID, req.Bundle, parent, "")
-		if err := events.publishEvent(
+		if err := events.Publish(
 			ctx,
 			runtime.TaskCreateEventTopic,
 			&eventstypes.TaskCreate{
@@ -219,7 +219,7 @@ func createPod(ctx context.Context, events publisher, req *task.CreateTaskReques
 		p.sandboxTask = newWcowPodSandboxTask(ctx, events, req.ID, req.Bundle, parent, nsid)
 		// Publish the created event. We only do this for a fake WCOW task. A
 		// HCS Task will event itself based on actual process lifetime.
-		if err := events.publishEvent(
+		if err := events.Publish(
 			ctx,
 			runtime.TaskCreateEventTopic,
 			&eventstypes.TaskCreate{

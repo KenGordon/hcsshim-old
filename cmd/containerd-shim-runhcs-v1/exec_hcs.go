@@ -224,7 +224,7 @@ func (he *hcsExec) startInternal(ctx context.Context, initializeContainer bool) 
 	// Publish the task/exec start event. This MUST happen before waitForExit to
 	// avoid publishing the exit previous to the start.
 	if he.id != he.tid {
-		if err := he.events.publishEvent(
+		if err := he.events.Publish(
 			ctx,
 			runtime.TaskExecStartedEventTopic,
 			&eventstypes.TaskExecStarted{
@@ -235,7 +235,7 @@ func (he *hcsExec) startInternal(ctx context.Context, initializeContainer bool) 
 			return err
 		}
 	} else {
-		if err := he.events.publishEvent(
+		if err := he.events.Publish(
 			ctx,
 			runtime.TaskStartEventTopic,
 			&eventstypes.TaskStart{
@@ -455,7 +455,7 @@ func (he *hcsExec) waitForExit() {
 	// exec. For the `init` exec this is handled in task teardown.
 	if he.tid != he.id {
 		// We had a valid process so send the exited notification.
-		if err := he.events.publishEvent(
+		if err := he.events.Publish(
 			ctx,
 			runtime.TaskExitEventTopic,
 			&eventstypes.TaskExit{

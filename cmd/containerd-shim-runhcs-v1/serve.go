@@ -26,8 +26,10 @@ import (
 	"golang.org/x/sys/windows"
 
 	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
+	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	hcslog "github.com/Microsoft/hcsshim/internal/log"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim-service"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/Microsoft/hcsshim/pkg/octtrpc"
 )
@@ -177,20 +179,20 @@ var serveCommand = cli.Command{
 		}
 
 		ttrpcAddress := os.Getenv(ttrpcAddressEnv)
-		ttrpcEventPublisher, err := newEventPublisher(ttrpcAddress, namespaceFlag)
+		ttrpcEventPublisher, err := eventpublisher.NewEventPublisher(ttrpcAddress, namespaceFlag)
 		if err != nil {
 			return err
 		}
 		defer func() {
 			if err != nil {
-				ttrpcEventPublisher.close()
+				ttrpcEventPublisher.Close()
 			}
 		}()
 
 		// Setup the ttrpc server
-		svc, err = NewService(WithEventPublisher(ttrpcEventPublisher),
-			WithTID(idFlag),
-			WithIsSandbox(ctx.Bool("is-sandbox")))
+		svc, err = NewService(shimservice.WithEventPublisher(ttrpcEventPublisher),
+			shimservice.WithTID(idFlag),
+			shimservice.WithIsSandbox(ctx.Bool("is-sandbox")))
 		if err != nil {
 			return fmt.Errorf("failed to create new service: %w", err)
 		}

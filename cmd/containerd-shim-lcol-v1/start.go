@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/Microsoft/hcsshim/internal/oci"
+	"github.com/Microsoft/hcsshim/pkg/annotations"
 	"github.com/containerd/containerd/runtime/v2/shim"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -46,14 +48,11 @@ The start command can either start a new shim or return an address to an existin
 			return err
 		}
 
-		containerType := ""
-		sandboxID := ""
-
 		// need to refactor stuff
-		/*containerType, sandboxID, err := oci.GetSandboxTypeAndID(a)
+		containerType, sandboxID, err := oci.GetSandboxTypeAndID(a)
 		if err != nil {
 			return err
-		}*/
+		}
 
 		// TODO katiewasnothere: what are the scenarios in which this code block is executed?
 		/*if ct == oci.KubernetesContainerTypeContainer {
@@ -81,15 +80,15 @@ The start command can either start a new shim or return an address to an existin
 		}*/
 
 		// We need to serve a new one.
-		/*isSandbox := containerType == oci.KubernetesContainerTypeSandbox
+		isSandbox := containerType == oci.KubernetesContainerTypeSandbox
 		if isSandbox && idFlag != sandboxID {
 			return errors.Errorf(
 				"'id' and '%s' must match for '%s=%s'",
 				annotations.KubernetesSandboxID,
 				annotations.KubernetesContainerType,
 				oci.KubernetesContainerTypeSandbox)
-		}*/
-		isSandbox := true
+		}
+		// isSandbox := true
 
 		// construct socket name
 		// TODO katiewasnothere: not sure if idFlag or sandboxID should be used here?
@@ -122,7 +121,6 @@ The start command can either start a new shim or return an address to an existin
 		defer r.Close()
 		defer w.Close()
 
-		// TODO katiewasnothere: where does stdio go to
 		panicLogFile, err := os.Create(filepath.Join(cwd, "panic.log"))
 		if err != nil {
 			return err
@@ -199,7 +197,7 @@ func getSpecAnnotations(bundlePath string) (map[string]string, error) {
 	defer f.Close()
 	var spec specAnnotations
 	if err := json.NewDecoder(f).Decode(&spec); err != nil {
-		return nil, errors.Wrap(err, "failed to deserialize valid OCI spec")
+		return nil, fmt.Errorf("failed to deserialize valid OCI spec: %w", err)
 	}
 	return spec.Annotations, nil
 }
