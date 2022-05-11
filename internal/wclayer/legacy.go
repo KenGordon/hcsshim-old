@@ -1,5 +1,3 @@
-//go:build windows
-
 package wclayer
 
 import (
@@ -264,6 +262,7 @@ func (r *legacyLayerReader) Next() (path string, size int64, fileInfo *winio.Fil
 		// The creation time and access time get reset for files outside of the Files path.
 		fileInfo.CreationTime = fileInfo.LastWriteTime
 		fileInfo.LastAccessTime = fileInfo.LastWriteTime
+
 	} else {
 		// The file attributes are written before the backup stream.
 		var attr uint32

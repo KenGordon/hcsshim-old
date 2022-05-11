@@ -1,5 +1,3 @@
-//go:build windows
-
 package hcsoci
 
 import (
@@ -119,6 +117,7 @@ func handleAssignedDevicesWindows(
 	vm *uvm.UtilityVM,
 	annotations map[string]string,
 	specDevs []specs.WindowsDevice) (resultDevs []specs.WindowsDevice, closers []resources.ResourceCloser, err error) {
+
 	defer func() {
 		if err != nil {
 			// best effort clean up allocated resources on failure
@@ -176,6 +175,7 @@ func handleAssignedDevicesLCOW(
 	vm *uvm.UtilityVM,
 	annotations map[string]string,
 	specDevs []specs.WindowsDevice) (resultDevs []specs.WindowsDevice, closers []resources.ResourceCloser, err error) {
+
 	defer func() {
 		if err != nil {
 			// best effort clean up allocated resources on failure

@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 // Simple wrappers around SetVolumeMountPoint and DeleteVolumeMountPoint

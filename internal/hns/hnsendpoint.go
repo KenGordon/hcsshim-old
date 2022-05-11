@@ -1,5 +1,3 @@
-//go:build windows
-
 package hns
 
 import (
@@ -148,6 +146,7 @@ func (endpoint *HNSEndpoint) IsAttached(vID string) (bool, error) {
 	}
 
 	return false, nil
+
 }
 
 // Create Endpoint by sending EndpointRequest to HNS. TODO: Create a separate HNS interface to place all these methods
@@ -282,6 +281,7 @@ func (endpoint *HNSEndpoint) HostAttach(compartmentID uint16) error {
 		return err
 	}
 	return hnsCall("POST", "/endpoints/"+endpoint.Id+"/attach", string(jsonString), &response)
+
 }
 
 // HostDetach detaches a nic on the host

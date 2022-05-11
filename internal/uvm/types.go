@@ -1,6 +1,6 @@
-//go:build windows
-
 package uvm
+
+// This package describes the external interface for utility VMs.
 
 import (
 	"net"

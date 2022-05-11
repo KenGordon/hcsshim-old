@@ -1,5 +1,3 @@
-//go:build windows
-
 package hcs
 
 func (uvmb *utilityVMBuilder) SetStorageQos(iopsMaximum int64, bandwidthMaximum int64) error {

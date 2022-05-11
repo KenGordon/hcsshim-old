@@ -1,6 +1,7 @@
 //go:build windows
 // +build windows
 
+// Package layers deals with container layer mounting/unmounting for LCOW and WCOW
 package layers
 
 import (

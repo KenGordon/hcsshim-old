@@ -1,5 +1,3 @@
-//go:build windows
-
 package wclayer
 
 import (
@@ -50,6 +48,7 @@ func reapplyDirectoryTimes(root *os.File, dis []dirInfo) error {
 		if err != nil {
 			return err
 		}
+
 	}
 	return nil
 }

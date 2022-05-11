@@ -72,8 +72,7 @@ var launchVMCommand = cli.Command{
 		},
 	},
 	Action: func(clictx *cli.Context) error {
-		// Precomputed default kernel args that are used for LCOW. We can use the same.
-		kernelArgs := `panic=-1 root=/dev/foo debug noapic pci=off`
+		kernelArgs := `8250_core.nr_uarts=0 panic=-1 quiet pci=off brd.rd_nr=0 pmtmr=0 -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -loglevel debug`
 		ctx := context.Background()
 		builder, err := remotevm.NewUVMBuilder(
 			ctx,

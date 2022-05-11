@@ -1,5 +1,3 @@
-//go:build windows
-
 package jobcontainers
 
 import (
@@ -162,7 +160,7 @@ func getApplicationName(commandLine, workingDirectory, pathEnv string) (string, 
 
 // searchPathForExe calls the Windows API function `SearchPathW` to try and locate
 // `fileName` by searching in `pathsToSearch`. `pathsToSearch` is generally a semicolon
-// separated string of paths to search that `SearchPathW` will iterate through one by one.
+// seperated string of paths to search that `SearchPathW` will iterate through one by one.
 // If the path resolved for `fileName` ends up being a directory, this function will return an
 // error.
 func searchPathForExe(fileName, pathsToSearch string) (string, error) {
