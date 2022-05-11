@@ -11,6 +11,7 @@ import (
 
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oci"
+	"github.com/Microsoft/hcsshim/internal/ociuvm"
 	"github.com/Microsoft/hcsshim/internal/shim"
 	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/uvm"
@@ -70,7 +71,7 @@ func (h *hcsPodFactory) Create(ctx context.Context, events events.Publisher, req
 	var lopts *uvm.OptionsLCOW
 	if oci.IsIsolated(s) {
 		// Create the UVM parent
-		opts, err := oci.SpecToUVMCreateOpts(ctx, s, fmt.Sprintf("%s@vm", req.ID), owner)
+		opts, err := ociuvm.SpecToUVMCreateOpts(ctx, s, fmt.Sprintf("%s@vm", req.ID), owner)
 		if err != nil {
 			return nil, err
 		}
@@ -255,7 +256,7 @@ func (p *pod) ID() string {
 }
 
 func (p *pod) GetCloneAnnotations(ctx context.Context, s *specs.Spec) (bool, string, error) {
-	isTemplate, templateID, err := oci.ParseCloneAnnotations(ctx, s)
+	isTemplate, templateID, err := ociuvm.ParseCloneAnnotations(ctx, s)
 	if err != nil {
 		return false, "", err
 	} else if (isTemplate || templateID != "") && p.host == nil {

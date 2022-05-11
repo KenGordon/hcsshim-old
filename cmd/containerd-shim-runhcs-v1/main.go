@@ -56,7 +56,7 @@ func etwCallback(sourceID guid.GUID, state etw.ProviderState, level etw.Level, m
 		if err != nil {
 			return
 		}
-		log := logrus.WithField("tid", svc.tid)
+		log := logrus.WithField("tid", svc.GetTID())
 		log.WithField("stack", resp.Stacks).Info("goroutine stack dump")
 		if resp.GuestStacks != "" {
 			log.WithField("stack", resp.GuestStacks).Info("guest stack dump")

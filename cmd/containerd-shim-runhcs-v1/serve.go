@@ -29,7 +29,7 @@ import (
 	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	hcslog "github.com/Microsoft/hcsshim/internal/log"
-	shimservice "github.com/Microsoft/hcsshim/internal/shim"
+	shimservice "github.com/Microsoft/hcsshim/internal/service"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/Microsoft/hcsshim/pkg/octtrpc"
 )
@@ -190,9 +190,10 @@ var serveCommand = cli.Command{
 		}()
 
 		// Setup the ttrpc server
-		svc, err = NewService(shimservice.WithEventPublisher(ttrpcEventPublisher),
+		svc, err = shimservice.NewService(shimservice.WithEventPublisher(ttrpcEventPublisher),
 			shimservice.WithTID(idFlag),
-			shimservice.WithIsSandbox(ctx.Bool("is-sandbox")))
+			shimservice.WithIsSandbox(ctx.Bool("is-sandbox")),
+			shimservice.WithPodFactory(&hcsPodFactory{}))
 		if err != nil {
 			return fmt.Errorf("failed to create new service: %w", err)
 		}
@@ -251,7 +252,7 @@ var serveCommand = cli.Command{
 		case err = <-serrs:
 			// the ttrpc server shutdown without processing a shutdown request
 		case <-svc.Done():
-			if !svc.gracefulShutdown {
+			if !svc.GetGracefulShutdownValue() {
 				// Return immediately, but still close ttrpc server, pipes, and spans
 				// Shouldn't need to os.Exit without clean up (ie, deferred `.Close()`s)
 				return nil

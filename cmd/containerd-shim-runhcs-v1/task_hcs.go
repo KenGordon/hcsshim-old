@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package main
 
@@ -35,6 +36,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/memory"
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/internal/oci"
+	"github.com/Microsoft/hcsshim/internal/ociuvm"
 	"github.com/Microsoft/hcsshim/internal/processorinfo"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
@@ -71,7 +73,7 @@ func (h *hcsStandaloneTaskFactory) Create(ctx context.Context, events events.Pub
 	var parent *uvm.UtilityVM
 	if osversion.Build() >= osversion.RS5 && oci.IsIsolated(s) {
 		// Create the UVM parent
-		opts, err := oci.SpecToUVMCreateOpts(ctx, s, fmt.Sprintf("%s@vm", req.ID), owner)
+		opts, err := ociuvm.SpecToUVMCreateOpts(ctx, s, fmt.Sprintf("%s@vm", req.ID), owner)
 		if err != nil {
 			return nil, err
 		}
