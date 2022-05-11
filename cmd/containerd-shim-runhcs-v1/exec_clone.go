@@ -8,14 +8,16 @@ import (
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/log"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/uvm"
+	"github.com/containerd/containerd/events"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
 
 func newClonedExec(
 	ctx context.Context,
-	events publisher,
+	events events.Publisher,
 	tid string,
 	host *uvm.UtilityVM,
 	c cow.Container,
@@ -40,7 +42,7 @@ func newClonedExec(
 		spec:        spec,
 		io:          io,
 		processDone: make(chan struct{}),
-		state:       shimExecStateCreated,
+		state:       shimservice.ExecStateCreated,
 		exitStatus:  255, // By design for non-exited process status.
 		exited:      make(chan struct{}),
 	}
@@ -52,7 +54,7 @@ func newClonedExec(
 	return ce
 }
 
-var _ = (shimExec)(&clonedExec{})
+var _ = (shimservice.Exec)(&clonedExec{})
 
 // clonedExec inherits from hcsExec. The only difference between these two is that
 // on starting a clonedExec it doesn't attempt to start the container even if the

@@ -29,12 +29,12 @@ import (
 	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	hcslog "github.com/Microsoft/hcsshim/internal/log"
-	shimservice "github.com/Microsoft/hcsshim/internal/shim-service"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/Microsoft/hcsshim/pkg/octtrpc"
 )
 
-var svc *service
+var svc *shimservice.Service
 
 var serveCommand = cli.Command{
 	Name:           "serve",

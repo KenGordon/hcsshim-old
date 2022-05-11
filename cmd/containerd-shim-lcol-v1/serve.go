@@ -16,7 +16,7 @@ import (
 	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
-	shimservice "github.com/Microsoft/hcsshim/internal/shim-service"
+	shimservice "github.com/Microsoft/hcsshim/internal/service"
 	"github.com/Microsoft/hcsshim/pkg/octtrpc"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/containerd/ttrpc"
@@ -96,7 +96,7 @@ var serveCommand = cli.Command{
 		}
 
 		// create new ttrpc server for hosting the task service
-		svc, err := NewService(shimservice.WithEventPublisher(ttrpcEventPublisher),
+		svc, err := shimservice.NewService(shimservice.WithEventPublisher(ttrpcEventPublisher),
 			shimservice.WithTID(idFlag),
 			shimservice.WithIsSandbox(ctx.Bool("is-sandbox")))
 		if err != nil {
@@ -152,7 +152,7 @@ var serveCommand = cli.Command{
 		case err = <-serrs:
 			// the ttrpc server shutdown without processing a shutdown request
 		case <-svc.Done():
-			if !svc.gracefulShutdown {
+			if !svc.GetGracefulShutdownValue() {
 				// Return immediately, but still close ttrpc server, pipes, and spans
 				// Shouldn't need to os.Exit without clean up (ie, deferred `.Close()`s)
 				return nil

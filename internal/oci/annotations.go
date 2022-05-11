@@ -58,27 +58,27 @@ func ProcessAnnotations(ctx context.Context, s *specs.Spec) (err error) {
 // if providing a gMSA credential should be disallowed. Returns the value found,
 // if parsable, otherwise returns false otherwise.
 func ParseAnnotationsDisableGMSA(ctx context.Context, s *specs.Spec) bool {
-	return parseAnnotationsBool(ctx, s.Annotations, annotations.WCOWDisableGMSA, false)
+	return ParseAnnotationsBool(ctx, s.Annotations, annotations.WCOWDisableGMSA, false)
 }
 
 // ParseAnnotationsSaveAsTemplate searches for the boolean value which specifies
 // if this create request should be considered as a template creation request. If value
 // is found the returns the actual value, returns false otherwise.
 func ParseAnnotationsSaveAsTemplate(ctx context.Context, s *specs.Spec) bool {
-	return parseAnnotationsBool(ctx, s.Annotations, annotations.SaveAsTemplate, false)
+	return ParseAnnotationsBool(ctx, s.Annotations, annotations.SaveAsTemplate, false)
 }
 
 // ParseAnnotationsTemplateID searches for the templateID in the create request. If the
 // value is found then returns the value otherwise returns the empty string.
 func ParseAnnotationsTemplateID(ctx context.Context, s *specs.Spec) string {
-	return parseAnnotationsString(s.Annotations, annotations.TemplateID, "")
+	return ParseAnnotationsString(s.Annotations, annotations.TemplateID, "")
 }
 
 // general annotation parsing
 
 // parseAnnotationsBool searches `a` for `key` and if found verifies that the
 // value is `true` or `false` in any case. If `key` is not found returns `def`.
-func parseAnnotationsBool(ctx context.Context, a map[string]string, key string, def bool) bool {
+func ParseAnnotationsBool(ctx context.Context, a map[string]string, key string, def bool) bool {
 	if v, ok := a[key]; ok {
 		switch strings.ToLower(v) {
 		case "true":
@@ -94,7 +94,7 @@ func parseAnnotationsBool(ctx context.Context, a map[string]string, key string, 
 
 // parseAnnotationsUint32 searches `a` for `key` and if found verifies that the
 // value is a 32 bit unsigned integer. If `key` is not found returns `def`.
-func parseAnnotationsUint32(ctx context.Context, a map[string]string, key string, def uint32) uint32 {
+func ParseAnnotationsUint32(ctx context.Context, a map[string]string, key string, def uint32) uint32 {
 	if v, ok := a[key]; ok {
 		countu, err := strconv.ParseUint(v, 10, 32)
 		if err == nil {
@@ -108,7 +108,7 @@ func parseAnnotationsUint32(ctx context.Context, a map[string]string, key string
 
 // parseAnnotationsUint64 searches `a` for `key` and if found verifies that the
 // value is a 64 bit unsigned integer. If `key` is not found returns `def`.
-func parseAnnotationsUint64(ctx context.Context, a map[string]string, key string, def uint64) uint64 {
+func ParseAnnotationsUint64(ctx context.Context, a map[string]string, key string, def uint64) uint64 {
 	if v, ok := a[key]; ok {
 		countu, err := strconv.ParseUint(v, 10, 64)
 		if err == nil {
@@ -120,7 +120,7 @@ func parseAnnotationsUint64(ctx context.Context, a map[string]string, key string
 }
 
 // parseAnnotationsString searches `a` for `key`. If `key` is not found returns `def`.
-func parseAnnotationsString(a map[string]string, key string, def string) string {
+func ParseAnnotationsString(a map[string]string, key string, def string) string {
 	if v, ok := a[key]; ok {
 		return v
 	}

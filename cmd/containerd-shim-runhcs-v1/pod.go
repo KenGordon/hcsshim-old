@@ -11,11 +11,14 @@ import (
 
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oci"
+	"github.com/Microsoft/hcsshim/internal/shim"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 	eventstypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/runtime"
 	"github.com/containerd/containerd/runtime/v2/task"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -23,47 +26,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// shimPod represents the logical grouping of all tasks in a single set of
-// shared namespaces. The pod sandbox (container) is represented by the task
-// that matches the `shimPod.ID()`
-type shimPod interface {
-	// ID is the id of the task representing the pause (sandbox) container.
-	ID() string
-	// CreateTask creates a workload task within this pod named `tid` with
-	// settings `s`.
-	//
-	// If `tid==ID()` or `tid` is the same as any other task in this pod, this
-	// pod MUST return `errdefs.ErrAlreadyExists`.
-	CreateTask(ctx context.Context, req *task.CreateTaskRequest, s *specs.Spec) (shimTask, error)
-	// GetTask returns a task in this pod that matches `tid`.
-	//
-	// If `tid` is not found, this pod MUST return `errdefs.ErrNotFound`.
-	GetTask(tid string) (shimTask, error)
-	// KillTask sends `signal` to task that matches `tid`.
-	//
-	// If `tid` is not found, this pod MUST return `errdefs.ErrNotFound`.
-	//
-	// If `tid==ID() && eid == "" && all == true` this pod will send `signal` to
-	// all tasks in the pod and lastly send `signal` to the sandbox itself.
-	//
-	// If `all == true && eid != ""` this pod MUST return
-	// `errdefs.ErrFailedPrecondition`.
-	//
-	// A call to `KillTask` is only valid when the exec found by `tid,eid` is in
-	// the `shimExecStateRunning, shimExecStateExited` states. If the exec is
-	// not in this state this pod MUST return `errdefs.ErrFailedPrecondition`.
-	KillTask(ctx context.Context, tid, eid string, signal uint32, all bool) error
-	// DeleteTask removes a task from being tracked by this pod, and cleans up
-	// the resources the shim allocated for the task.
-	//
-	// The task's init exec (eid == "") must be either `shimExecStateCreated` or
-	// `shimExecStateExited`.  If the exec is not in this state this pod MUST
-	// return `errdefs.ErrFailedPrecondition`. Deleting the pod's sandbox task
-	// is a no-op.
-	DeleteTask(ctx context.Context, tid string) error
-}
+type hcsPodFactory struct{}
 
-func createPod(ctx context.Context, events publisher, req *task.CreateTaskRequest, s *specs.Spec) (_ shimPod, err error) {
+var _ = (shim.PodFactory)(&hcsPodFactory{})
+
+func (h *hcsPodFactory) Create(ctx context.Context, events events.Publisher, req *task.CreateTaskRequest, s *specs.Spec) (shim.Pod, error) {
 	log.G(ctx).WithField("tid", req.ID).Debug("createPod")
 
 	if osversion.Build() < osversion.RS5 {
@@ -255,10 +222,10 @@ func createPod(ctx context.Context, events publisher, req *task.CreateTaskReques
 	return &p, nil
 }
 
-var _ = (shimPod)(&pod{})
+var _ = (shimservice.Pod)(&pod{})
 
 type pod struct {
-	events publisher
+	events events.Publisher
 	// id is the id of the sandbox task when the pod is created.
 	//
 	// It MUST be treated as read only in the lifetime of the pod.
@@ -268,7 +235,7 @@ type pod struct {
 	// Note: The invariant `id==sandboxTask.ID()` MUST be true.
 	//
 	// It MUST be treated as read only in the lifetime of the pod.
-	sandboxTask shimTask
+	sandboxTask shimservice.Task
 	// host is the UtilityVM that is hosting `sandboxTask` if the task is
 	// hypervisor isolated.
 	//
@@ -297,12 +264,12 @@ func (p *pod) GetCloneAnnotations(ctx context.Context, s *specs.Spec) (bool, str
 	return isTemplate, templateID, nil
 }
 
-func (p *pod) CreateTask(ctx context.Context, req *task.CreateTaskRequest, s *specs.Spec) (_ shimTask, err error) {
+func (p *pod) CreateTask(ctx context.Context, req *task.CreateTaskRequest, s *specs.Spec) (_ shimservice.Task, err error) {
 	if req.ID == p.id {
 		return nil, errors.Wrapf(errdefs.ErrAlreadyExists, "task with id: '%s' already exists", req.ID)
 	}
 	e, _ := p.sandboxTask.GetExec("")
-	if e.State() != shimExecStateRunning {
+	if e.State() != shimservice.ExecStateRunning {
 		return nil, errors.Wrapf(errdefs.ErrFailedPrecondition, "task with id: '%s' cannot be created in pod: '%s' which is not running", req.ID, p.id)
 	}
 
@@ -348,7 +315,7 @@ func (p *pod) CreateTask(ctx context.Context, req *task.CreateTaskRequest, s *sp
 		return nil, err
 	}
 
-	var st shimTask
+	var st shimservice.Task
 	if templateID != "" {
 		st, err = newClonedHcsTask(ctx, p.events, p.host, false, req, s, templateID)
 	} else {
@@ -362,7 +329,7 @@ func (p *pod) CreateTask(ctx context.Context, req *task.CreateTaskRequest, s *sp
 	return st, nil
 }
 
-func (p *pod) GetTask(tid string) (shimTask, error) {
+func (p *pod) GetTask(tid string) (shimservice.Task, error) {
 	if tid == p.id {
 		return p.sandboxTask, nil
 	}
@@ -370,7 +337,7 @@ func (p *pod) GetTask(tid string) (shimTask, error) {
 	if !loaded {
 		return nil, errors.Wrapf(errdefs.ErrNotFound, "task with id: '%s' not found", tid)
 	}
-	return raw.(shimTask), nil
+	return raw.(shimservice.Task), nil
 }
 
 func (p *pod) KillTask(ctx context.Context, tid, eid string, signal uint32, all bool) error {
@@ -385,7 +352,7 @@ func (p *pod) KillTask(ctx context.Context, tid, eid string, signal uint32, all 
 	if all && tid == p.id {
 		// We are in a kill all on the sandbox task. Signal everything.
 		p.workloadTasks.Range(func(key, value interface{}) bool {
-			wt := value.(shimTask)
+			wt := value.(shimservice.Task)
 			eg.Go(func() error {
 				return wt.KillExec(ctx, eid, signal, all)
 			})
@@ -417,7 +384,7 @@ func (p *pod) DeleteTask(ctx context.Context, tid string) error {
 	if err != nil {
 		return errors.Wrap(err, "could not get initial exec")
 	}
-	if e.State() == shimExecStateRunning {
+	if e.State() == shimservice.ExecStateRunning {
 		return errors.Wrap(errdefs.ErrFailedPrecondition, "cannot delete task with running exec")
 	}
 

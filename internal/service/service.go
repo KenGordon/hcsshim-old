@@ -1,4 +1,4 @@
-package shimservice
+package service
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	"github.com/Microsoft/hcsshim/internal/oc"
+	"github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/events"
@@ -19,7 +20,7 @@ import (
 	"go.opencensus.io/trace"
 )
 
-type service struct {
+type Service struct {
 	events events.Publisher
 	// tid is the original task id to be served. This can either be a single
 	// task or represent the POD sandbox task id. The first call to Create MUST
@@ -53,27 +54,44 @@ type service struct {
 	// gracefulShutdown dictates whether to shutdown gracefully and clean up resources
 	// or exit immediately
 	gracefulShutdown bool
+
+	// podFactory is the factory used when creating a new pod.
+	podFactory shim.PodFactory
+
+	// standaloneTaskFactory is the factory used when creating a new standalone task.
+	standaloneTaskFactory shim.TaskFactory
 }
 
-var _ = (task.TaskService)(&service{})
+var _ = (task.TaskService)(&Service{})
 
-func NewService(o ...Option) (svc *service, err error) {
+func NewService(o ...Option) (svc *Service, err error) {
 	var opts Options
 	for _, op := range o {
 		op(&opts)
 	}
 
-	svc = &service{
-		events:    opts.Events,
-		tid:       opts.TID,
-		isSandbox: opts.IsSandbox,
-		shutdown:  make(chan struct{}),
+	svc = &Service{
+		events:                opts.Events,
+		tid:                   opts.TID,
+		isSandbox:             opts.IsSandbox,
+		shutdown:              make(chan struct{}),
+		podFactory:            opts.PodFactory,
+		standaloneTaskFactory: opts.StandaloneTaskFactory,
 	}
 	return svc, nil
 }
 
-func (s *service) State(ctx context.Context, req *task.StateRequest) (resp *task.StateResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "State")
+func (s *Service) GetGracefulShutdownValue() bool {
+	return s.gracefulShutdown
+}
+
+// TODO katiewasnothere: does this need to be guarded?
+func (s *Service) SetGracefulShutdownValue(value bool) {
+	s.gracefulShutdown = value
+}
+
+func (s *Service) State(ctx context.Context, req *task.StateRequest) (resp *task.StateResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "State")
 	defer span.End()
 	defer func() {
 		if resp != nil {
@@ -97,8 +115,8 @@ func (s *service) State(ctx context.Context, req *task.StateRequest) (resp *task
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Create(ctx context.Context, req *task.CreateTaskRequest) (resp *task.CreateTaskResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "Create")
+func (s *Service) Create(ctx context.Context, req *task.CreateTaskRequest) (resp *task.CreateTaskResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "Create")
 	defer span.End()
 	defer func() {
 		if resp != nil {
@@ -127,8 +145,8 @@ func (s *service) Create(ctx context.Context, req *task.CreateTaskRequest) (resp
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Start(ctx context.Context, req *task.StartRequest) (resp *task.StartResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "Start")
+func (s *Service) Start(ctx context.Context, req *task.StartRequest) (resp *task.StartResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "Start")
 	defer span.End()
 	defer func() {
 		if resp != nil {
@@ -149,8 +167,8 @@ func (s *service) Start(ctx context.Context, req *task.StartRequest) (resp *task
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Delete(ctx context.Context, req *task.DeleteRequest) (resp *task.DeleteResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "Delete")
+func (s *Service) Delete(ctx context.Context, req *task.DeleteRequest) (resp *task.DeleteResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "Delete")
 	defer span.End()
 	defer func() {
 		if resp != nil {
@@ -174,8 +192,8 @@ func (s *service) Delete(ctx context.Context, req *task.DeleteRequest) (resp *ta
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Pids(ctx context.Context, req *task.PidsRequest) (_ *task.PidsResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "Pids")
+func (s *Service) Pids(ctx context.Context, req *task.PidsRequest) (_ *task.PidsResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "Pids")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -189,8 +207,8 @@ func (s *service) Pids(ctx context.Context, req *task.PidsRequest) (_ *task.Pids
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Pause(ctx context.Context, req *task.PauseRequest) (_ *google_protobuf1.Empty, err error) {
-	ctx, span := oc.StartSpan(ctx, "Pause")
+func (s *Service) Pause(ctx context.Context, req *task.PauseRequest) (_ *google_protobuf1.Empty, err error) {
+	ctx, span := trace.StartSpan(ctx, "Pause")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -204,8 +222,8 @@ func (s *service) Pause(ctx context.Context, req *task.PauseRequest) (_ *google_
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Resume(ctx context.Context, req *task.ResumeRequest) (_ *google_protobuf1.Empty, err error) {
-	ctx, span := oc.StartSpan(ctx, "Resume")
+func (s *Service) Resume(ctx context.Context, req *task.ResumeRequest) (_ *google_protobuf1.Empty, err error) {
+	ctx, span := trace.StartSpan(ctx, "Resume")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -219,8 +237,8 @@ func (s *service) Resume(ctx context.Context, req *task.ResumeRequest) (_ *googl
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Checkpoint(ctx context.Context, req *task.CheckpointTaskRequest) (_ *google_protobuf1.Empty, err error) {
-	ctx, span := oc.StartSpan(ctx, "Checkpoint")
+func (s *Service) Checkpoint(ctx context.Context, req *task.CheckpointTaskRequest) (_ *google_protobuf1.Empty, err error) {
+	ctx, span := trace.StartSpan(ctx, "Checkpoint")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -236,8 +254,8 @@ func (s *service) Checkpoint(ctx context.Context, req *task.CheckpointTaskReques
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Kill(ctx context.Context, req *task.KillRequest) (_ *google_protobuf1.Empty, err error) {
-	ctx, span := oc.StartSpan(ctx, "Kill")
+func (s *Service) Kill(ctx context.Context, req *task.KillRequest) (_ *google_protobuf1.Empty, err error) {
+	ctx, span := trace.StartSpan(ctx, "Kill")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -255,8 +273,8 @@ func (s *service) Kill(ctx context.Context, req *task.KillRequest) (_ *google_pr
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Exec(ctx context.Context, req *task.ExecProcessRequest) (_ *google_protobuf1.Empty, err error) {
-	ctx, span := oc.StartSpan(ctx, "Exec")
+func (s *Service) Exec(ctx context.Context, req *task.ExecProcessRequest) (_ *google_protobuf1.Empty, err error) {
+	ctx, span := trace.StartSpan(ctx, "Exec")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -276,8 +294,8 @@ func (s *service) Exec(ctx context.Context, req *task.ExecProcessRequest) (_ *go
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) DiagExecInHost(ctx context.Context, req *shimdiag.ExecProcessRequest) (_ *shimdiag.ExecProcessResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "DiagExecInHost")
+func (s *Service) DiagExecInHost(ctx context.Context, req *shimdiag.ExecProcessRequest) (_ *shimdiag.ExecProcessResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "DiagExecInHost")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -297,8 +315,8 @@ func (s *service) DiagExecInHost(ctx context.Context, req *shimdiag.ExecProcessR
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) DiagShare(ctx context.Context, req *shimdiag.ShareRequest) (_ *shimdiag.ShareResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "DiagShare")
+func (s *Service) DiagShare(ctx context.Context, req *shimdiag.ShareRequest) (_ *shimdiag.ShareResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "DiagShare")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -315,8 +333,8 @@ func (s *service) DiagShare(ctx context.Context, req *shimdiag.ShareRequest) (_ 
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) ResizePty(ctx context.Context, req *task.ResizePtyRequest) (_ *google_protobuf1.Empty, err error) {
-	ctx, span := oc.StartSpan(ctx, "ResizePty")
+func (s *Service) ResizePty(ctx context.Context, req *task.ResizePtyRequest) (_ *google_protobuf1.Empty, err error) {
+	ctx, span := trace.StartSpan(ctx, "ResizePty")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -334,8 +352,8 @@ func (s *service) ResizePty(ctx context.Context, req *task.ResizePtyRequest) (_ 
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) CloseIO(ctx context.Context, req *task.CloseIORequest) (_ *google_protobuf1.Empty, err error) {
-	ctx, span := oc.StartSpan(ctx, "CloseIO")
+func (s *Service) CloseIO(ctx context.Context, req *task.CloseIORequest) (_ *google_protobuf1.Empty, err error) {
+	ctx, span := trace.StartSpan(ctx, "CloseIO")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -352,8 +370,8 @@ func (s *service) CloseIO(ctx context.Context, req *task.CloseIORequest) (_ *goo
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Update(ctx context.Context, req *task.UpdateTaskRequest) (_ *google_protobuf1.Empty, err error) {
-	ctx, span := oc.StartSpan(ctx, "Update")
+func (s *Service) Update(ctx context.Context, req *task.UpdateTaskRequest) (_ *google_protobuf1.Empty, err error) {
+	ctx, span := trace.StartSpan(ctx, "Update")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -367,8 +385,8 @@ func (s *service) Update(ctx context.Context, req *task.UpdateTaskRequest) (_ *g
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Wait(ctx context.Context, req *task.WaitRequest) (resp *task.WaitResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "Wait")
+func (s *Service) Wait(ctx context.Context, req *task.WaitRequest) (resp *task.WaitResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "Wait")
 	defer span.End()
 	defer func() {
 		if resp != nil {
@@ -391,8 +409,8 @@ func (s *service) Wait(ctx context.Context, req *task.WaitRequest) (resp *task.W
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Stats(ctx context.Context, req *task.StatsRequest) (_ *task.StatsResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "Stats")
+func (s *Service) Stats(ctx context.Context, req *task.StatsRequest) (_ *task.StatsResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "Stats")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -406,8 +424,8 @@ func (s *service) Stats(ctx context.Context, req *task.StatsRequest) (_ *task.St
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Connect(ctx context.Context, req *task.ConnectRequest) (resp *task.ConnectResponse, err error) {
-	ctx, span := oc.StartSpan(ctx, "Connect")
+func (s *Service) Connect(ctx context.Context, req *task.ConnectRequest) (resp *task.ConnectResponse, err error) {
+	ctx, span := trace.StartSpan(ctx, "Connect")
 	defer span.End()
 	defer func() {
 		if resp != nil {
@@ -429,8 +447,8 @@ func (s *service) Connect(ctx context.Context, req *task.ConnectRequest) (resp *
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Shutdown(ctx context.Context, req *task.ShutdownRequest) (_ *google_protobuf1.Empty, err error) {
-	ctx, span := oc.StartSpan(ctx, "Shutdown")
+func (s *Service) Shutdown(ctx context.Context, req *task.ShutdownRequest) (_ *google_protobuf1.Empty, err error) {
+	ctx, span := trace.StartSpan(ctx, "Shutdown")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 
@@ -444,7 +462,7 @@ func (s *service) Shutdown(ctx context.Context, req *task.ShutdownRequest) (_ *g
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) DiagStacks(ctx context.Context, req *shimdiag.StacksRequest) (*shimdiag.StacksResponse, error) {
+func (s *Service) DiagStacks(ctx context.Context, req *shimdiag.StacksRequest) (*shimdiag.StacksResponse, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -476,7 +494,7 @@ func (s *service) DiagStacks(ctx context.Context, req *shimdiag.StacksRequest) (
 	return resp, nil
 }
 
-func (s *service) DiagPid(ctx context.Context, req *shimdiag.PidRequest) (*shimdiag.PidResponse, error) {
+func (s *Service) DiagPid(ctx context.Context, req *shimdiag.PidRequest) (*shimdiag.PidResponse, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -490,8 +508,8 @@ func (s *service) DiagPid(ctx context.Context, req *shimdiag.PidRequest) (*shimd
 	}, nil
 }
 
-func (s *service) ComputeProcessorInfo(ctx context.Context, req *extendedtask.ComputeProcessorInfoRequest) (*extendedtask.ComputeProcessorInfoResponse, error) {
-	ctx, span := oc.StartSpan(ctx, "ComputeProcessorInfo") //nolint:ineffassign,staticcheck
+func (s *Service) ComputeProcessorInfo(ctx context.Context, req *extendedtask.ComputeProcessorInfoRequest) (*extendedtask.ComputeProcessorInfoResponse, error) {
+	ctx, span := trace.StartSpan(ctx, "ComputeProcessorInfo") //nolint:ineffassign,staticcheck
 	defer span.End()
 
 	span.AddAttributes(trace.StringAttribute("tid", s.tid))
@@ -500,11 +518,11 @@ func (s *service) ComputeProcessorInfo(ctx context.Context, req *extendedtask.Co
 	return r, errdefs.ToGRPC(e)
 }
 
-func (s *service) Done() <-chan struct{} {
+func (s *Service) Done() <-chan struct{} {
 	return s.shutdown
 }
 
-func (s *service) IsShutdown() bool {
+func (s *Service) IsShutdown() bool {
 	select {
 	case <-s.shutdown:
 		return true

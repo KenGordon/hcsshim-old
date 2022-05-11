@@ -12,6 +12,7 @@ import (
 
 	eventstypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/runtime"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/containerd/typeurl"
@@ -38,13 +39,19 @@ import (
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/Microsoft/hcsshim/internal/resources"
+	"github.com/Microsoft/hcsshim/internal/shim"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 )
 
-func newHcsStandaloneTask(ctx context.Context, events publisher, req *task.CreateTaskRequest, s *specs.Spec) (shimTask, error) {
+type hcsStandaloneTaskFactory struct{}
+
+var _ = (shim.TaskFactory)(&hcsStandaloneTaskFactory{})
+
+func (h *hcsStandaloneTaskFactory) Create(ctx context.Context, events events.Publisher, req *task.CreateTaskRequest, s *specs.Spec) (shim.Task, error) {
 	log.G(ctx).WithField("tid", req.ID).Debug("newHcsStandaloneTask")
 
 	ct, _, err := oci.GetSandboxTypeAndID(s.Annotations)
@@ -155,11 +162,11 @@ func createContainer(ctx context.Context, id, owner, netNS string, s *specs.Spec
 // If `parent == nil` the container is created on the host.
 func newHcsTask(
 	ctx context.Context,
-	events publisher,
+	events events.Publisher,
 	parent *uvm.UtilityVM,
 	ownsParent bool,
 	req *task.CreateTaskRequest,
-	s *specs.Spec) (_ shimTask, err error) {
+	s *specs.Spec) (_ shimservice.Task, err error) {
 	log.G(ctx).WithFields(logrus.Fields{
 		"tid":        req.ID,
 		"ownsParent": ownsParent,
@@ -269,12 +276,12 @@ func newHcsTask(
 // owns that UVM.
 func newClonedHcsTask(
 	ctx context.Context,
-	events publisher,
+	events events.Publisher,
 	parent *uvm.UtilityVM,
 	ownsParent bool,
 	req *task.CreateTaskRequest,
 	s *specs.Spec,
-	templateID string) (_ shimTask, err error) {
+	templateID string) (_ shimservice.Task, err error) {
 	log.G(ctx).WithFields(logrus.Fields{
 		"tid":        req.ID,
 		"ownsParent": ownsParent,
@@ -384,7 +391,7 @@ func newClonedHcsTask(
 	return ht, nil
 }
 
-var _ = (shimTask)(&hcsTask{})
+var _ = (shimservice.Task)(&hcsTask{})
 
 // hcsTask is a generic task that represents a WCOW Container (process or
 // hypervisor isolated), or a LCOW Container. This task MAY own the UVM the
@@ -392,7 +399,7 @@ var _ = (shimTask)(&hcsTask{})
 // container lifetime management. In the case of ownership when the init
 // task/exec is stopped the UVM itself will be stopped as well.
 type hcsTask struct {
-	events publisher
+	events events.Publisher
 	// id is the id of this task when it is created.
 	//
 	// It MUST be treated as read only in the liftetime of the task.
@@ -418,7 +425,7 @@ type hcsTask struct {
 	// exit.
 	//
 	// It MUST be treated as read only in the lifetime of the task.
-	init shimExec
+	init shimservice.Exec
 	// ownsHost is `true` if this task owns `host`. If so when this tasks init
 	// exec shuts down it is required that `host` be shut down as well.
 	ownsHost bool
@@ -474,7 +481,7 @@ func (ht *hcsTask) CreateExec(ctx context.Context, req *task.ExecProcessRequest,
 		return errors.Wrapf(errdefs.ErrAlreadyExists, "exec: '%s' in task: '%s' already exists", req.ExecID, ht.id)
 	}
 
-	if ht.init.State() != shimExecStateRunning {
+	if ht.init.State() != shimservice.ExecStateRunning {
 		return errors.Wrapf(errdefs.ErrFailedPrecondition, "exec: '' in task: '%s' must be running to create additional execs", ht.id)
 	}
 
@@ -508,7 +515,7 @@ func (ht *hcsTask) CreateExec(ctx context.Context, req *task.ExecProcessRequest,
 		})
 }
 
-func (ht *hcsTask) GetExec(eid string) (shimExec, error) {
+func (ht *hcsTask) GetExec(eid string) (shimservice.Exec, error) {
 	if eid == "" {
 		return ht.init, nil
 	}
@@ -516,7 +523,7 @@ func (ht *hcsTask) GetExec(eid string) (shimExec, error) {
 	if !loaded {
 		return nil, errors.Wrapf(errdefs.ErrNotFound, "exec: '%s' in task: '%s' not found", eid, ht.id)
 	}
-	return raw.(shimExec), nil
+	return raw.(shimservice.Exec), nil
 }
 
 func (ht *hcsTask) KillExec(ctx context.Context, eid string, signal uint32, all bool) error {
@@ -530,7 +537,7 @@ func (ht *hcsTask) KillExec(ctx context.Context, eid string, signal uint32, all 
 	if all {
 		// We are in a kill all on the init task. Signal everything.
 		ht.execs.Range(func(key, value interface{}) bool {
-			err := value.(shimExec).Kill(ctx, signal)
+			err := value.(shimservice.Exec).Kill(ctx, signal)
 			if err != nil {
 				log.G(ctx).WithFields(logrus.Fields{
 					"eid":           key,
@@ -576,8 +583,8 @@ func (ht *hcsTask) DeleteExec(ctx context.Context, eid string) (int, uint32, tim
 	if eid == "" {
 		// We are deleting the init exec. Forcibly exit any additional exec's.
 		ht.execs.Range(func(key, value interface{}) bool {
-			ex := value.(shimExec)
-			if s := ex.State(); s != shimExecStateExited {
+			ex := value.(shimservice.Exec)
+			if s := ex.State(); s != shimservice.ExecStateExited {
 				ex.ForceExit(ctx, 1)
 			}
 
@@ -587,10 +594,10 @@ func (ht *hcsTask) DeleteExec(ctx context.Context, eid string) (int, uint32, tim
 		})
 	}
 	switch state := e.State(); state {
-	case shimExecStateCreated:
+	case shimservice.ExecStateCreated:
 		e.ForceExit(ctx, 0)
-	case shimExecStateRunning:
-		return 0, 0, time.Time{}, newExecInvalidStateError(ht.id, eid, state, "delete")
+	case shimservice.ExecStateRunning:
+		return 0, 0, time.Time{}, shimservice.NewExecInvalidStateError(ht.id, eid, state, "delete")
 	}
 
 	if eid == "" {
@@ -653,7 +660,7 @@ func (ht *hcsTask) Pids(ctx context.Context) ([]runhcsopts.ProcessDetails, error
 	// Map all user created exec's to pid/exec-id
 	pidMap := make(map[int]string)
 	ht.execs.Range(func(key, value interface{}) bool {
-		ex := value.(shimExec)
+		ex := value.(shimservice.Exec)
 		pidMap[ex.Pid()] = ex.ID()
 
 		// Iterate all. Returning false stops the iteration. See:
@@ -736,7 +743,7 @@ func (ht *hcsTask) waitForHostExit() {
 	}
 
 	ht.execs.Range(func(key, value interface{}) bool {
-		ex := value.(shimExec)
+		ex := value.(shimservice.Exec)
 		ex.ForceExit(ctx, 1)
 
 		// Iterate all. Returning false stops the iteration. See:
@@ -1054,14 +1061,14 @@ func (ht *hcsTask) requestUpdateContainer(ctx context.Context, resourcePath stri
 	return ht.c.Modify(ctx, modification)
 }
 
-func (ht *hcsTask) ProcessorInfo(ctx context.Context) (*processorInfo, error) {
+func (ht *hcsTask) ProcessorInfo(ctx context.Context) (*shimservice.ProcessorInfo, error) {
 	if ht.host == nil {
 		return nil, errTaskNotIsolated
 	}
 	if !ht.ownsHost {
 		return nil, errors.New("not implemented")
 	}
-	return &processorInfo{
-		count: ht.host.ProcessorCount(),
+	return &shimservice.ProcessorInfo{
+		Count: ht.host.ProcessorCount(),
 	}, nil
 }

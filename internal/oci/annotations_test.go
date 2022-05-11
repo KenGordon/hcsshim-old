@@ -12,6 +12,21 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+func Test_SpecUpdate_ProcessorCount_NoAnnotation_WithOpts(t *testing.T) {
+	opts := &runhcsopts.Options{
+		VmProcessorCount: 4,
+	}
+	s := &specs.Spec{
+		Linux:       &specs.Linux{},
+		Annotations: map[string]string{},
+	}
+	updatedSpec := UpdateSpecFromOptions(*s, opts)
+
+	if updatedSpec.Annotations[annotations.ProcessorCount] != "4" {
+		t.Fatal("should have updated annotation to default when annotation is not provided in the spec")
+	}
+}
+
 func Test_ProccessAnnotations_Expansion(t *testing.T) {
 	// suppress warnings raised by process annotation
 	defer func(l logrus.Level) {

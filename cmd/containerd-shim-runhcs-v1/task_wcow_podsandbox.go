@@ -13,10 +13,12 @@ import (
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	eventstypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/runtime"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/containerd/typeurl"
@@ -33,7 +35,7 @@ import (
 // It is assumed that this is the only fake WCOW task and that this task owns
 // `parent`. When the fake WCOW `init` process exits via `Signal` `parent` will
 // be forcibly closed by this task.
-func newWcowPodSandboxTask(ctx context.Context, events publisher, id, bundle string, parent *uvm.UtilityVM, nsid string) shimTask {
+func newWcowPodSandboxTask(ctx context.Context, events events.Publisher, id, bundle string, parent *uvm.UtilityVM, nsid string) shimservice.Task {
 	log.G(ctx).WithField("tid", id).Debug("newWcowPodSandboxTask")
 
 	wpst := &wcowPodSandboxTask{
@@ -56,7 +58,7 @@ func newWcowPodSandboxTask(ctx context.Context, events publisher, id, bundle str
 	return wpst
 }
 
-var _ = (shimTask)(&wcowPodSandboxTask{})
+var _ = (shimservice.Task)(&wcowPodSandboxTask{})
 
 // wcowPodSandboxTask is a special task type that actually holds no real
 // resources due to various design differences between Linux/Windows.
@@ -68,7 +70,7 @@ var _ = (shimTask)(&wcowPodSandboxTask{})
 // the lifetime of the UVM for a WCOW POD but the UVM will have no WCOW
 // container/exec init representing the actual POD Sandbox task.
 type wcowPodSandboxTask struct {
-	events publisher
+	events events.Publisher
 	// id is the id of this task when it is created.
 	//
 	// It MUST be treated as read only in the liftetime of the task.
@@ -103,7 +105,7 @@ func (wpst *wcowPodSandboxTask) CreateExec(ctx context.Context, req *task.ExecPr
 	return errors.Wrap(errdefs.ErrNotImplemented, "WCOW Pod task should never issue exec")
 }
 
-func (wpst *wcowPodSandboxTask) GetExec(eid string) (shimExec, error) {
+func (wpst *wcowPodSandboxTask) GetExec(eid string) (shimservice.Exec, error) {
 	if eid == "" {
 		return wpst.init, nil
 	}
@@ -132,10 +134,10 @@ func (wpst *wcowPodSandboxTask) DeleteExec(ctx context.Context, eid string) (int
 		return 0, 0, time.Time{}, err
 	}
 	switch state := e.State(); state {
-	case shimExecStateCreated:
+	case shimservice.ExecStateCreated:
 		e.ForceExit(ctx, 0)
-	case shimExecStateRunning:
-		return 0, 0, time.Time{}, newExecInvalidStateError(wpst.id, eid, state, "delete")
+	case shimservice.ExecStateRunning:
+		return 0, 0, time.Time{}, shimservice.NewExecInvalidStateError(wpst.id, eid, state, "delete")
 	}
 	status := e.Status()
 
@@ -306,11 +308,11 @@ func (wpst *wcowPodSandboxTask) Stats(ctx context.Context) (*stats.Statistics, e
 	return stats, nil
 }
 
-func (wpst *wcowPodSandboxTask) ProcessorInfo(ctx context.Context) (*processorInfo, error) {
+func (wpst *wcowPodSandboxTask) ProcessorInfo(ctx context.Context) (*shimservice.ProcessorInfo, error) {
 	if wpst.host == nil {
 		return nil, errTaskNotIsolated
 	}
-	return &processorInfo{
-		count: wpst.host.ProcessorCount(),
+	return &shimservice.ProcessorInfo{
+		Count: wpst.host.ProcessorCount(),
 	}, nil
 }

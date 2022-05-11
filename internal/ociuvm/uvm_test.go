@@ -1,31 +1,18 @@
-package oci
+//go:build windows
+// +build windows
+
+package ociuvm
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
-	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 	"github.com/google/go-cmp/cmp"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
-
-func Test_SpecUpdate_ProcessorCount_NoAnnotation_WithOpts(t *testing.T) {
-	opts := &runhcsopts.Options{
-		VmProcessorCount: 4,
-	}
-	s := &specs.Spec{
-		Linux:       &specs.Linux{},
-		Annotations: map[string]string{},
-	}
-	updatedSpec := UpdateSpecFromOptions(*s, opts)
-
-	if updatedSpec.Annotations[annotations.ProcessorCount] != "4" {
-		t.Fatal("should have updated annotation to default when annotation is not provided in the spec")
-	}
-}
 
 func Test_SpecToUVMCreateOptions_Default_LCOW(t *testing.T) {
 	s := &specs.Spec{

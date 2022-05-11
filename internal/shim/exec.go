@@ -1,6 +1,4 @@
-//go:build windows
-
-package main
+package shim
 
 import (
 	"context"
@@ -10,12 +8,12 @@ import (
 	"github.com/pkg/errors"
 )
 
-type shimExecState string
+type ExecState string
 
 const (
-	shimExecStateCreated shimExecState = "created"
-	shimExecStateRunning shimExecState = "running"
-	shimExecStateExited  shimExecState = "exited"
+	ExecStateCreated ExecState = "created"
+	ExecStateRunning ExecState = "running"
+	ExecStateExited  ExecState = "exited"
 )
 
 // shimExec is an interface that represents a single process created by a user
@@ -26,7 +24,7 @@ const (
 //
 // For WCOW hypervisor isolated or LCOW containers the process will be viewed
 // and proxied to the remote UtilityVM hosting the process.
-type shimExec interface {
+type Exec interface {
 	// ID returns the original id of this exec.
 	ID() string
 	// Pid returns the pid of the exec process.
@@ -36,7 +34,7 @@ type shimExec interface {
 	// State returns the current state of this exec process.
 	//
 	// A call to `State` is valid in any `State()`.
-	State() shimExecState
+	State() ExecState
 	// Status returns the current full status of this exec process.
 	//
 	// A call to `Status` is valid in any `State()`. Note that for `State() ==
@@ -85,7 +83,7 @@ type shimExec interface {
 	ForceExit(ctx context.Context, status int)
 }
 
-func newExecInvalidStateError(tid, eid string, state shimExecState, op string) error {
+func NewExecInvalidStateError(tid, eid string, state ExecState, op string) error {
 	return errors.Wrapf(
 		errdefs.ErrFailedPrecondition,
 		"exec: '%s' in task: '%s' is in invalid state: '%s' for %s",

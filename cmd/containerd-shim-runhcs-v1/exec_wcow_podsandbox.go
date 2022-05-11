@@ -8,16 +8,18 @@ import (
 	"time"
 
 	"github.com/Microsoft/hcsshim/internal/log"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	eventstypes "github.com/containerd/containerd/api/events"
 	containerd_v1_types "github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/runtime"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
-func newWcowPodSandboxExec(ctx context.Context, events publisher, tid, bundle string) *wcowPodSandboxExec {
+func newWcowPodSandboxExec(ctx context.Context, events events.Publisher, tid, bundle string) *wcowPodSandboxExec {
 	log.G(ctx).WithFields(logrus.Fields{
 		"tid":    tid,
 		"eid":    tid, // Init exec ID is always same as Task ID
@@ -28,14 +30,14 @@ func newWcowPodSandboxExec(ctx context.Context, events publisher, tid, bundle st
 		events:     events,
 		tid:        tid,
 		bundle:     bundle,
-		state:      shimExecStateCreated,
+		state:      shimservice.ExecStateCreated,
 		exitStatus: 255, // By design for non-exited process status.
 		exited:     make(chan struct{}),
 	}
 	return wpse
 }
 
-var _ = (shimExec)(&wcowPodSandboxExec{})
+var _ = (shimservice.Exec)(&wcowPodSandboxExec{})
 
 // wcowPodSandboxExec is a special exec type that actually holds no real
 // resources. The WCOW model has two services the HCS/HNS that actually hold
@@ -52,7 +54,7 @@ var _ = (shimExec)(&wcowPodSandboxExec{})
 // HNS and not by any container runtime attribute. If we ever have a shared
 // namespace that requires a container we will have to rethink this.
 type wcowPodSandboxExec struct {
-	events publisher
+	events events.Publisher
 	// tid is the task id of the container hosting this process.
 	//
 	// This MUST be treated as read only in the lifetime of the exec.
@@ -68,7 +70,7 @@ type wcowPodSandboxExec struct {
 	// sl is the state lock that MUST be held to safely read/write any of the
 	// following members.
 	sl         sync.Mutex
-	state      shimExecState
+	state      shimservice.ExecState
 	pid        int
 	exitStatus uint32
 	exitedAt   time.Time
@@ -87,7 +89,7 @@ func (wpse *wcowPodSandboxExec) Pid() int {
 	return wpse.pid
 }
 
-func (wpse *wcowPodSandboxExec) State() shimExecState {
+func (wpse *wcowPodSandboxExec) State() shimservice.ExecState {
 	wpse.sl.Lock()
 	defer wpse.sl.Unlock()
 	return wpse.state
@@ -99,11 +101,11 @@ func (wpse *wcowPodSandboxExec) Status() *task.StateResponse {
 
 	var s containerd_v1_types.Status
 	switch wpse.state {
-	case shimExecStateCreated:
+	case shimservice.ExecStateCreated:
 		s = containerd_v1_types.StatusCreated
-	case shimExecStateRunning:
+	case shimservice.ExecStateRunning:
 		s = containerd_v1_types.StatusRunning
-	case shimExecStateExited:
+	case shimservice.ExecStateExited:
 		s = containerd_v1_types.StatusStopped
 	}
 
@@ -125,11 +127,11 @@ func (wpse *wcowPodSandboxExec) Status() *task.StateResponse {
 func (wpse *wcowPodSandboxExec) Start(ctx context.Context) error {
 	wpse.sl.Lock()
 	defer wpse.sl.Unlock()
-	if wpse.state != shimExecStateCreated {
-		return newExecInvalidStateError(wpse.tid, wpse.tid, wpse.state, "start")
+	if wpse.state != shimservice.ExecStateCreated {
+		return shimservice.NewExecInvalidStateError(wpse.tid, wpse.tid, wpse.state, "start")
 	}
 	// Transition the state
-	wpse.state = shimExecStateRunning
+	wpse.state = shimservice.ExecStateRunning
 	wpse.pid = 1 // Fake but init pid is always 1
 
 	// Publish the task start event. We never have an exec for the WCOW
@@ -147,15 +149,15 @@ func (wpse *wcowPodSandboxExec) Kill(ctx context.Context, signal uint32) error {
 	wpse.sl.Lock()
 	defer wpse.sl.Unlock()
 	switch wpse.state {
-	case shimExecStateCreated:
-		wpse.state = shimExecStateExited
+	case shimservice.ExecStateCreated:
+		wpse.state = shimservice.ExecStateExited
 		wpse.exitStatus = 1
 		wpse.exitedAt = time.Now()
 		close(wpse.exited)
 		return nil
-	case shimExecStateRunning:
+	case shimservice.ExecStateRunning:
 		// TODO: Should we verify that the signal would of killed the WCOW Process?
-		wpse.state = shimExecStateExited
+		wpse.state = shimservice.ExecStateExited
 		wpse.exitStatus = 0
 		wpse.exitedAt = time.Now()
 
@@ -164,10 +166,10 @@ func (wpse *wcowPodSandboxExec) Kill(ctx context.Context, signal uint32) error {
 
 		close(wpse.exited)
 		return nil
-	case shimExecStateExited:
+	case shimservice.ExecStateExited:
 		return errors.Wrapf(errdefs.ErrNotFound, "exec: '%s' in task: '%s' not found", wpse.tid, wpse.tid)
 	default:
-		return newExecInvalidStateError(wpse.tid, wpse.tid, wpse.state, "kill")
+		return shimservice.NewExecInvalidStateError(wpse.tid, wpse.tid, wpse.state, "kill")
 	}
 }
 
@@ -191,11 +193,11 @@ func (wpse *wcowPodSandboxExec) Wait() *task.StateResponse {
 func (wpse *wcowPodSandboxExec) ForceExit(ctx context.Context, status int) {
 	wpse.sl.Lock()
 	defer wpse.sl.Unlock()
-	if wpse.state != shimExecStateExited {
+	if wpse.state != shimservice.ExecStateExited {
 		// Avoid logging the force if we already exited gracefully
 		log.G(ctx).WithField("status", status).Debug("wcowPodSandboxExec::ForceExit")
 
-		wpse.state = shimExecStateExited
+		wpse.state = shimservice.ExecStateExited
 		wpse.exitStatus = 1
 		wpse.exitedAt = time.Now()
 

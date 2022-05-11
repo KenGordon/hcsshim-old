@@ -140,13 +140,14 @@ The start command can either start a new shim or return an address to an existin
 			args = append(args, "--is-sandbox")
 		}
 		cmd := &exec.Cmd{
-			Path:   self,
-			Args:   args,
-			Env:    os.Environ(),
-			Dir:    cwd,
-			Stdin:  os.Stdin,
-			Stdout: w,
-			Stderr: panicLogFile,
+			Path:       self,
+			Args:       args,
+			Env:        os.Environ(),
+			Dir:        cwd,
+			Stdin:      os.Stdin,
+			Stdout:     w,
+			Stderr:     panicLogFile,
+			ExtraFiles: []*os.File{socketFile},
 		}
 
 		if err := cmd.Start(); err != nil {
