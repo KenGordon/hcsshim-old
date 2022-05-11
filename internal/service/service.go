@@ -90,6 +90,10 @@ func (s *Service) SetGracefulShutdownValue(value bool) {
 	s.gracefulShutdown = value
 }
 
+func (s *Service) GetTID() string {
+	return s.tid
+}
+
 func (s *Service) State(ctx context.Context, req *task.StateRequest) (resp *task.StateResponse, err error) {
 	ctx, span := trace.StartSpan(ctx, "State")
 	defer span.End()
