@@ -1,5 +1,3 @@
-//go:build windows
-
 package gcs
 
 import (
@@ -9,13 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"strings"
 	"sync"
 
-	"github.com/Microsoft/go-winio"
-	"github.com/Microsoft/go-winio/pkg/guid"
 	"github.com/Microsoft/hcsshim/internal/cow"
+	"github.com/Microsoft/hcsshim/internal/gcs/iochannel"
+	"github.com/Microsoft/hcsshim/internal/gcs/transport"
 	"github.com/Microsoft/hcsshim/internal/hcs/schema1"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/log"
@@ -29,24 +26,9 @@ import (
 const (
 	protocolVersion = 4
 
-	firstIoChannelVsockPort = LinuxGcsVsockPort + 1
+	firstIoChannelVsockPort = transport.LinuxGcsVsockPort + 1
 	nullContainerID         = "00000000-0000-0000-0000-000000000000"
 )
-
-// IoListenFunc is a type for a function that creates a listener for a VM for
-// the vsock port `port`.
-type IoListenFunc func(port uint32) (net.Listener, error)
-
-// HvsockIoListen returns an implementation of IoListenFunc that listens
-// on the specified vsock port for the VM specified by `vmID`.
-func HvsockIoListen(vmID guid.GUID) IoListenFunc {
-	return func(port uint32) (net.Listener, error) {
-		return winio.ListenHvsock(&winio.HvsockAddr{
-			VMID:      vmID,
-			ServiceID: winio.VsockServiceID(port),
-		})
-	}
-}
 
 type InitialGuestState struct {
 	// Timezone is only honored for Windows guests.
@@ -61,7 +43,7 @@ type GuestConnectionConfig struct {
 	// Log specifies the logrus entry to use for async log messages.
 	Log *logrus.Entry
 	// IoListen is the function to use to create listeners for the stdio connections.
-	IoListen IoListenFunc
+	IoListen transport.IoListenFunc
 	// InitGuestState specifies settings to apply to the guest on creation/start. This includes things such as the timezone for the VM.
 	InitGuestState *InitialGuestState
 }
@@ -94,7 +76,7 @@ func (gcc *GuestConnectionConfig) Connect(ctx context.Context, isColdStart bool)
 // GuestConnection represents a connection to the GCS.
 type GuestConnection struct {
 	brdg       *bridge
-	ioListenFn IoListenFunc
+	ioListenFn transport.IoListenFunc
 	mu         sync.Mutex
 	nextPort   uint32
 	notifyChs  map[string]chan struct{}
@@ -234,7 +216,7 @@ func (gc *GuestConnection) IsOCI() bool {
 	return false
 }
 
-func (gc *GuestConnection) newIoChannel() (*ioChannel, uint32, error) {
+func (gc *GuestConnection) newIoChannel() (*iochannel.Channel, uint32, error) {
 	gc.mu.Lock()
 	port := gc.nextPort
 	gc.nextPort++
@@ -243,7 +225,7 @@ func (gc *GuestConnection) newIoChannel() (*ioChannel, uint32, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	return newIoChannel(l), port, nil
+	return iochannel.NewIoChannel(l), port, nil
 }
 
 func (gc *GuestConnection) requestNotify(cid string, ch chan struct{}) error {

@@ -1,5 +1,3 @@
-//go:build windows
-
 package gcs
 
 import (
@@ -10,8 +8,9 @@ import (
 	"io"
 	"sync"
 
-	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/hcsshim/internal/cow"
+	"github.com/Microsoft/hcsshim/internal/gcs/iochannel"
+	"github.com/Microsoft/hcsshim/internal/gcs/transport"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/logfields"
 	"github.com/Microsoft/hcsshim/internal/oc"
@@ -30,7 +29,7 @@ type Process struct {
 	id                    uint32
 	waitCall              *rpc
 	waitResp              containerWaitForProcessResponse
-	stdin, stdout, stderr *ioChannel
+	stdin, stdout, stderr *iochannel.Channel
 	stdinCloseWriteOnce   sync.Once
 	stdinCloseWriteErr    error
 }
@@ -66,6 +65,8 @@ func (gc *GuestConnection) exec(ctx context.Context, cid string, params interfac
 		}
 	}()
 
+	// TODO katiewasnothere: figure out a better way to abstract this
+
 	// Construct the stdio channels. Windows guests expect hvsock service IDs
 	// instead of vsock ports.
 	var hvsockSettings executeProcessStdioRelaySettings
@@ -80,7 +81,7 @@ func (gc *GuestConnection) exec(ctx context.Context, cid string, params interfac
 		if err != nil {
 			return nil, err
 		}
-		g := winio.VsockServiceID(vsockSettings.StdIn)
+		g := transport.HvsockServiceIDFromPort(vsockSettings.StdIn)
 		hvsockSettings.StdIn = &g
 	}
 	if bp.CreateStdOutPipe {
@@ -88,7 +89,7 @@ func (gc *GuestConnection) exec(ctx context.Context, cid string, params interfac
 		if err != nil {
 			return nil, err
 		}
-		g := winio.VsockServiceID(vsockSettings.StdOut)
+		g := transport.HvsockServiceIDFromPort(vsockSettings.StdOut)
 		hvsockSettings.StdOut = &g
 	}
 	if bp.CreateStdErrPipe {
@@ -96,7 +97,7 @@ func (gc *GuestConnection) exec(ctx context.Context, cid string, params interfac
 		if err != nil {
 			return nil, err
 		}
-		g := winio.VsockServiceID(vsockSettings.StdErr)
+		g := transport.HvsockServiceIDFromPort(vsockSettings.StdErr)
 		hvsockSettings.StdErr = &g
 	}
 
