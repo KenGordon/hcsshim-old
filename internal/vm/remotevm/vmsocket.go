@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/Microsoft/go-winio/pkg/guid"
 	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/internal/vmservice"
 	"github.com/pkg/errors"
@@ -49,14 +50,14 @@ func (uvm *utilityVM) VMSocketListen(ctx context.Context, listenType vm.VMSocket
 	}()
 
 	switch listenType {
-	// case vm.HvSocket:
-	// 	serviceGUID, ok := connID.(guid.GUID)
-	// 	if !ok {
-	// 		return nil, errors.New("parameter passed to hvsocketlisten is not a GUID")
-	// 	}
-	// 	if err := uvm.hvSocketListen(ctx, serviceGUID.String(), addr); err != nil {
-	// 		return nil, errors.Wrap(err, "failed to setup relay to hvsocket listener")
-	// 	}
+	case vm.HvSocket:
+		serviceGUID, ok := connID.(guid.GUID)
+		if !ok {
+			return nil, errors.New("parameter passed to hvsocketlisten is not a GUID")
+		}
+		if err := uvm.hvSocketListen(ctx, serviceGUID.String(), addr); err != nil {
+			return nil, errors.Wrap(err, "failed to setup relay to hvsocket listener")
+		}
 	case vm.VSock:
 		port, ok := connID.(uint32)
 		if !ok {
