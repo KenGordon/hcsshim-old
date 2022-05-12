@@ -7,11 +7,11 @@ import (
 	"os"
 	"path/filepath"
 
-	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	"github.com/Microsoft/hcsshim/internal/oci"
 	"github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
+	runhcsopts "github.com/Microsoft/hcsshim/pkg/service/options"
 	containerd_v1_types "github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/runtime/v2/task"

@@ -14,7 +14,9 @@ import (
 	"github.com/pkg/errors"
 	"go.opencensus.io/trace"
 
-	"github.com/Microsoft/hcsshim/internal/gcs"
+	"github.com/Microsoft/go-winio"
+	"github.com/Microsoft/go-winio/pkg/guid"
+	"github.com/Microsoft/hcsshim/internal/gcs/transport"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/logfields"
@@ -75,7 +77,7 @@ func (uvm *UtilityVM) startExternalGcsListener(ctx context.Context) error {
 
 	l, err := winio.ListenHvsock(&winio.HvsockAddr{
 		VMID:      uvm.runtimeID,
-		ServiceID: gcs.WindowsGcsHvsockServiceID,
+		ServiceID: transport.WindowsGcsHvsockServiceID,
 	})
 	if err != nil {
 		return err

@@ -20,6 +20,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/Microsoft/hcsshim/internal/gcs"
+	"github.com/Microsoft/hcsshim/internal/gcs/transport"
 	"github.com/Microsoft/hcsshim/internal/hcs/schema1"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/log"
@@ -135,7 +136,7 @@ func (uvm *UtilityVM) configureHvSocketForGCS(ctx context.Context) (err error) {
 
 	hvsocketAddress := &hcsschema.HvSocketAddress{
 		LocalAddress:  uvm.runtimeID.String(),
-		ParentAddress: gcs.WindowsGcsHvHostID.String(),
+		ParentAddress: transport.WindowsGcsHvHostID.String(),
 	}
 
 	conSetupReq := &hcsschema.ModifySettingRequest{
@@ -256,7 +257,7 @@ func (uvm *UtilityVM) Start(ctx context.Context) (err error) {
 		gcc := &gcs.GuestConnectionConfig{
 			Conn:           conn,
 			Log:            log.G(ctx).WithField(logfields.UVMID, uvm.id),
-			IoListen:       gcs.HvsockIoListen(uvm.runtimeID),
+			IoListen:       transport.VMSockIoListen(uvm.runtimeID),
 			InitGuestState: initGuestState,
 		}
 		uvm.gc, err = gcc.Connect(ctx, !uvm.IsClone)

@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
+	"github.com/Microsoft/hcsshim/pkg/service/options"
+	"github.com/Microsoft/hcsshim/pkg/service/stats"
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/opencontainers/runtime-spec/specs-go"

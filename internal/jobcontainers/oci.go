@@ -8,10 +8,10 @@ import (
 	"github.com/Microsoft/hcsshim/internal/hcsoci"
 	"github.com/Microsoft/hcsshim/internal/jobobject"
 	"github.com/Microsoft/hcsshim/internal/memory"
+	"github.com/Microsoft/hcsshim/internal/ociuvm"
 	"github.com/Microsoft/hcsshim/internal/processorinfo"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 
-	"github.com/Microsoft/hcsshim/internal/oci"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -47,11 +47,12 @@ func specToLimits(ctx context.Context, cid string, s *specs.Spec) (*jobobject.Jo
 	}
 
 	// Memory limit
-	memLimitMB := oci.ParseAnnotationsMemory(ctx, s, annotations.ContainerMemorySizeInMB, 0)
+	// TODO katiewasnothere: these function should be moved to just the oci package
+	memLimitMB := ociuvm.ParseAnnotationsMemory(ctx, s, annotations.ContainerMemorySizeInMB, 0)
 
 	// IO limits
-	maxBandwidth := int64(oci.ParseAnnotationsStorageBps(ctx, s, annotations.ContainerStorageQoSBandwidthMaximum, 0))
-	maxIops := int64(oci.ParseAnnotationsStorageIops(ctx, s, annotations.ContainerStorageQoSIopsMaximum, 0))
+	maxBandwidth := int64(ociuvm.ParseAnnotationsStorageBps(ctx, s, annotations.ContainerStorageQoSBandwidthMaximum, 0))
+	maxIops := int64(ociuvm.ParseAnnotationsStorageIops(ctx, s, annotations.ContainerStorageQoSIopsMaximum, 0))
 
 	return &jobobject.JobLimits{
 		CPULimit:           realCPULimit,

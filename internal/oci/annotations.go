@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/logfields"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
+	runhcsopts "github.com/Microsoft/hcsshim/pkg/service/options"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )

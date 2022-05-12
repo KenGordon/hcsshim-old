@@ -22,8 +22,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
 
-	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/hcs"
@@ -47,6 +45,8 @@ import (
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
+	runhcsopts "github.com/Microsoft/hcsshim/pkg/service/options"
+	"github.com/Microsoft/hcsshim/pkg/service/stats"
 )
 
 type hcsStandaloneTaskFactory struct{}

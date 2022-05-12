@@ -25,13 +25,13 @@ import (
 	"github.com/urfave/cli"
 	"golang.org/x/sys/windows"
 
-	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	hcslog "github.com/Microsoft/hcsshim/internal/log"
 	shimservice "github.com/Microsoft/hcsshim/internal/service"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/Microsoft/hcsshim/pkg/octtrpc"
+	runhcsopts "github.com/Microsoft/hcsshim/pkg/service/options"
 )
 
 var svc *shimservice.Service
