@@ -9,14 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"os"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/windows"
 
 	"github.com/Microsoft/hcsshim/internal/log"
 )
@@ -178,9 +174,9 @@ type rpcError struct {
 
 func (err *rpcError) Error() string {
 	msg := err.message
-	if msg == "" {
-		msg = windows.Errno(err.result).Error()
-	}
+	// if msg == "" {
+	// 	msg = windows.Errno(err.result).Error()
+	// }
 	return "guest RPC failure: " + msg
 }
 
@@ -289,11 +285,11 @@ func readMessage(r io.Reader) (int64, msgType, []byte, error) {
 }
 
 func isLocalDisconnectError(err error) bool {
-	if o, ok := err.(*net.OpError); ok {
-		if s, ok := o.Err.(*os.SyscallError); ok {
-			return s.Err == syscall.WSAECONNABORTED
-		}
-	}
+	// if o, ok := err.(*net.OpError); ok {
+	// 	if s, ok := o.Err.(*os.SyscallError); ok {
+	// 		return s.Err ==
+	// 	}
+	// }
 	return false
 }
 
@@ -329,7 +325,7 @@ func (brdg *bridge) recvLoop() error {
 					brdg.log.WithFields(logrus.Fields{
 						"message-id":     id,
 						"result":         rec.Result,
-						"result-message": windows.Errno(rec.Result).Error(),
+						"result-message": rec.Message,
 						"error-message":  rec.Message,
 						"stack":          rec.StackTrace,
 						"module":         rec.ModuleName,
