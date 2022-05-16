@@ -13,6 +13,7 @@ import (
 
 	"github.com/Microsoft/hcsshim/internal/cow"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
+	cmdio "github.com/Microsoft/hcsshim/internal/io"
 	"github.com/Microsoft/hcsshim/internal/log"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
@@ -203,7 +204,7 @@ func (c *Cmd) Start() error {
 		// us or the caller to reliably unblock the c.Stdin read when the
 		// process exits.
 		go func() {
-			_, err := relayIO(stdin, c.Stdin, c.Log, "stdin")
+			_, err := cmdio.RelayIO(stdin, c.Stdin, c.Log, "stdin")
 			// Report the stdin copy error. If the process has exited, then the
 			// caller may never see it, but if the error was due to a failure in
 			// stdin read, then it is likely the process is still running.
@@ -219,7 +220,7 @@ func (c *Cmd) Start() error {
 
 	if c.Stdout != nil {
 		c.iogrp.Go(func() error {
-			_, err := relayIO(c.Stdout, stdout, c.Log, "stdout")
+			_, err := cmdio.RelayIO(c.Stdout, stdout, c.Log, "stdout")
 			if err := p.CloseStdout(context.TODO()); err != nil {
 				c.Log.WithError(err).Warn("failed to close Cmd stdout")
 			}
@@ -229,7 +230,7 @@ func (c *Cmd) Start() error {
 
 	if c.Stderr != nil {
 		c.iogrp.Go(func() error {
-			_, err := relayIO(c.Stderr, stderr, c.Log, "stderr")
+			_, err := cmdio.RelayIO(c.Stderr, stderr, c.Log, "stderr")
 			if err := p.CloseStderr(context.TODO()); err != nil {
 				c.Log.WithError(err).Warn("failed to close Cmd stderr")
 			}
