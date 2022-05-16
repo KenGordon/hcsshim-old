@@ -13,7 +13,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/service/stats"
 	"github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
-	"github.com/Microsoft/hcsshim/internal/uvm"
+	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -26,9 +26,7 @@ type lcolTask struct {
 	// TODO katiewasnothere: this probably needs to be fixed to
 	// build on linux
 	containerResources *resources.Resources
-
-	// TODO katiewasnothere: uvm is windows only package, need to refactor
-	host *uvm.UtilityVM
+	host               *vm.UVM
 }
 
 var _ = (shim.Task)(&lcolTask{})
@@ -89,7 +87,7 @@ func (t *lcolTask) Stats(ctx context.Context) (*stats.Statistics, error) {
 }
 
 // ProcessInfo returns information on the task's processor settings
-func (t *lcolTask) ProcessorInfo(ctx context.Context) (*ProcessorInfo, error) {
+func (t *lcolTask) ProcessorInfo(ctx context.Context) (*shim.ProcessorInfo, error) {
 
 }
 

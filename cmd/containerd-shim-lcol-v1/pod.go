@@ -27,14 +27,20 @@ func (p *lcolPod) ID() string {
 // If `tid==ID()` or `tid` is the same as any other task in this pod, this
 // pod MUST return `errdefs.ErrAlreadyExists`.
 func (p *lcolPod) CreateTask(ctx context.Context, req *task.CreateTaskRequest, s *specs.Spec) (Task, error) {
+	// get the sandbox exec to make sure exec is in running state
 
+	// check if the task already exists
+
+	// create new task
+
+	// store task
 }
 
 // GetTask returns a task in this pod that matches `tid`.
 //
 // If `tid` is not found, this pod MUST return `errdefs.ErrNotFound`.
 func (p *lcolPod) GetTask(tid string) (Task, error) {
-
+	// load task
 }
 
 // KillTask sends `signal` to task that matches `tid`.
@@ -51,7 +57,12 @@ func (p *lcolPod) GetTask(tid string) (Task, error) {
 // the `shimExecStateRunning, shimExecStateExited` states. If the exec is
 // not in this state this pod MUST return `errdefs.ErrFailedPrecondition`.
 func (p *lcolPod) KillTask(ctx context.Context, tid, eid string, signal uint32, all bool) error {
+	// get the task from the pod
 
+	// if all is set and this is the owner pod id
+	// go through all tasks and issue KillExec
+
+	// otherwise just issue to the given eid
 }
 
 // DeleteTask removes a task from being tracked by this pod, and cleans up
@@ -62,5 +73,11 @@ func (p *lcolPod) KillTask(ctx context.Context, tid, eid string, signal uint32, 
 // return `errdefs.ErrFailedPrecondition`. Deleting the pod's sandbox task
 // is a no-op.
 func (p *lcolPod) DeleteTask(ctx context.Context, tid string) error {
+	// get task
 
+	// get exec of task
+
+	// check state of exec
+
+	// delete from list of tasks
 }
