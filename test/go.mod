@@ -3,7 +3,7 @@ module github.com/Microsoft/hcsshim/test
 go 1.17
 
 require (
-	github.com/Microsoft/go-winio v0.5.2
+	github.com/Microsoft/go-winio v0.5.3-0.20220510183413-bdacbf1c28af
 	github.com/Microsoft/hcsshim v0.8.23
 	github.com/containerd/containerd v1.5.10
 	github.com/containerd/go-runc v1.0.0
@@ -18,7 +18,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.8.1
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e
+	golang.org/x/sys v0.0.0-20220422013727-9388b58f7150
 	google.golang.org/grpc v1.40.0
 	k8s.io/cri-api v0.20.6
 )

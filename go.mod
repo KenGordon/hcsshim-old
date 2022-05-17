@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/BurntSushi/toml v0.3.1
-	github.com/Microsoft/go-winio v0.5.2
+	github.com/Microsoft/go-winio v0.5.3-0.20220510183413-bdacbf1c28af
 	github.com/cenkalti/backoff/v4 v4.1.1
 	github.com/containerd/cgroups v1.0.1
 	github.com/containerd/console v1.0.2
@@ -29,7 +29,7 @@ require (
 	go.etcd.io/bbolt v1.3.6
 	go.opencensus.io v0.22.3
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e
+	golang.org/x/sys v0.0.0-20220422013727-9388b58f7150
 	google.golang.org/grpc v1.40.0
 )
 

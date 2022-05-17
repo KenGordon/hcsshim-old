@@ -1,6 +1,4 @@
-//go:build windows
-
-package gcs
+package iochannel
 
 import (
 	"io/ioutil"
@@ -18,7 +16,7 @@ func TestIoChannelClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ioc := newIoChannel(l)
+	ioc := NewIoChannel(l)
 	defer ioc.Close()
 	ch := make(chan error, 1)
 	go func() {
@@ -37,7 +35,7 @@ func TestIoChannelRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ioc := newIoChannel(l)
+	ioc := NewIoChannel(l)
 	defer ioc.Close()
 	var b []byte
 	ch := make(chan error, 1)
@@ -70,7 +68,7 @@ func TestIoChannelWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ioc := newIoChannel(l)
+	ioc := NewIoChannel(l)
 	defer ioc.Close()
 	ch := make(chan error, 1)
 	go func() {

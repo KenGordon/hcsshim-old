@@ -1,5 +1,3 @@
-//go:build windows
-
 package gcs
 
 import (
@@ -11,14 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"os"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/windows"
 
 	"github.com/Microsoft/hcsshim/internal/log"
 )
@@ -52,6 +47,8 @@ type rpc struct {
 	brdgErr error // error encountered when sending the request or unmarshaling the result
 	ch      chan struct{}
 }
+
+// TODO katiewasnothere: We could, but I think it's clearer to treat this as a magic number that is part of the protocol and not as an error. E.g. if we used this code on Linux, we would not want to rely on values of type syscall.Errno.
 
 // bridge represents a communcations bridge with the guest. It handles the
 // transport layer but (mostly) does not parse or construct the message payload.
@@ -181,7 +178,8 @@ type rpcError struct {
 func (err *rpcError) Error() string {
 	msg := err.message
 	if msg == "" {
-		msg = windows.Errno(err.result).Error()
+		// TODO katiewasnothere: can we just switch this to syscall or does that break shit?
+		msg = syscall.Errno(err.result).Error()
 	}
 	return "guest RPC failure: " + msg
 }
@@ -190,7 +188,7 @@ func (err *rpcError) Error() string {
 func IsNotExist(err error) bool {
 	switch rerr := err.(type) {
 	case *rpcError:
-		return uint32(rerr.result) == hrComputeSystemDoesNotExist
+		return uint32(rerr.result) == systemDoesNotExist
 	}
 	return false
 }
@@ -290,15 +288,6 @@ func readMessage(r io.Reader) (int64, msgType, []byte, error) {
 	return id, typ, b, nil
 }
 
-func isLocalDisconnectError(err error) bool {
-	if o, ok := err.(*net.OpError); ok {
-		if s, ok := o.Err.(*os.SyscallError); ok {
-			return s.Err == syscall.WSAECONNABORTED
-		}
-	}
-	return false
-}
-
 func (brdg *bridge) recvLoop() error {
 	br := bufio.NewReader(brdg.conn)
 	for {
@@ -329,9 +318,10 @@ func (brdg *bridge) recvLoop() error {
 			} else if resp := call.resp.Base(); resp.Result != 0 {
 				for _, rec := range resp.ErrorRecords {
 					brdg.log.WithFields(logrus.Fields{
-						"message-id":     id,
-						"result":         rec.Result,
-						"result-message": windows.Errno(rec.Result).Error(),
+						"message-id": id,
+						"result":     rec.Result,
+						// TODO katiewasnothere: this also
+						"result-message": syscall.Errno(rec.Result).Error(),
 						"error-message":  rec.Message,
 						"stack":          rec.StackTrace,
 						"module":         rec.ModuleName,

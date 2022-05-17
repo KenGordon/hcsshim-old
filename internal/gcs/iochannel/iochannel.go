@@ -1,32 +1,32 @@
-package gcs
+package iochannel
 
 import (
 	"net"
 )
 
-type ioChannel struct {
+type Channel struct {
 	l   net.Listener
 	c   net.Conn
 	err error
 	ch  chan struct{}
 }
 
-func newIoChannel(l net.Listener) *ioChannel {
-	c := &ioChannel{
+func NewIoChannel(l net.Listener) *Channel {
+	c := &Channel{
 		l:  l,
 		ch: make(chan struct{}),
 	}
-	go c.accept()
+	go c.Accept()
 	return c
 }
 
-func (c *ioChannel) accept() {
+func (c *Channel) Accept() {
 	c.c, c.err = c.l.Accept()
 	c.l.Close()
 	close(c.ch)
 }
 
-func (c *ioChannel) Close() error {
+func (c *Channel) Close() error {
 	if c == nil {
 		return nil
 	}
@@ -38,19 +38,19 @@ func (c *ioChannel) Close() error {
 	return nil
 }
 
-type closeWriter interface {
+type CloseWriter interface {
 	CloseWrite() error
 }
 
-func (c *ioChannel) CloseWrite() error {
+func (c *Channel) CloseWrite() error {
 	<-c.ch
 	if c.c == nil {
 		return c.err
 	}
-	return c.c.(closeWriter).CloseWrite()
+	return c.c.(CloseWriter).CloseWrite()
 }
 
-func (c *ioChannel) Read(b []byte) (int, error) {
+func (c *Channel) Read(b []byte) (int, error) {
 	<-c.ch
 	if c.c == nil {
 		return 0, c.err
@@ -58,7 +58,7 @@ func (c *ioChannel) Read(b []byte) (int, error) {
 	return c.c.Read(b)
 }
 
-func (c *ioChannel) Write(b []byte) (int, error) {
+func (c *Channel) Write(b []byte) (int, error) {
 	<-c.ch
 	if c.c == nil {
 		return 0, c.err
