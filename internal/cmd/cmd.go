@@ -1,5 +1,3 @@
-//go:build windows
-
 package cmd
 
 import (
@@ -7,18 +5,16 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"sync/atomic"
 	"time"
 
+	cmdio "github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/cow"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
-	cmdio "github.com/Microsoft/hcsshim/internal/io"
 	"github.com/Microsoft/hcsshim/internal/log"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sys/windows"
 )
 
 // CmdProcessRequest stores information on command requests made through this package.
@@ -97,34 +93,6 @@ type lcowProcessParameters struct {
 	OCIProcess *specs.Process `json:"OciProcess,omitempty"`
 }
 
-// escapeArgs makes a Windows-style escaped command line from a set of arguments
-func escapeArgs(args []string) string {
-	escapedArgs := make([]string, len(args))
-	for i, a := range args {
-		escapedArgs[i] = windows.EscapeArg(a)
-	}
-	return strings.Join(escapedArgs, " ")
-}
-
-// Command makes a Cmd for a given command and arguments.
-func Command(host cow.ProcessHost, name string, arg ...string) *Cmd {
-	cmd := &Cmd{
-		Host: host,
-		Spec: &specs.Process{
-			Args: append([]string{name}, arg...),
-		},
-		Log:       log.L.Dup(),
-		ExitState: &ExitState{},
-	}
-	if host.OS() == "windows" {
-		cmd.Spec.Cwd = `C:\`
-	} else {
-		cmd.Spec.Cwd = "/"
-		cmd.Spec.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
-	}
-	return cmd
-}
-
 // CommandContext makes a Cmd for a given command and arguments. After
 // it is launched, the process is killed when the context becomes done.
 func CommandContext(ctx context.Context, host cow.ProcessHost, name string, arg ...string) *Cmd {
@@ -138,57 +106,12 @@ func CommandContext(ctx context.Context, host cow.ProcessHost, name string, arg 
 // Wait is eventually called to clean up resources.
 func (c *Cmd) Start() error {
 	c.allDoneCh = make(chan struct{})
-	var x interface{}
-	if !c.Host.IsOCI() {
-		wpp := &hcsschema.ProcessParameters{
-			CommandLine:      c.Spec.CommandLine,
-			User:             c.Spec.User.Username,
-			WorkingDirectory: c.Spec.Cwd,
-			EmulateConsole:   c.Spec.Terminal,
-			CreateStdInPipe:  c.Stdin != nil,
-			CreateStdOutPipe: c.Stdout != nil,
-			CreateStdErrPipe: c.Stderr != nil,
-		}
 
-		if c.Spec.CommandLine == "" {
-			if c.Host.OS() == "windows" {
-				wpp.CommandLine = escapeArgs(c.Spec.Args)
-			} else {
-				wpp.CommandArgs = c.Spec.Args
-			}
-		}
-
-		environment := make(map[string]string)
-		for _, v := range c.Spec.Env {
-			s := strings.SplitN(v, "=", 2)
-			if len(s) == 2 && len(s[1]) > 0 {
-				environment[s[0]] = s[1]
-			}
-		}
-		wpp.Environment = environment
-
-		if c.Spec.ConsoleSize != nil {
-			wpp.ConsoleSize = []int32{
-				int32(c.Spec.ConsoleSize.Height),
-				int32(c.Spec.ConsoleSize.Width),
-			}
-		}
-		x = wpp
-	} else {
-		lpp := &lcowProcessParameters{
-			ProcessParameters: hcsschema.ProcessParameters{
-				CreateStdInPipe:  c.Stdin != nil,
-				CreateStdOutPipe: c.Stdout != nil,
-				CreateStdErrPipe: c.Stderr != nil,
-			},
-			OCIProcess: c.Spec,
-		}
-		x = lpp
-	}
+	config := c.createCommandConfig()
 	if c.Context != nil && c.Context.Err() != nil {
 		return c.Context.Err()
 	}
-	p, err := c.Host.CreateProcess(context.TODO(), x)
+	p, err := c.Host.CreateProcess(context.TODO(), config)
 	if err != nil {
 		return err
 	}
