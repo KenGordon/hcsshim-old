@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net"
 
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
+	"github.com/Microsoft/hcsshim/pkg/service/stats"
 )
 
 var (
