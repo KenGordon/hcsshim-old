@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	shimservice "github.com/Microsoft/hcsshim/internal/service"
 	"github.com/Microsoft/hcsshim/pkg/octtrpc"
+	runhcsopts "github.com/Microsoft/hcsshim/pkg/service/options"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/containerd/ttrpc"
 	"github.com/containerd/typeurl"
