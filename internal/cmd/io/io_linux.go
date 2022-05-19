@@ -1,15 +1,33 @@
 package io
 
+import (
+	"context"
+	"io"
+	"os"
+	"time"
+
+	"github.com/Microsoft/hcsshim/internal/log"
+	"github.com/sirupsen/logrus"
+)
+
 // NewUpstreamIO returns an UpstreamIO instance. Currently we only support sockets.
 func NewUpstreamIO(ctx context.Context, id, stdout, stderr, stdin string, terminal bool, ioRetryTimeout time.Duration) (UpstreamIO, error) {
+	log.G(ctx).WithFields(logrus.Fields{
+		"stdin":    stdin,
+		"stdout":   stdout,
+		"stderr":   stderr,
+		"terminal": terminal,
+	}).Debug("NewNpipeIO")
 
+	return newPipeIO(ctx, stdin, stdout, stderr, terminal, ioRetryTimeout)
 }
 
-func NewPipeIO(ctx context.Context, stdin, stdout, stderr string, terminal bool, retryTimeout time.Duration) (*pipeIO, error) {
+func newPipeIO(ctx context.Context, stdin, stdout, stderr string, terminal bool, retryTimeout time.Duration) (*pipeIO, error) {
 	// TODO katiewasnothere: how to support terminal
 	var (
-		pipes                 []*pipe
-		stdin, stdout, stderr *pipe
+		pipes                             []*pipe
+		stdinPipe, stdoutPipe, stderrPipe *pipe
+		err                               error
 	)
 	// cleanup in case of an error
 	defer func() {
@@ -20,38 +38,38 @@ func NewPipeIO(ctx context.Context, stdin, stdout, stderr string, terminal bool,
 		}
 	}()
 	if stdin != "" {
-		if stdin, err = newPipe(); err != nil {
+		if stdinPipe, err = newPipe(); err != nil {
 			return nil, err
 		}
-		pipes = append(pipes, stdin)
+		pipes = append(pipes, stdinPipe)
 		// TODO katiewasnothere: permissions
 		/*if err = unix.Fchown(int(stdin.r.Fd()), uid, gid); err != nil {
 			return nil, errors.Wrap(err, "failed to chown stdin")
 		}*/
 	}
 	if stdout != "" {
-		if stdout, err = newPipe(); err != nil {
+		if stdoutPipe, err = newPipe(); err != nil {
 			return nil, err
 		}
-		pipes = append(pipes, stdout)
+		pipes = append(pipes, stdoutPipe)
 		// TODO katiewasnothere: permissions for io on init?
 		/*if err = unix.Fchown(int(stdout.w.Fd()), uid, gid); err != nil {
 			return nil, errors.Wrap(err, "failed to chown stdout")
 		}*/
 	}
 	if stderr != "" {
-		if stderr, err = newPipe(); err != nil {
+		if stderrPipe, err = newPipe(); err != nil {
 			return nil, err
 		}
-		pipes = append(pipes, stderr)
+		pipes = append(pipes, stderrPipe)
 		/*if err = unix.Fchown(int(stderr.w.Fd()), uid, gid); err != nil {
 			return nil, errors.Wrap(err, "failed to chown stderr")
 		}*/
 	}
 	return &pipeIO{
-		in:  stdin,
-		out: stdout,
-		err: stderr,
+		in:  stdinPipe,
+		out: stdoutPipe,
+		err: stderrPipe,
 	}, nil
 }
 
@@ -86,7 +104,7 @@ type pipeIO struct {
 	err *pipe
 }
 
-var _ = (UpstreamIO)(&PipeIO{})
+var _ = (UpstreamIO)(&pipeIO{})
 
 func (i *pipeIO) Stdin() io.Reader {
 	if i.in == nil {
@@ -135,25 +153,24 @@ func (i *pipeIO) Terminal() bool {
 	return false
 }
 
-func (i *pipeIO) Close(ctx context.Context) error {
-	var err error
+func (i *pipeIO) Close(ctx context.Context) {
 	for _, v := range []*pipe{
 		i.in,
 		i.out,
 		i.err,
 	} {
 		if v != nil {
-			if cerr := v.Close(); err == nil {
-				err = cerr
+			if cerr := v.Close(); cerr != nil {
+				log.G(ctx).WithError(cerr).Error("error while closing pipe")
 			}
 		}
 	}
-	return err
 }
 
-func (i *pipeIO) CloseStdin(ctx context.Context) error {
-	if i.in == nil {
-		return nil
+func (i *pipeIO) CloseStdin(ctx context.Context) {
+	if i.in != nil {
+		if err := i.in.Close(); err != nil {
+			log.G(ctx).WithError(err).Error("error while closing stdin pipe")
+		}
 	}
-	return i.in.Close()
 }
