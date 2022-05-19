@@ -23,6 +23,7 @@ import (
 	"go.opencensus.io/trace"
 
 	"github.com/Microsoft/hcsshim/internal/cmd"
+	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/hcs"
 	"github.com/Microsoft/hcsshim/internal/hcs/resourcepaths"
@@ -197,7 +198,7 @@ func newHcsTask(
 	if shimOpts != nil {
 		ioRetryTimeout = time.Duration(shimOpts.IoRetryTimeoutInSec) * time.Second
 	}
-	io, err := cmd.NewUpstreamIO(ctx, req.ID, req.Stdout, req.Stderr, req.Stdin, req.Terminal, ioRetryTimeout)
+	io, err := io.NewUpstreamIO(ctx, req.ID, req.Stdout, req.Stderr, req.Stdin, req.Terminal, ioRetryTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +311,7 @@ func newClonedHcsTask(
 	if shimOpts != nil {
 		ioRetryTimeout = time.Duration(shimOpts.IoRetryTimeoutInSec) * time.Second
 	}
-	io, err := cmd.NewNpipeIO(ctx, req.Stdin, req.Stdout, req.Stderr, req.Terminal, ioRetryTimeout)
+	io, err := io.NewNpipeIO(ctx, req.Stdin, req.Stdout, req.Stderr, req.Terminal, ioRetryTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -487,7 +488,7 @@ func (ht *hcsTask) CreateExec(ctx context.Context, req *task.ExecProcessRequest,
 		return errors.Wrapf(errdefs.ErrFailedPrecondition, "exec: '' in task: '%s' must be running to create additional execs", ht.id)
 	}
 
-	io, err := cmd.NewUpstreamIO(ctx, req.ID, req.Stdout, req.Stderr, req.Stdin, req.Terminal, ht.ioRetryTimeout)
+	io, err := io.NewUpstreamIO(ctx, req.ID, req.Stdout, req.Stderr, req.Stdin, req.Terminal, ht.ioRetryTimeout)
 	if err != nil {
 		return err
 	}

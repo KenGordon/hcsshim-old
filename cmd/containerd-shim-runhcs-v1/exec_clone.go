@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 
-	"github.com/Microsoft/hcsshim/internal/cmd"
+	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/log"
 	shimservice "github.com/Microsoft/hcsshim/internal/shim"
@@ -24,7 +24,7 @@ func newClonedExec(
 	id, bundle string,
 	isWCOW bool,
 	spec *specs.Process,
-	io cmd.UpstreamIO) *clonedExec {
+	io io.UpstreamIO) *clonedExec {
 	log.G(ctx).WithFields(logrus.Fields{
 		"tid":    tid,
 		"eid":    id, // Init exec ID is always same as Task ID

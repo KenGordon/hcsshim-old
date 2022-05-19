@@ -19,6 +19,7 @@ import (
 	"go.opencensus.io/trace"
 
 	"github.com/Microsoft/hcsshim/internal/cmd"
+	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
@@ -42,7 +43,7 @@ func newHcsExec(
 	id, bundle string,
 	isWCOW bool,
 	spec *specs.Process,
-	io cmd.UpstreamIO) shimservice.Exec {
+	io io.UpstreamIO) shimservice.Exec {
 	log.G(ctx).WithFields(logrus.Fields{
 		"tid":    tid,
 		"eid":    id, // Init exec ID is always same as Task ID
@@ -111,7 +112,7 @@ type hcsExec struct {
 	// create time in order to be valid.
 	//
 	// This MUST be treated as read only in the lifetime of the exec.
-	io              cmd.UpstreamIO
+	io              io.UpstreamIO
 	processDone     chan struct{}
 	processDoneOnce sync.Once
 
