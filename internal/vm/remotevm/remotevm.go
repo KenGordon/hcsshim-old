@@ -2,7 +2,9 @@ package remotevm
 
 import (
 	"context"
+	"os/exec"
 	"sync"
+	"syscall"
 
 	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/internal/vmservice"
@@ -14,6 +16,7 @@ var _ vm.UVM = &utilityVM{}
 
 type utilityVM struct {
 	id              string
+	vmmProc         *exec.Cmd
 	waitBlock       chan struct{}
 	closedWaitOnce  sync.Once
 	waitError       error
@@ -60,6 +63,9 @@ func (uvm *utilityVM) Close() error {
 	uvm.closedWaitOnce.Do(func() {
 		close(uvm.waitBlock)
 	})
+	if uvm.vmmProc != nil {
+		return uvm.vmmProc.Process.Signal(syscall.SIGINT)
+	}
 	return nil
 }
 

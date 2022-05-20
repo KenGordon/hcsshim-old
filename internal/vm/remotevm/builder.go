@@ -22,6 +22,7 @@ var _ vm.UVMBuilder = &utilityVMBuilder{}
 
 type utilityVMBuilder struct {
 	id, binpath, addr string
+	vmmProc           *exec.Cmd
 	guestOS           vm.GuestOS
 	ignoreSupported   bool
 	config            *vmservice.VMConfig
@@ -29,6 +30,7 @@ type utilityVMBuilder struct {
 }
 
 func NewUVMBuilder(ctx context.Context, id, owner, binPath, addr string, guestOS vm.GuestOS) (_ vm.UVMBuilder, err error) {
+	var cmd *exec.Cmd
 	if binPath != "" {
 		log.G(ctx).WithFields(logrus.Fields{
 			"binary":  binPath,
@@ -43,7 +45,7 @@ func NewUVMBuilder(ctx context.Context, id, owner, binPath, addr string, guestOS
 			}
 		}
 
-		cmd := exec.Command(binPath, "--ttrpc", addr)
+		cmd = exec.Command(binPath, "--ttrpc", addr)
 		cmd.Stderr = os.Stderr
 		p, err := cmd.StdoutPipe()
 		if err != nil {
@@ -69,6 +71,7 @@ func NewUVMBuilder(ctx context.Context, id, owner, binPath, addr string, guestOS
 	return &utilityVMBuilder{
 		id:      id,
 		guestOS: guestOS,
+		vmmProc: cmd,
 		config: &vmservice.VMConfig{
 			MemoryConfig:    &vmservice.MemoryConfig{},
 			DevicesConfig:   &vmservice.DevicesConfig{},
@@ -110,6 +113,7 @@ func (uvmb *utilityVMBuilder) Create(ctx context.Context, opts []vm.CreateOpt) (
 
 	uvm := &utilityVM{
 		id:              uvmb.id,
+		vmmProc:         uvmb.vmmProc,
 		waitBlock:       make(chan struct{}),
 		ignoreSupported: uvmb.ignoreSupported,
 		config:          uvmb.config,

@@ -1,7 +1,7 @@
 syntax = 'proto3';
 
 package vmservice;
-option go_package = "github.com/Microsoft/hcsshim/internal/vmservice";
+option go_package = "vmservice";
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
@@ -28,10 +28,6 @@ service VM {
     // via TeardownVM.
     rpc WaitVM(google.protobuf.Empty) returns (google.protobuf.Empty);
 
-    // InspectVM is used to inspect virtual machine state. The query of what to inspect
-    // is passed in as a string and the response can be of any form.
-    rpc InspectVM(InspectVMRequest) returns (InspectVMResponse);
-
     // CapabilitiesVM will return what capabilities the virtstack supports. This includes
     // what guest operating systems are supported, what resources are supported, and if hot
     // add/hot remove of a resource is supported.
@@ -45,7 +41,7 @@ service VM {
     // This includes things such as block devices, network adapters, and pci devices.
     rpc ModifyResource(ModifyResourceRequest) returns (google.protobuf.Empty);
 
-    // VMSocket is an abstraction around a hypervisor socket transport to facilitate communication
+    // VMSocket is a abstraction around a hypervisor socket transport to facilitate communication
     // between virtual machines and the host they are running on. The supported transports are
     // HvSocket and Vsock.
     rpc VMSocket(VMSocketRequest) returns (google.protobuf.Empty);
@@ -54,6 +50,9 @@ service VM {
     rpc Quit(google.protobuf.Empty) returns (google.protobuf.Empty);
 }
 
+//
+// VM lifecycle request/response
+//
 message DirectBoot {
     string kernel_path = 1;
     string initrd_path = 2;
@@ -90,6 +89,9 @@ message DevicesConfig {
     repeated SCSIDisk scsi_disks = 1;
     repeated VPMEMDisk vpmem_disks = 2;
     repeated NICConfig nic_config = 3;
+    // When we know what information we need to assign a pci device on Linux,
+    // have a oneof here named PCIDevice with WindowsPCIDevice and LinuxPCIDevice
+    // housed.
     repeated WindowsPCIDevice windows_device = 4;
 }
 
@@ -105,6 +107,7 @@ message VMConfig {
     WindowsOptions windows_options = 7;
     // Optional k:v extra data. Up to the virtstack for how to interpret this.
     map<string, string> extra_data = 8;
+    HVSocketConfig hvsocket_config = 9;
 }
 
 // WindowsOptions contains virtual machine configurations that are only present on a Windows host.
@@ -115,26 +118,22 @@ message WindowsOptions {
 message SerialConfig {
     message Config {
         uint32 port = 1;
-        // Unix domain socket to relay serial console output to.
+        // Uds to relay serial console output to.
         string socket_path = 2;
     }
     repeated Config ports = 3;
 }
 
+message HVSocketConfig {
+    string path = 1;
+}
+
 message CreateVMRequest {
     VMConfig config = 1;
     // Optional ID to be used by the VM service in log messages. It's up to the
-    // virtstack to make use of this field. Useful for debugging to be able to
-    // correlate events for a given vm that the client launched.
+    // server/virtstack to make use of this field. Useful for debugging to be able to
+    // correlate events in the virtstack for a given vm that the client launched.
     string log_id = 2;
-}
-message InspectVMRequest {
-    string query = 1;
-    uint32 recursion_limit = 2;
-}
-
-message InspectVMResponse {
-    google.protobuf.Value result = 1;
 }
 
 message MemoryStats {
@@ -199,7 +198,9 @@ message VSockListen {
     string listener_path = 2;
 }
 
+// Abstraction around a hypervisor socket transport (Hvsocket, Vsock)
 message VMSocketRequest {
+    // Just add and remove, no update.
     ModifyType type = 1;
     oneof Config {
         HVSocketListen hvsocket_list = 2;
@@ -207,6 +208,9 @@ message VMSocketRequest {
     }
 }
 
+//
+// Modify existing VM request/response
+//
 enum ModifyType {
     ADD = 0;
     REMOVE = 1;
@@ -236,11 +240,24 @@ message VPMEMDisk {
 
 message NICConfig {
     string nic_id = 1; // GUID
-    string port_id = 2; // GUID
     string mac_address = 3; // 12-34-56-78-9A-BC
-    string switch_id = 4; // GUID
+    string legacy_switch_id = 4; // GUID, used only with legacy_port_id below
     // Optional friendly name for the adapter. Might be useful to show up in logs.
     string nic_name = 5;
+    oneof backend {
+        string legacy_port_id = 2; // legacy, GUID, Windows only
+        DioBackend dio = 6;
+        TapBackend tap = 7;
+    }
+}
+
+message DioBackend {
+    string switch_id = 1;   // GUID
+    string port_id = 2;     // GUID
+}
+
+message TapBackend {
+    string name = 1;
 }
 
 message WindowsPCIDevice {
