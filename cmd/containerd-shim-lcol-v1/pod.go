@@ -5,11 +5,17 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
+	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oci"
+	"github.com/Microsoft/hcsshim/internal/ociuvm"
 	"github.com/Microsoft/hcsshim/internal/shim"
 	shimservice "github.com/Microsoft/hcsshim/internal/shim"
+	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 	"github.com/containerd/containerd/errdefs"
@@ -19,6 +25,78 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
+
+type lcolPodFactory struct{}
+
+var _ = (shim.PodFactory)(&lcolPodFactory{})
+
+func (h *lcolPodFactory) Create(ctx context.Context, events events.Publisher, req *task.CreateTaskRequest, s *specs.Spec) (shim.Pod, error) {
+	log.G(ctx).WithField("tid", req.ID).Debug("create lcol pod")
+
+	ct, sid, err := oci.GetSandboxTypeAndID(s.Annotations)
+	if err != nil {
+		return nil, err
+	}
+	if ct != oci.KubernetesContainerTypeSandbox {
+		return nil, errors.Wrapf(
+			errdefs.ErrFailedPrecondition,
+			"expected annotation: '%s': '%s' got '%s'",
+			annotations.KubernetesContainerType,
+			oci.KubernetesContainerTypeSandbox,
+			ct)
+	}
+	if sid != req.ID {
+		return nil, errors.Wrapf(
+			errdefs.ErrFailedPrecondition,
+			"expected annotation '%s': '%s' got '%s'",
+			annotations.KubernetesSandboxID,
+			req.ID,
+			sid)
+	}
+
+	owner := filepath.Base(os.Args[0])
+
+	p := lcolPod{
+		events: events,
+		id:     req.ID,
+	}
+
+	opts, err := ociuvm.SpecToUVMCreateOpts(ctx, s, fmt.Sprintf("%s@vm", req.ID), owner)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO katiewasnothere: get options, create remote vm
+
+	parent, err = uvm.CreateLCOW(ctx, lopts)
+	if err != nil {
+		return nil, err
+	}
+
+	err = parent.Start(ctx)
+	if err != nil {
+		parent.Close()
+		return nil, err
+	}
+
+	defer func() {
+		// clean up the uvm if we fail any further operations
+		if err != nil && parent != nil {
+			parent.Close()
+		}
+	}()
+
+	p.host = parent
+
+	// todo katiewasnothere: networking setup goes here
+
+	lt, err := newLCOLTask(ctx, events, parent, true, req, s)
+	if err != nil {
+		return nil, err
+	}
+	p.sandboxTask = lt
+	return &p, nil
+}
 
 type lcolPod struct {
 	events events.Publisher

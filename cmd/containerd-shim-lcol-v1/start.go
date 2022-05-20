@@ -88,7 +88,6 @@ The start command can either start a new shim or return an address to an existin
 				annotations.KubernetesContainerType,
 				oci.KubernetesContainerTypeSandbox)
 		}
-		// isSandbox := true
 
 		// construct socket name
 		// TODO katiewasnothere: not sure if idFlag or sandboxID should be used here?
