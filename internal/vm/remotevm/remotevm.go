@@ -1,11 +1,9 @@
-//go:build windows
-
 package remotevm
 
 import (
 	"context"
+	"sync"
 
-	"github.com/Microsoft/hcsshim/internal/jobobject"
 	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/internal/vmservice"
 	ptypes "github.com/gogo/protobuf/types"
@@ -15,12 +13,14 @@ import (
 var _ vm.UVM = &utilityVM{}
 
 type utilityVM struct {
-	id           string
-	waitError    error
-	job          *jobobject.JobObject
-	config       *vmservice.VMConfig
-	client       vmservice.VMService
-	capabilities *vmservice.CapabilitiesVMResponse
+	id              string
+	waitBlock       chan struct{}
+	closedWaitOnce  sync.Once
+	waitError       error
+	ignoreSupported bool
+	config          *vmservice.VMConfig
+	client          vmservice.VMService
+	capabilities    *vmservice.CapabilitiesVMResponse
 }
 
 var vmSupportedResourceToVMService = map[vm.Resource]vmservice.CapabilitiesVMResponse_Resource{
@@ -35,6 +35,10 @@ var vmSupportedResourceToVMService = map[vm.Resource]vmservice.CapabilitiesVMRes
 
 func (uvm *utilityVM) ID() string {
 	return uvm.id
+}
+
+func (uvm *utilityVM) VmID() string {
+	return ""
 }
 
 func (uvm *utilityVM) Start(ctx context.Context) error {
@@ -52,13 +56,24 @@ func (uvm *utilityVM) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (uvm *utilityVM) Wait() error {
-	_, err := uvm.client.WaitVM(context.Background(), &ptypes.Empty{})
-	if err != nil {
-		uvm.waitError = err
-		return errors.Wrap(err, "failed to wait on remote VM")
-	}
+func (uvm *utilityVM) Close() error {
+	uvm.closedWaitOnce.Do(func() {
+		close(uvm.waitBlock)
+	})
 	return nil
+}
+
+func (uvm *utilityVM) Wait() error {
+	<-uvm.waitBlock
+	return uvm.waitError
+}
+
+func (uvm *utilityVM) waitBackground() {
+	_, err := uvm.client.WaitVM(context.Background(), &ptypes.Empty{})
+	uvm.closedWaitOnce.Do(func() {
+		uvm.waitError = err
+		close(uvm.waitBlock)
+	})
 }
 
 func (uvm *utilityVM) Pause(ctx context.Context) error {
@@ -80,6 +95,9 @@ func (uvm *utilityVM) Save(ctx context.Context) error {
 }
 
 func (uvm *utilityVM) Supported(resource vm.Resource, operation vm.ResourceOperation) bool {
+	if uvm.ignoreSupported {
+		return true
+	}
 	var foundResource *vmservice.CapabilitiesVMResponse_SupportedResource
 	for _, supportedResource := range uvm.capabilities.SupportedResources {
 		if vmSupportedResourceToVMService[resource] == supportedResource.Resource {
