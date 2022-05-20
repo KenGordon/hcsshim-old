@@ -69,12 +69,13 @@ const (
 	blockDev   = "blockdev"
 )
 
-func listenVsock(ctx context.Context, port uint32, uvm vm.UVM) (net.Listener, error) {
-	vmsocket, ok := uvm.(vm.VMSocketManager)
-	if !ok {
-		return nil, fmt.Errorf("stopping vm socket configuration: %w", vm.ErrNotSupported)
-	}
-	return vmsocket.VMSocketListen(ctx, vm.VSock, port)
+const (
+	entropyListenerPort   = 1
+	logOutputListenerPort = 129
+)
+
+func listenHybridVsock(udsPath string, port uint32) (net.Listener, error) {
+	return net.Listen("unix", fmt.Sprintf("%s_%d", udsPath, port))
 }
 
 // Additional fields to hcsschema.ProcessParameters used by LCOW
@@ -174,13 +175,20 @@ var launchVMCommand = cli.Command{
 			return fmt.Errorf("failed to add scsi controller: %w", err)
 		}
 
+		vmsock := builder.(vm.HybridVMSocketManager)
+		udsPath, err := randomUnixSockAddr()
+		if err != nil {
+			return err
+		}
+		vmsock.SetVMSockRelay(udsPath)
+
 		opts := []vm.CreateOpt{remotevm.WithIgnoreSupported()}
 		remoteVM, err := builder.Create(ctx, opts)
 		if err != nil {
 			return err
 		}
 
-		gc, err := vmStart(ctx, remoteVM)
+		gc, err := vmStart(ctx, remoteVM, udsPath)
 		if err != nil {
 			return err
 		}
@@ -349,7 +357,7 @@ func acceptAndClose(ctx context.Context, l net.Listener) (net.Conn, error) {
 }
 
 // vmStart sets up necessary vsock connections and starts the VM.
-func vmStart(ctx context.Context, remoteVM vm.UVM) (*gcs.GuestConnection, error) {
+func vmStart(ctx context.Context, remoteVM vm.UVM, udsPrefix string) (*gcs.GuestConnection, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	g, gctx := errgroup.WithContext(ctx)
 	defer func() {
@@ -357,14 +365,14 @@ func vmStart(ctx context.Context, remoteVM vm.UVM) (*gcs.GuestConnection, error)
 	}()
 	defer cancel()
 
-	log.G(ctx).Info("Creating entropy listener")
-	entropyListener, err := listenVsock(context.Background(), 1, remoteVM)
+	log.G(ctx).Infof("Creating entropy listener on port %d", entropyListenerPort)
+	entropyListener, err := listenHybridVsock(udsPrefix, entropyListenerPort)
 	if err != nil {
 		return nil, err
 	}
 
-	log.G(ctx).Info("Creating output listener")
-	outputListener, err := listenVsock(context.Background(), 109, remoteVM)
+	log.G(ctx).Infof("Creating output listener on port %d", logOutputListenerPort)
+	outputListener, err := listenHybridVsock(udsPrefix, 109)
 	if err != nil {
 		return nil, err
 	}
@@ -420,8 +428,8 @@ func vmStart(ctx context.Context, remoteVM vm.UVM) (*gcs.GuestConnection, error)
 		return nil, err
 	}
 
-	log.G(ctx).Info("Creating GCS listener\n")
-	gcListener, err := listenVsock(context.Background(), transport.LinuxGcsVsockPort, remoteVM)
+	log.G(ctx).Infof("Creating GCS listener on port %d", transport.LinuxGcsVsockPort)
+	gcListener, err := listenHybridVsock(udsPrefix, transport.LinuxGcsVsockPort)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +448,7 @@ func vmStart(ctx context.Context, remoteVM vm.UVM) (*gcs.GuestConnection, error)
 		Conn: conn,
 		Log:  log.G(ctx).WithField(logfields.UVMID, remoteVM.ID()),
 		IoListen: func(port uint32) (net.Listener, error) {
-			return listenVsock(context.Background(), port, remoteVM)
+			return listenHybridVsock(udsPrefix, port)
 		},
 		InitGuestState: initGuestState,
 	}
