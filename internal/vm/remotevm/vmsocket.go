@@ -12,6 +12,12 @@ import (
 	"github.com/pkg/errors"
 )
 
+func (uvmb *utilityVMBuilder) SetVMSockRelay(udsPath string) {
+	uvmb.config.HvsocketConfig = &vmservice.HVSocketConfig{
+		Path: udsPath,
+	}
+}
+
 // Get a random unix socket address to use. The "randomness" equates to makes a temp file to reserve a name
 // and then shortly after deleting it and using this as the socket address.
 func randomUnixSockAddr() (string, error) {
