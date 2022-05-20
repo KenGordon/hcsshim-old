@@ -216,6 +216,11 @@ type VMSocketManager interface {
 	UpdateVMSocket(ctx context.Context, socketType VMSocketType, sid string, serviceConfig *HvSocketServiceConfig) error
 }
 
+type HybridVMSocketManager interface {
+	SetVMSockRelay(udsPath string)
+	ListenVMSock(udsPath string, port uint32) (net.Listener, error)
+}
+
 // VSMBOptions
 type VSMBOptions struct {
 	ReadOnly            bool
