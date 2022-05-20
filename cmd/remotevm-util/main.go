@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
-	"os/signal"
 	"syscall"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/internal/vm/remotevm"
+	"github.com/containerd/console"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -44,6 +44,20 @@ func main() {
 		fmt.Fprint(os.Stderr, err.Error())
 		os.Exit(1)
 	}
+}
+
+type rawConReader struct {
+	f *os.File
+}
+
+func (r rawConReader) Read(b []byte) (int, error) {
+	n, err := syscall.Read(int(r.f.Fd()), b)
+	if n == 0 && len(b) != 0 && err == nil {
+		// A zero-byte read on a console indicates that the user wrote Ctrl-Z.
+		b[0] = 26
+		return 1, nil
+	}
+	return n, err
 }
 
 const (
@@ -222,14 +236,33 @@ var launchVMCommand = cli.Command{
 			return err
 		}
 
+		// Enable raw mode on the client's console.
+		con, err := console.ConsoleFromFile(os.Stdin)
+		if err != nil {
+			return err
+		}
+		err = con.SetRaw()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = con.Reset()
+		}()
+
+		// Console reads return EOF whenever the user presses Ctrl-Z.
+		// Wrap the reads to translate these EOFs back.
+		osStdin := rawConReader{os.Stdin}
+
 		stdin, stdout, stderr := p.Stdio()
 
+		stdioChan := make(chan error, 1)
 		logEntry := log.G(ctx)
 		go func() {
 			n, err := relayIO(os.Stdout, stdout, logEntry, "stdout")
 			if err != nil {
 				logEntry.WithError(err).Warn("piping stdout failed")
 			}
+			stdioChan <- err
 			logEntry.Infof("finished piping %d bytes from stdout", n)
 		}()
 
@@ -238,28 +271,25 @@ var launchVMCommand = cli.Command{
 			if err != nil {
 				logEntry.WithError(err).Warn("piping stderr failed")
 			}
+			stdioChan <- err
 			logEntry.Infof("finished piping %d bytes from stderr", n)
 		}()
 
 		go func() {
-			n, err := relayIO(stdin, os.Stdin, logEntry, "stdin")
+			n, err := relayIO(stdin, osStdin, logEntry, "stdin")
 			if err != nil {
 				logEntry.WithError(err).Warn("piping stdin failed")
 			}
+			stdioChan <- err
 			logEntry.Infof("finished piping %d bytes from stdin", n)
 		}()
 
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-		defer signal.Stop(sigChan)
-
 		select {
-		case <-sigChan:
-			log.G(ctx).Info("Received signal, exiting.")
-			if err := remoteVM.Stop(ctx); err != nil {
+		case err := <-stdioChan:
+			log.G(ctx).WithError(err).Info("Stdio relay ended")
+			if err := remoteVM.Close(); err != nil {
 				return err
 			}
-			return nil
 		case err := <-errCh:
 			if err != nil {
 				return err
