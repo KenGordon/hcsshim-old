@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Microsoft/go-winio/pkg/guid"
 	"github.com/Microsoft/hcsshim/internal/gcs"
 	"github.com/Microsoft/hcsshim/internal/gcs/transport"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
@@ -66,6 +67,8 @@ const (
 	binPath    = "binpath"
 	vmName     = "name"
 	blockDev   = "blockdev"
+	tapDev     = "tap"
+	netNS      = "netns"
 )
 
 const (
@@ -131,10 +134,22 @@ var launchVMCommand = cli.Command{
 			Name:  blockDev,
 			Usage: "Specifies path(s) to files representing block devices to add to the VM",
 		},
+		cli.StringFlag{
+			Name:  tapDev,
+			Usage: "Specifies name of a tap device to add to the VM.",
+		},
+		cli.StringFlag{
+			Name: netNS,
+			Usage: `Run the VMM in a specific network namespace. A tap<->veth pair will be created
+			in the network namespace if any veth devices exist, and the tap device will subsequently
+			be added to the VM. Traffic will be forwarded between the veth<->tap pair.
+			`,
+		},
 	},
 	Action: func(clictx *cli.Context) error {
-		kernelArgs := `8250_core.nr_uarts=1 8250_core.skip_txen_test=1 console=ttyS0,115200 pci=off brd.rd_nr=0 pmtmr=0 -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -disable-time-sync -loglevel debug`
+		kernelArgs := `pci=off brd.rd_nr=0 pmtmr=0 -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -disable-time-sync -loglevel debug`
 		ctx := context.Background()
+
 		builder, err := remotevm.NewUVMBuilder(
 			ctx,
 			clictx.String(vmName),
@@ -174,6 +189,23 @@ var launchVMCommand = cli.Command{
 			return fmt.Errorf("failed to add scsi controller: %w", err)
 		}
 
+		if tapPath := clictx.String(tapDev); tapPath != "" {
+			net := builder.(vm.NetworkManager)
+			nicID, err := guid.NewV4()
+			if err != nil {
+				return err
+			}
+
+			log.G(ctx).WithFields(logrus.Fields{
+				"nicID": nicID.String(),
+				"tap":   tapPath,
+			}).Info("Adding network adapter to creation config")
+
+			if err := net.AddNIC(ctx, nicID.String(), tapPath, ""); err != nil {
+				return err
+			}
+		}
+
 		vmsock := builder.(vm.HybridVMSocketManager)
 		udsPath, err := randomUnixSockAddr()
 		if err != nil {
@@ -182,6 +214,16 @@ var launchVMCommand = cli.Command{
 		vmsock.SetVMSockRelay(udsPath)
 
 		opts := []vm.CreateOpt{remotevm.WithIgnoreSupported()}
+		if ns := clictx.String(netNS); ns != "" {
+			ep, err := remotevm.InitialNetSetup(ctx, ns, builder)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("\nAdapter properties: %+v\n", ep.Properties())
+			opts = append(opts, remotevm.WithNetWorkNamespace(ns))
+		}
+
 		remoteVM, err := builder.Create(ctx, opts)
 		if err != nil {
 			return err
@@ -201,7 +243,6 @@ var launchVMCommand = cli.Command{
 		}()
 
 		log.G(ctx).Infof("Protocol in use: %d", gc.Protocol())
-
 		if blockDevs := clictx.StringSlice(blockDev); blockDevs != nil {
 			scsi, ok := remoteVM.(vm.SCSIManager)
 			if !ok {
@@ -258,7 +299,6 @@ var launchVMCommand = cli.Command{
 		// Console reads return EOF whenever the user presses Ctrl-Z.
 		// Wrap the reads to translate these EOFs back.
 		osStdin := rawConReader{os.Stdin}
-
 		stdin, stdout, _ := p.Stdio()
 
 		stdioChan := make(chan error, 1)
