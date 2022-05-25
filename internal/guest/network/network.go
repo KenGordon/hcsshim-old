@@ -133,6 +133,10 @@ func InstanceIDToName(ctx context.Context, id string, vpciAssigned bool) (_ stri
 		netDevicePath, err = storageWaitForFileMatchingPattern(ctx, pciNetDirPattern)
 	} else {
 		vmBusNetSubPath := filepath.Join(vmBusID, "net")
+		testDirs, _ := ioutilReadDir("/sys/bus/vmbus/devices")
+		for _, d := range testDirs {
+			log.G(ctx).WithField("test dirs", "AKLSdjf").Infof("vmbusdirectories %+v", d.Name())
+		}
 		netDevicePath, err = vmbusWaitForDevicePath(ctx, vmBusNetSubPath)
 	}
 	if err != nil {

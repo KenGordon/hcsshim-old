@@ -7,6 +7,9 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Microsoft/hcsshim/internal/cow"
@@ -33,6 +36,13 @@ type UtilityVM struct {
 	//private values
 	outputProcessingDone chan struct{}
 	udsPath              string
+	endpoints            map[string]remotevm.Endpoint
+	netNamespace         string
+	mountCounter         uint64
+}
+
+func (uvm *UtilityVM) UVMMountCounter() uint64 {
+	return atomic.AddUint64(&uvm.mountCounter, 1)
 }
 
 type Options struct {
@@ -47,6 +57,8 @@ type Options struct {
 	BinPath string
 
 	TTRPCAddress string
+
+	OCISpec *specs.Spec
 }
 
 func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
@@ -62,7 +74,7 @@ func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
 		return nil, err
 	}
 
-	kernelArgs := `8250_core.nr_uarts=1 8250_core.skip_txen_test=1 console=ttyS0,115200 pci=off brd.rd_nr=0 pmtmr=0 -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -disable-time-sync -loglevel debug`
+	kernelArgs := `pci=off brd.rd_nr=0 pmtmr=0 -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -disable-time-sync -loglevel debug`
 	boot := builder.(vm.BootManager)
 	if err := boot.SetLinuxKernelDirectBoot(
 		opts.KernelFile,
@@ -97,7 +109,20 @@ func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
 	}
 	vmsock.SetVMSockRelay(udsPath)
 
-	vmCreateOpts := []vm.CreateOpt{remotevm.WithIgnoreSupported()}
+	endpoints := make(map[string]remotevm.Endpoint)
+	networkNamspace := getNetworkNamespace(opts.OCISpec)
+	log.G(ctx).WithField("network namesoace", networkNamspace).Info("in pod create")
+	endpoint, err := remotevm.InitialNetSetup(ctx, networkNamspace, builder)
+	if err != nil {
+		return nil, err
+	}
+	log.G(ctx).WithField("network ep", endpoint).Info("in pod create, endpoint")
+
+	netNSClean := strings.TrimPrefix(networkNamspace, "/var/run/netns/")
+	netNsOpt := remotevm.WithNetWorkNamespace(netNSClean)
+	endpoints[endpoint.Name()] = endpoint
+
+	vmCreateOpts := []vm.CreateOpt{remotevm.WithIgnoreSupported(), netNsOpt}
 	system, err := builder.Create(ctx, vmCreateOpts)
 	if err != nil {
 		return nil, err
@@ -106,6 +131,8 @@ func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
 		System:               system,
 		udsPath:              udsPath,
 		outputProcessingDone: make(chan struct{}),
+		endpoints:            endpoints,
+		netNamespace:         networkNamspace,
 	}, nil
 }
 
@@ -215,6 +242,39 @@ func (uvm *UtilityVM) Start(ctx context.Context) error {
 	return nil
 }
 
+func (uvm *UtilityVM) AddEndpointsToNS(ctx context.Context) error {
+	for _, ep := range uvm.endpoints {
+		properties := ep.Properties()
+		ipAddr := properties.Addrs[0].IPNet.String()
+		ipParts := strings.Split(ipAddr, "/")
+		if len(ipParts) < 2 {
+			return fmt.Errorf("failed to parse IP address %s and %+v", ipAddr, properties)
+		}
+		prefix, err := strconv.ParseUint(ipParts[1], 10, 8)
+		if err != nil {
+			return fmt.Errorf("failed to parse ip prefix %v", ipParts)
+		}
+		// make guest request to add the nic
+		guestReq := guestrequest.ModificationRequest{
+			ResourceType: guestresource.ResourceTypeNetwork,
+			RequestType:  guestrequest.RequestTypeAdd,
+			Settings: &guestresource.LCOWNetworkAdapter{
+				NamespaceID:    uvm.netNamespace,
+				ID:             properties.NicID,
+				MacAddress:     ep.HardwareAddr(),
+				IPAddress:      ipParts[0],
+				PrefixLength:   uint8(prefix),
+				GatewayAddress: properties.Routes[0].Gw.String(),
+				DNSServerList:  "157.58.30.23",
+			},
+		}
+		if err := uvm.GuestConnection.Modify(ctx, guestReq); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (uvm *UtilityVM) Wait() error {
 	err := uvm.System.Wait()
 
@@ -230,6 +290,16 @@ func (uvm *UtilityVM) Stop(ctx context.Context) error {
 
 func (uvm *UtilityVM) Close() error {
 	return uvm.System.Close()
+}
+
+func getNetworkNamespace(s *specs.Spec) string {
+	specNamespaces := s.Linux.Namespaces
+	for _, namespace := range specNamespaces {
+		if namespace.Type == specs.NetworkNamespace {
+			return namespace.Path
+		}
+	}
+	return ""
 }
 
 // TODO katiewasnothere: this should go in centralized location
@@ -253,23 +323,25 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 	// defer remove scsi files
 	uvmLayerPaths := []string{}
 	imageLayerPaths := spec.Windows.LayerFolders[:len(spec.Windows.LayerFolders)-1]
-	for i, layerPrefix := range imageLayerPaths {
+	for _, layerPrefix := range imageLayerPaths {
 		guestReq := guestrequest.ModificationRequest{
 			ResourceType: guestresource.ResourceTypeMappedVirtualDisk,
 			RequestType:  guestrequest.RequestTypeAdd,
 		}
-		uvmPath := fmt.Sprintf(guestpath.LCOWGlobalMountPrefixFmt, i)
+		index := uvm.UVMMountCounter()
+		uvmPath := fmt.Sprintf(guestpath.LCOWGlobalMountPrefixFmt, index)
 		// TODO katiewasnothere: IMPORTANT: use correct index for mount path
 		guestReq.Settings = guestresource.LCOWMappedVirtualDisk{
 			MountPath:  uvmPath,
-			Lun:        uint8(i),
+			Lun:        uint8(index),
 			Controller: 0,
 		}
 
 		uvmLayerPaths = append(uvmLayerPaths, uvmPath)
 		layerPath := filepath.Join(layerPrefix, "layer.vhd")
-		if err := scsi.AddSCSIDisk(ctx, 0, uint32(i), layerPath, vm.SCSIDiskTypeVHD1, false); err != nil {
-			return nil, fmt.Errorf("failed to add SCSI disk: %w", err)
+		log.G(ctx).WithField("uvmPath", uvmPath).Infof("index for scsi disk %v", index)
+		if err := scsi.AddSCSIDisk(ctx, 0, uint32(index), layerPath, vm.SCSIDiskTypeVHD1, false); err != nil {
+			return nil, fmt.Errorf("failed to add SCSI disk %v: %w", layerPath, err)
 		}
 		if err := uvm.GuestConnection.Modify(ctx, guestReq); err != nil {
 			return nil, fmt.Errorf("failed to make guest request to add scsi disk %v: %w", guestReq, err)
@@ -283,16 +355,17 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 		RequestType:  guestrequest.RequestTypeAdd,
 	}
 
-	uvmScratchPath := fmt.Sprintf(guestpath.LCOWGlobalMountPrefixFmt, len(spec.Windows.LayerFolders))
+	scratchIndex := uvm.UVMMountCounter()
+	uvmScratchPath := fmt.Sprintf(guestpath.LCOWGlobalMountPrefixFmt, scratchIndex)
 	// TODO katiewasnothere: IMPORTANT: use correct index for mount path
 	guestReq.Settings = guestresource.LCOWMappedVirtualDisk{
-		MountPath:  fmt.Sprintf(guestpath.LCOWGlobalMountPrefixFmt, len(spec.Windows.LayerFolders)),
-		Lun:        uint8(len(spec.Windows.LayerFolders)),
+		MountPath:  uvmScratchPath,
+		Lun:        uint8(scratchIndex),
 		Controller: 0,
 	}
 
-	if err := scsi.AddSCSIDisk(ctx, 0, uint32(len(spec.Windows.LayerFolders)), scratchPath, vm.SCSIDiskTypeVHD1, false); err != nil {
-		return nil, fmt.Errorf("failed to add SCSI disk: %w", err)
+	if err := scsi.AddSCSIDisk(ctx, 0, uint32(scratchIndex), scratchPath, vm.SCSIDiskTypeVHD1, false); err != nil {
+		return nil, fmt.Errorf("failed to add SCSI disk %v: %w", scratchPath, err)
 	}
 	if err := uvm.GuestConnection.Modify(ctx, guestReq); err != nil {
 		return nil, fmt.Errorf("failed to make guest request to add scsi disk: %w", err)
@@ -322,6 +395,15 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 
 	// update root path in spec
 	spec.Root.Path = rootfs
+	spec.Windows.LayerFolders = uvmLayerPaths // TODO Katiewasnothere: validate this
+
+	mounts := []specs.Mount{}
+	for _, m := range spec.Mounts {
+		if m.Destination != "/dev/shm" && m.Destination != "/etc/resolv.conf" {
+			mounts = append(mounts, m)
+		}
+	}
+	spec.Mounts = mounts
 
 	containerSettings := &linuxHostedSystem{
 		SchemaVersion:    &hcsschema.Version{Major: 2, Minor: 1},

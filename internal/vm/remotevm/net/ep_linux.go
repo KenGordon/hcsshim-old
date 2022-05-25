@@ -69,6 +69,10 @@ func (endpoint *VethEndpoint) SetProperties(properties NetworkInfo) {
 	endpoint.EndpointProperties = properties
 }
 
+func (endpoint *VethEndpoint) updateNicID(nicID string) {
+	endpoint.EndpointProperties.NicID = nicID
+}
+
 // Attach for veth endpoint bridges the network pair and adds the
 // tap interface of the network pair to the hypervisor.
 func (endpoint *VethEndpoint) Attach(ctx context.Context, uvmb vm.UVMBuilder) error {
@@ -81,6 +85,7 @@ func (endpoint *VethEndpoint) Attach(ctx context.Context, uvmb vm.UVMBuilder) er
 	if err != nil {
 		return err
 	}
+	endpoint.updateNicID(nicID.String())
 
 	log.G(ctx).WithFields(logrus.Fields{
 		"nicID": nicID.String(),

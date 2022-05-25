@@ -65,6 +65,7 @@ func (h *lcolPodFactory) Create(ctx context.Context, events events.Publisher, re
 		KernelFile: "/mnt/c/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/boot/vmlinux",
 		InitrdPath: "/mnt/c/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/boot/initrd.img",
 		BinPath:    "/mnt/c/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/bin/hvlite",
+		OCISpec:    s,
 	}
 	// TODO katiewasnothere: get options, create remote vm
 
@@ -89,6 +90,32 @@ func (h *lcolPodFactory) Create(ctx context.Context, events events.Publisher, re
 	p.host = parent
 
 	// todo katiewasnothere: networking setup goes here
+	log.G(ctx).WithField("spec", s).Info("pod spec used")
+
+	if err := parent.AddEndpointsToNS(ctx); err != nil {
+		return nil, err
+	}
+
+	log.G(ctx).WithField("spec", s).Info("added namespace to pod")
+
+	if s.Windows == nil {
+		s.Windows = &specs.Windows{}
+	}
+	if s.Windows.Network == nil {
+		s.Windows.Network = &specs.WindowsNetwork{}
+	}
+	specNamespaces := s.Linux.Namespaces
+	nses := []specs.LinuxNamespace{}
+	for _, namespace := range specNamespaces {
+		if namespace.Type == specs.NetworkNamespace {
+			s.Windows.Network.NetworkNamespace = namespace.Path
+			namespace.Path = ""
+		}
+		nses = append(nses, namespace)
+	}
+	s.Linux.Namespaces = nses
+
+	log.G(ctx).WithField("specNamespace", specNamespaces).Info("spec namesapce used ")
 
 	lt, err := newLCOLTask(ctx, events, parent, true, req, s)
 	if err != nil {

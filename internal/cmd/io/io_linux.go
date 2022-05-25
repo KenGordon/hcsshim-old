@@ -4,9 +4,11 @@ import (
 	"context"
 	"io"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/Microsoft/hcsshim/internal/log"
+	"github.com/containerd/fifo"
 	"github.com/sirupsen/logrus"
 )
 
@@ -25,8 +27,8 @@ func NewUpstreamIO(ctx context.Context, id, stdout, stderr, stdin string, termin
 func newPipeIO(ctx context.Context, stdin, stdout, stderr string, terminal bool, retryTimeout time.Duration) (*pipeIO, error) {
 	// TODO katiewasnothere: how to support terminal
 	var (
-		pipes                             []*pipe
-		stdinPipe, stdoutPipe, stderrPipe *pipe
+		pipes                             []io.ReadWriteCloser
+		stdinFifo, stdoutFifo, stderrFifo io.ReadWriteCloser
 		err                               error
 	)
 	// cleanup in case of an error
@@ -38,38 +40,50 @@ func newPipeIO(ctx context.Context, stdin, stdout, stderr string, terminal bool,
 		}
 	}()
 	if stdin != "" {
-		if stdinPipe, err = newPipe(); err != nil {
+		stdinFifo, err = fifo.OpenFifo(ctx, stdin, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
 			return nil, err
 		}
-		pipes = append(pipes, stdinPipe)
+		log.G(ctx).WithField("stdin", stdin).Infof("the fifo for stdin is %v", stdinFifo)
+		pipes = append(pipes, stdinFifo)
 		// TODO katiewasnothere: permissions
 		/*if err = unix.Fchown(int(stdin.r.Fd()), uid, gid); err != nil {
 			return nil, errors.Wrap(err, "failed to chown stdin")
 		}*/
 	}
 	if stdout != "" {
-		if stdoutPipe, err = newPipe(); err != nil {
+		stdoutFifo, err = fifo.OpenFifo(ctx, stdout, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
 			return nil, err
 		}
-		pipes = append(pipes, stdoutPipe)
+		log.G(ctx).WithField("stdout", stdout).Infof("the fifo for stdout is %v", stdoutFifo)
+
+		pipes = append(pipes, stdoutFifo)
 		// TODO katiewasnothere: permissions for io on init?
 		/*if err = unix.Fchown(int(stdout.w.Fd()), uid, gid); err != nil {
 			return nil, errors.Wrap(err, "failed to chown stdout")
 		}*/
 	}
 	if stderr != "" {
-		if stderrPipe, err = newPipe(); err != nil {
+		stderrFifo, err = fifo.OpenFifo(ctx, stderr, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
 			return nil, err
 		}
-		pipes = append(pipes, stderrPipe)
+		log.G(ctx).WithField("stderr", stderr).Infof("the fifo for stderr is %v", stderrFifo)
+
+		pipes = append(pipes, stderrFifo)
 		/*if err = unix.Fchown(int(stderr.w.Fd()), uid, gid); err != nil {
 			return nil, errors.Wrap(err, "failed to chown stderr")
 		}*/
 	}
 	return &pipeIO{
-		in:  stdinPipe,
-		out: stdoutPipe,
-		err: stderrPipe,
+		in:       stdinFifo,
+		inName:   stdin,
+		out:      stdoutFifo,
+		outName:  stdout,
+		err:      stderrFifo,
+		errName:  stderr,
+		terminal: terminal,
 	}, nil
 }
 
@@ -99,9 +113,13 @@ func (p *pipe) Close() error {
 }
 
 type pipeIO struct {
-	in  *pipe
-	out *pipe
-	err *pipe
+	in       io.ReadWriteCloser
+	inName   string
+	out      io.ReadWriteCloser
+	outName  string
+	err      io.ReadWriteCloser
+	errName  string
+	terminal bool
 }
 
 var _ = (UpstreamIO)(&pipeIO{})
@@ -110,51 +128,50 @@ func (i *pipeIO) Stdin() io.Reader {
 	if i.in == nil {
 		return nil
 	}
-	return i.in.r
+	return i.in
 }
 
 func (i *pipeIO) StdinPath() string {
 	if i.in == nil {
 		return ""
 	}
-	return i.in.r.Name()
+	return i.inName
 }
 
 func (i *pipeIO) Stdout() io.Writer {
 	if i.out == nil {
 		return nil
 	}
-	return i.out.w
+	return i.out
 }
 
 func (i *pipeIO) StdoutPath() string {
 	if i.out == nil {
 		return ""
 	}
-	return i.out.w.Name()
+	return i.outName
 }
 
 func (i *pipeIO) Stderr() io.Writer {
 	if i.err == nil {
 		return nil
 	}
-	return i.err.w
+	return i.err
 }
 
 func (i *pipeIO) StderrPath() string {
 	if i.err == nil {
 		return ""
 	}
-	return i.err.w.Name()
+	return i.errName
 }
 
 func (i *pipeIO) Terminal() bool {
-	// TODO katiewasnothere: for now just putting this as always false
-	return false
+	return i.terminal
 }
 
 func (i *pipeIO) Close(ctx context.Context) {
-	for _, v := range []*pipe{
+	for _, v := range []io.ReadWriteCloser{
 		i.in,
 		i.out,
 		i.err,

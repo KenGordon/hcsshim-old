@@ -13,6 +13,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/hvlitevm"
 	"github.com/Microsoft/hcsshim/internal/log"
+	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/Microsoft/hcsshim/internal/shim"
 	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	eventstypes "github.com/containerd/containerd/api/events"
@@ -227,7 +228,10 @@ func (e *lcolExec) Kill(ctx context.Context, signal uint32) error {
 		return nil
 	case shimservice.ExecStateRunning:
 		// TODO katiewasnothere: validate the signal sent, check response
-		resp, err := e.p.Process.Signal(ctx, signal)
+		guestSignal := &guestresource.SignalProcessOptionsLCOW{
+			Signal: int(signal),
+		}
+		resp, err := e.p.Process.Signal(ctx, guestSignal)
 		if err != nil {
 			return err
 		}

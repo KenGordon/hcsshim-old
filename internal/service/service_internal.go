@@ -284,6 +284,7 @@ func (s *Service) execInternal(ctx context.Context, req *task.ExecProcessRequest
 	if err != nil {
 		return nil, err
 	}
+	req.Stderr = "" // TODO katiewasnothere: this is temporary - need to investigate why containerd is sending both over
 	if req.Terminal && req.Stderr != "" {
 		return nil, errors.Wrap(errdefs.ErrFailedPrecondition, "if using terminal, stderr must be empty")
 	}
