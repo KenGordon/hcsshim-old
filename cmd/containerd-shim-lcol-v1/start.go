@@ -12,9 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/Microsoft/hcsshim/internal/oci"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
+	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/runtime/v2/shim"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -35,7 +37,7 @@ The start command can either start a new shim or return an address to an existin
 	SkipArgReorder: true,
 	Action: func(cliCtx *cli.Context) (err error) {
 		// We cant write anything to stdout/stderr for this cmd.
-		ctx := context.Background()
+		ctx := namespaces.WithNamespace(context.Background(), namespaceFlag)
 		logrus.SetOutput(ioutil.Discard)
 
 		cwd, err := os.Getwd()
@@ -96,8 +98,13 @@ The start command can either start a new shim or return an address to an existin
 			return err
 		}
 
+		socketTemp := strings.TrimPrefix(shimSocketAddr, "unix://")
+		if err := os.MkdirAll(filepath.Dir(socketTemp), 777); err != nil {
+			return fmt.Errorf("%s: %w", socketTemp, err)
+		}
+
 		// create a new socket
-		shimSocket, err := shim.NewSocket(shimSocketAddr)
+		/*shimSocket, err := shim.NewSocket(shimSocketAddr)
 		if err != nil {
 			return err
 		}
@@ -106,7 +113,7 @@ The start command can either start a new shim or return an address to an existin
 		socketFile, err := shimSocket.File()
 		if err != nil {
 			return err
-		}
+		}*/
 
 		self, err := os.Executable()
 		if err != nil {
@@ -120,11 +127,11 @@ The start command can either start a new shim or return an address to an existin
 		defer r.Close()
 		defer w.Close()
 
-		panicLogFile, err := os.Create(filepath.Join(cwd, "panic.log"))
+		/*panicLogFile, err := os.Create(filepath.Join(cwd, "panic.log"))
 		if err != nil {
 			return err
 		}
-		defer panicLogFile.Close()
+		defer panicLogFile.Close()*/
 
 		args := []string{
 			self,
@@ -139,14 +146,14 @@ The start command can either start a new shim or return an address to an existin
 			args = append(args, "--is-sandbox")
 		}
 		cmd := &exec.Cmd{
-			Path:       self,
-			Args:       args,
-			Env:        os.Environ(),
-			Dir:        cwd,
-			Stdin:      os.Stdin,
-			Stdout:     w,
-			Stderr:     panicLogFile,
-			ExtraFiles: []*os.File{socketFile},
+			Path:   self,
+			Args:   args,
+			Env:    os.Environ(),
+			Dir:    cwd,
+			Stdin:  os.Stdin,
+			Stdout: w,
+			// Stderr: os.Stderr,
+			// ExtraFiles: []*os.File{socketFile},
 		}
 
 		if err := cmd.Start(); err != nil {

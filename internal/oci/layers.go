@@ -1,6 +1,3 @@
-//go:build windows
-// +build windows
-
 package oci
 
 import (
@@ -9,7 +6,6 @@ import (
 
 	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/mount"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -34,8 +30,9 @@ func UpdateSpecWithLayerPaths(spec *specs.Spec, rootfs []*types.Mount) error {
 
 	var parentLayerPaths []string
 	for _, option := range m.Options {
-		if strings.HasPrefix(option, mount.ParentLayerPathsFlag) {
-			err := json.Unmarshal([]byte(option[len(mount.ParentLayerPathsFlag):]), &parentLayerPaths)
+		// TODO katiewasnothere: had to use string of parent layer path bcause it doesn't exist on linuxff
+		if strings.HasPrefix(option, "parentLayerPaths=") {
+			err := json.Unmarshal([]byte(option[len("parentLayerPaths="):]), &parentLayerPaths)
 			if err != nil {
 				return errors.Wrap(err, "failed to unmarshal parent layer paths from mount")
 			}

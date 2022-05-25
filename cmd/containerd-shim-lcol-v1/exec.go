@@ -11,10 +11,10 @@ import (
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/cow"
+	"github.com/Microsoft/hcsshim/internal/hvlitevm"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/shim"
 	shimservice "github.com/Microsoft/hcsshim/internal/shim"
-	"github.com/Microsoft/hcsshim/internal/vm"
 	eventstypes "github.com/containerd/containerd/api/events"
 	containerd_v1_types "github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
@@ -27,56 +27,11 @@ import (
 	"go.opencensus.io/trace"
 )
 
-type lcolExecState struct {
-	m          sync.Mutex
-	state      shim.ExecState
-	pid        int
-	exitStatus uint32
-	exitedAt   time.Time
-	processCmd *cmd.Cmd
-}
-
-func (s *lcolExecState) getPid() int {
-	s.m.Lock()
-	defer s.m.Unlock()
-	return s.pid
-}
-
-func (s *lcolExecState) setPid(pid int) {
-	s.m.Lock()
-	defer s.m.Unlock()
-	s.pid = pid
-}
-
-func (s *lcolExecState) getExecState() shim.ExecState {
-	s.m.Lock()
-	defer s.m.Unlock()
-	return s.state
-}
-
-func (s *lcolExecState) setExecState(state shim.ExecState) {
-	s.m.Lock()
-	defer s.m.Unlock()
-	s.state = state
-}
-
-func (s *lcolExecState) getExitStatus() uint32 {
-	s.m.Lock()
-	defer s.m.Unlock()
-	return s.exitStatus
-}
-
-func (s *lcolExecState) getExitedAt() time.Time {
-	s.m.Lock()
-	defer s.m.Unlock()
-	return s.exitedAt
-}
-
 type lcolExec struct {
 	events    events.Publisher
 	id        string
 	tid       string
-	host      *vm.UVM
+	host      *hvlitevm.UtilityVM
 	container cow.Container
 	bundle    string
 	spec      *specs.Process
@@ -102,7 +57,7 @@ func newLCOLExec(
 	ctx context.Context,
 	events events.Publisher,
 	tid string,
-	host *vm.UVM,
+	host *hvlitevm.UtilityVM,
 	c cow.Container,
 	id, bundle string,
 	spec *specs.Process,

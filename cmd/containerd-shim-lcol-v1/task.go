@@ -13,11 +13,11 @@ import (
 	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/hcs/schema1"
+	"github.com/Microsoft/hcsshim/internal/hvlitevm"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/shim"
 	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
-	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/pkg/service/options"
 	runhcsopts "github.com/Microsoft/hcsshim/pkg/service/options"
 	"github.com/Microsoft/hcsshim/pkg/service/stats"
@@ -41,7 +41,7 @@ type lcolTask struct {
 	// TODO katiewasnothere: this probably needs to be fixed to
 	// build on linux
 	// containerResources *resources.Resources
-	host *vm.UVM
+	host *hvlitevm.UtilityVM
 
 	// init is the init process of the container.
 	//
@@ -71,7 +71,7 @@ var _ = (shim.Task)(&lcolTask{})
 func newLCOLTask(
 	ctx context.Context,
 	events events.Publisher,
-	parent *vm.UVM,
+	parent *hvlitevm.UtilityVM,
 	ownsParent bool,
 	req *task.CreateTaskRequest,
 	s *specs.Spec) (_ shimservice.Task, err error) {
@@ -165,14 +165,9 @@ func newLCOLTask(
 
 // createContainer is a generic call to return either a process/hypervisor isolated container, or a job container
 //  based on what is set in the OCI spec.
-func createContainer(ctx context.Context, id, owner, netNS string, s *specs.Spec, parent *vm.UVM, shimOpts *runhcsopts.Options) (cow.Container, error) {
-	var (
-		container cow.Container
-		// resources *resources.Resources
-	)
-
-	// TODO katiewasnothere: remote VM container
-	return container, nil
+func createContainer(ctx context.Context, id, owner, netNS string, s *specs.Spec, parent *hvlitevm.UtilityVM, shimOpts *runhcsopts.Options) (cow.Container, error) {
+	// TODO katiewasnothere: this doesn't feel right
+	return parent.CreateContainer(ctx, id, s)
 }
 
 // ID returns the id of the task

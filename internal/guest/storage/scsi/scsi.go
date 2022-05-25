@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path"
+	// "path"
 	"path/filepath"
-	"strconv"
-	"strings"
+	// "strconv"
+	// "strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -23,7 +23,7 @@ import (
 	dm "github.com/Microsoft/hcsshim/internal/guest/storage/devicemapper"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
-	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
+	// "github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
 )
@@ -60,7 +60,7 @@ func fetchActualControllerNumber(ctx context.Context, passedController uint8) (u
 	// find the controller number by looking for a file named host<N> (e.g host1, host3 etc.)
 	// `N` is the controller number.
 	// Full file path would be /sys/bus/vmbus/devices/<controller-guid>/host<N>.
-	controllerDirPath := path.Join(vmbusDevicesPath, guestrequest.ScsiControllerGuids[passedController])
+	/*controllerDirPath := path.Join(vmbusDevicesPath, guestrequest.ScsiControllerGuids[passedController])
 	entries, err := ioutil.ReadDir(controllerDirPath)
 	if err != nil {
 		return 0, err
@@ -77,8 +77,10 @@ func fetchActualControllerNumber(ctx context.Context, passedController uint8) (u
 			return 0, fmt.Errorf("failed to parse controller number from %s: %w", baseName, err)
 		}
 		return uint8(controllerNum), nil
+
 	}
-	return 0, fmt.Errorf("host<N> directory not found inside %s", controllerDirPath)
+	return 0, fmt.Errorf("host<N> directory not found inside %s", controllerDirPath)*/
+	return 0, nil
 }
 
 // mount creates a mount from the SCSI device on `controller` index `lun` to

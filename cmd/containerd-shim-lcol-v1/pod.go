@@ -5,18 +5,15 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 
+	"github.com/Microsoft/hcsshim/internal/hvlitevm"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oci"
-	"github.com/Microsoft/hcsshim/internal/ociuvm"
 	"github.com/Microsoft/hcsshim/internal/shim"
 	shimservice "github.com/Microsoft/hcsshim/internal/shim"
-	"github.com/Microsoft/hcsshim/internal/uvm"
-	"github.com/Microsoft/hcsshim/internal/vm"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/events"
@@ -61,14 +58,17 @@ func (h *lcolPodFactory) Create(ctx context.Context, events events.Publisher, re
 		id:     req.ID,
 	}
 
-	opts, err := ociuvm.SpecToUVMCreateOpts(ctx, s, fmt.Sprintf("%s@vm", req.ID), owner)
-	if err != nil {
-		return nil, err
+	// TODO katiewasnothere: options to fill out
+	opts := &hvlitevm.Options{
+		ID:         req.ID,
+		Owner:      owner,
+		KernelFile: "/mnt/c/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/boot/vmlinux",
+		InitrdPath: "/mnt/c/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/boot/initrd.img",
+		BinPath:    "/mnt/c/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/bin/hvlite",
 	}
-
 	// TODO katiewasnothere: get options, create remote vm
 
-	parent, err = uvm.CreateLCOW(ctx, lopts)
+	parent, err := hvlitevm.Create(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ type lcolPod struct {
 	// hypervisor isolated.
 	//
 	// It MUST be treated as read only in the lifetime of the pod.
-	host *vm.UVM
+	host *hvlitevm.UtilityVM
 
 	workloadTasks sync.Map
 }

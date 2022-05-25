@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,13 +17,17 @@ import (
 	shimservice "github.com/Microsoft/hcsshim/internal/service"
 	"github.com/Microsoft/hcsshim/pkg/octtrpc"
 	runhcsopts "github.com/Microsoft/hcsshim/pkg/service/options"
+	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/runtime/v2/task"
+	"github.com/containerd/fifo"
 	"github.com/containerd/ttrpc"
 	"github.com/containerd/typeurl"
 	"github.com/gogo/protobuf/proto"
 	"github.com/gogo/protobuf/types"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	"golang.org/x/sys/unix"
 )
 
 // copied from upstream
@@ -44,24 +47,14 @@ var serveCommand = cli.Command{
 			Usage: "is the task id a Kubernetes sandbox id",
 		},
 	},
-	Action: func(ctx *cli.Context) error {
+	Action: func(cliCtx *cli.Context) error {
+		ctx := namespaces.WithNamespace(context.Background(), namespaceFlag)
 
 		// get shim options
 		shimOpts := &runhcsopts.Options{
 			Debug:     false,
 			DebugType: runhcsopts.Options_NPIPE,
 		}
-
-		// containerd passes the shim options protobuf via stdin.
-		newShimOpts, err := readOptions(os.Stdin)
-		if err != nil {
-			return fmt.Errorf("failed to read shim options from stdin: %w", err)
-		} else if newShimOpts != nil {
-			// We received a valid shim options struct.
-			shimOpts = newShimOpts
-		}
-
-		// setup logging for shim
 
 		// If log level is specified, set the corresponding logrus logging level. This overrides the debug option
 		// (unless the level being asked for IS debug also, then this doesn't do much).
@@ -78,6 +71,19 @@ var serveCommand = cli.Command{
 
 		// hook up to panic.log
 
+		// hook up to log file
+		l := log.G(ctx)
+		logrus.SetFormatter(&logrus.TextFormatter{
+			TimestampFormat: log.RFC3339NanoFixed,
+			FullTimestamp:   true,
+		})
+		f, err := openLog(ctx, idFlag)
+		if err != nil {
+			return err
+		}
+		l.Logger.SetOutput(f)
+		ctx = log.WithLogger(ctx, l)
+
 		// create an event publisher for ttrpc address to containerd
 		ttrpcAddress := os.Getenv(ttrpcAddressEnv)
 		ttrpcEventPublisher, err := eventpublisher.NewEventPublisher(ttrpcAddress, namespaceFlag)
@@ -90,15 +96,14 @@ var serveCommand = cli.Command{
 			}
 		}()
 
-		socket := ctx.String("socket")
-		if !strings.HasSuffix(socket, `.sock`) {
-			return errors.New("socket is required to be a linux socket address")
-		}
+		socket := cliCtx.String("socket")
+		socket = strings.TrimPrefix(socket, "unix://")
 
 		// create new ttrpc server for hosting the task service
 		svc, err := shimservice.NewService(shimservice.WithEventPublisher(ttrpcEventPublisher),
 			shimservice.WithTID(idFlag),
-			shimservice.WithIsSandbox(ctx.Bool("is-sandbox")))
+			shimservice.WithIsSandbox(cliCtx.Bool("is-sandbox")),
+			shimservice.WithPodFactory(&lcolPodFactory{}))
 		if err != nil {
 			return fmt.Errorf("failed to create new service: %w", err)
 		}
@@ -128,7 +133,7 @@ var serveCommand = cli.Command{
 			// but canceliing does not bring down ttrpc service.
 
 			// configure ttrpc server to listen on socket that was created during start command
-			if err := s.Serve(context.Background(), shimListener); err != nil {
+			if err := s.Serve(ctx, shimListener); err != nil {
 				logrus.WithError(err).Fatal("containerd-shim: ttrpc server failure")
 				serrs <- err
 				return
@@ -158,13 +163,17 @@ var serveCommand = cli.Command{
 				return nil
 			}
 			// currently the ttrpc shutdown is the only clean up to wait on
-			sctx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
+			sctx, cancel := context.WithTimeout(ctx, gracefulShutdownTimeout)
 			defer cancel()
 			err = s.Shutdown(sctx)
 		}
 
 		return nil
 	},
+}
+
+func openLog(ctx context.Context, _ string) (io.Writer, error) {
+	return fifo.OpenFifoDup2(ctx, "log", unix.O_WRONLY, 0700, int(os.Stderr.Fd()))
 }
 
 // taken from https://github.com/containerd/containerd/blob/6fda809e1b81928722de452a756df33aa9a5c998/runtime/v2/shim/shim_unix.go

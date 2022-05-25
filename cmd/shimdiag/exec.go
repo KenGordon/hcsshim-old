@@ -11,7 +11,7 @@ import (
 	"syscall"
 
 	"github.com/Microsoft/hcsshim/internal/appargs"
-	"github.com/Microsoft/hcsshim/internal/cmd"
+	cmdio "github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/containerd/console"
 	"github.com/urfave/cli"
@@ -69,17 +69,17 @@ var execCommand = cli.Command{
 			}
 		}
 
-		stdin, err := cmd.CreatePipeAndListen(osStdin, true)
+		stdin, err := cmdio.CreatePipeAndListen(osStdin, true)
 		if err != nil {
 			return err
 		}
-		stdout, err := cmd.CreatePipeAndListen(os.Stdout, false)
+		stdout, err := cmdio.CreatePipeAndListen(os.Stdout, false)
 		if err != nil {
 			return err
 		}
 		var stderr string
 		if !execTty {
-			stderr, err = cmd.CreatePipeAndListen(os.Stderr, false)
+			stderr, err = cmdio.CreatePipeAndListen(os.Stderr, false)
 			if err != nil {
 				return err
 			}
