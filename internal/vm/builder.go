@@ -72,10 +72,6 @@ type BootManager interface {
 	SetLinuxKernelDirectBoot(kernel string, initRD string, cmd string) error
 }
 
-type HybridVMSocketManager interface {
-	SetVMSockRelay(udsPath string)
-}
-
 // StorageQosManager manages setting storage limits on the Utility VM.
 type StorageQosManager interface {
 	// SetStorageQos sets storage related options for the Utility VM

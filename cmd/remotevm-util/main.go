@@ -64,7 +64,6 @@ const (
 	kernelPath = "kernel"
 	initrdPath = "initrd"
 	binPath    = "binpath"
-	ttrpcAddr  = "ttrpc"
 	vmName     = "name"
 	blockDev   = "blockdev"
 )
@@ -141,7 +140,7 @@ var launchVMCommand = cli.Command{
 			clictx.String(vmName),
 			os.Args[0],
 			clictx.String(binPath),
-			clictx.String(ttrpcAddr),
+			"",
 			vm.Linux,
 		)
 		if err != nil {
@@ -233,7 +232,6 @@ var launchVMCommand = cli.Command{
 			ProcessParameters: hcsschema.ProcessParameters{
 				CreateStdInPipe:  true,
 				CreateStdOutPipe: true,
-				CreateStdErrPipe: true,
 				EmulateConsole:   true,
 				CommandArgs:      []string{"sh"},
 				Environment:      map[string]string{"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
@@ -261,7 +259,7 @@ var launchVMCommand = cli.Command{
 		// Wrap the reads to translate these EOFs back.
 		osStdin := rawConReader{os.Stdin}
 
-		stdin, stdout, stderr := p.Stdio()
+		stdin, stdout, _ := p.Stdio()
 
 		stdioChan := make(chan error, 1)
 		logEntry := log.G(ctx)
@@ -272,15 +270,6 @@ var launchVMCommand = cli.Command{
 			}
 			stdioChan <- err
 			logEntry.Infof("finished piping %d bytes from stdout", n)
-		}()
-
-		go func() {
-			n, err := relayIO(os.Stdout, stderr, logEntry, "stderr")
-			if err != nil {
-				logEntry.WithError(err).Warn("piping stderr failed")
-			}
-			stdioChan <- err
-			logEntry.Infof("finished piping %d bytes from stderr", n)
 		}()
 
 		go func() {
@@ -366,13 +355,14 @@ func vmStart(ctx context.Context, remoteVM vm.UVM, udsPrefix string) (*gcs.Guest
 	defer cancel()
 
 	log.G(ctx).Infof("Creating entropy listener on port %d", entropyListenerPort)
-	entropyListener, err := listenHybridVsock(udsPrefix, entropyListenerPort)
+	hybridVsock := remoteVM.(vm.HybridVMSocketManager)
+	entropyListener, err := hybridVsock.ListenVMSock(udsPrefix, entropyListenerPort)
 	if err != nil {
 		return nil, err
 	}
 
 	log.G(ctx).Infof("Creating output listener on port %d", logOutputListenerPort)
-	outputListener, err := listenHybridVsock(udsPrefix, 109)
+	outputListener, err := hybridVsock.ListenVMSock(udsPrefix, 109)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +419,7 @@ func vmStart(ctx context.Context, remoteVM vm.UVM, udsPrefix string) (*gcs.Guest
 	}
 
 	log.G(ctx).Infof("Creating GCS listener on port %d", transport.LinuxGcsVsockPort)
-	gcListener, err := listenHybridVsock(udsPrefix, transport.LinuxGcsVsockPort)
+	gcListener, err := hybridVsock.ListenVMSock(udsPrefix, transport.LinuxGcsVsockPort)
 	if err != nil {
 		return nil, err
 	}
@@ -448,7 +438,7 @@ func vmStart(ctx context.Context, remoteVM vm.UVM, udsPrefix string) (*gcs.Guest
 		Conn: conn,
 		Log:  log.G(ctx).WithField(logfields.UVMID, remoteVM.ID()),
 		IoListen: func(port uint32) (net.Listener, error) {
-			return listenHybridVsock(udsPrefix, port)
+			return hybridVsock.ListenVMSock(udsPrefix, port)
 		},
 		InitGuestState: initGuestState,
 	}

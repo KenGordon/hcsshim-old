@@ -2,6 +2,7 @@ package remotevm
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"net"
 	"os"
@@ -16,6 +17,10 @@ func (uvmb *utilityVMBuilder) SetVMSockRelay(udsPath string) {
 	uvmb.config.HvsocketConfig = &vmservice.HVSocketConfig{
 		Path: udsPath,
 	}
+}
+
+func (uvmb *utilityVMBuilder) ListenVMSock(udsPath string, port uint32) (net.Listener, error) {
+	return nil, vm.ErrNotSupported
 }
 
 // Get a random unix socket address to use. The "randomness" equates to makes a temp file to reserve a name
@@ -37,6 +42,12 @@ func randomUnixSockAddr() (string, error) {
 
 	return f.Name(), nil
 }
+
+func (uvmb *utilityVM) ListenVMSock(udsPath string, port uint32) (net.Listener, error) {
+	return net.Listen("unix", fmt.Sprintf("%s_%d", udsPath, port))
+}
+
+func (uvmb *utilityVM) SetVMSockRelay(udsPath string) {}
 
 func (uvm *utilityVM) VMSocketListen(ctx context.Context, listenType vm.VMSocketType, connID interface{}) (_ net.Listener, err error) {
 	addr, err := randomUnixSockAddr()
