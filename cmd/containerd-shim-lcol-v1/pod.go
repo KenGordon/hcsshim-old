@@ -58,16 +58,8 @@ func (h *lcolPodFactory) Create(ctx context.Context, events events.Publisher, re
 		id:     req.ID,
 	}
 
-	// TODO katiewasnothere: options to fill out
-	opts := &hvlitevm.Options{
-		ID:         req.ID,
-		Owner:      owner,
-		KernelFile: "/mnt/c/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/boot/vmlinux",
-		InitrdPath: "/mnt/c/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/boot/initrd.img",
-		BinPath:    "/mnt/c/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/bin/hvlite",
-		OCISpec:    s,
-	}
-	// TODO katiewasnothere: get options, create remote vm
+	opts := hvlitevm.NewDefaultOptions(req.ID, owner)
+	opts.OCISpec = s
 
 	parent, err := hvlitevm.Create(ctx, opts)
 	if err != nil {
@@ -89,14 +81,9 @@ func (h *lcolPodFactory) Create(ctx context.Context, events events.Publisher, re
 
 	p.host = parent
 
-	// todo katiewasnothere: networking setup goes here
-	log.G(ctx).WithField("spec", s).Info("pod spec used")
-
 	if err := parent.AddEndpointsToNS(ctx); err != nil {
 		return nil, err
 	}
-
-	log.G(ctx).WithField("spec", s).Info("added namespace to pod")
 
 	if s.Windows == nil {
 		s.Windows = &specs.Windows{}
@@ -108,6 +95,7 @@ func (h *lcolPodFactory) Create(ctx context.Context, events events.Publisher, re
 	nses := []specs.LinuxNamespace{}
 	for _, namespace := range specNamespaces {
 		if namespace.Type == specs.NetworkNamespace {
+			// remove linux namespace path to play nice with gcs + runc
 			s.Windows.Network.NetworkNamespace = namespace.Path
 			namespace.Path = ""
 		}

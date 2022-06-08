@@ -45,22 +45,6 @@ func (uvm *UtilityVM) UVMMountCounter() uint64 {
 	return atomic.AddUint64(&uvm.mountCounter, 1)
 }
 
-type Options struct {
-	ID    string
-	Owner string
-
-	// KernelFile specifies path to the kernel image to boot from
-	KernelFile string
-	// InitrdPath specifies path of the initrd to use as the rootfs
-	InitrdPath string
-	// BinPath is the path to the binary implementing the vmservice interface
-	BinPath string
-
-	TTRPCAddress string
-
-	OCISpec *specs.Spec
-}
-
 func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
 	builder, err := remotevm.NewUVMBuilder(
 		ctx,
@@ -74,11 +58,15 @@ func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
 		return nil, err
 	}
 
+	// TODO katiewasnothere: we should probably stat these files
+	kernelFile := filepath.Join(opts.BootFilesPath, opts.KernelFile)
+	initrdPath := filepath.Join(opts.BootFilesPath, opts.InitrdPath)
+
 	kernelArgs := `pci=off brd.rd_nr=0 pmtmr=0 -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -disable-time-sync -loglevel debug`
 	boot := builder.(vm.BootManager)
 	if err := boot.SetLinuxKernelDirectBoot(
-		opts.KernelFile,
-		opts.InitrdPath,
+		kernelFile,
+		initrdPath,
 		kernelArgs,
 	); err != nil {
 		return nil, fmt.Errorf("failed to set Linux kernel direct boot: %w", err)
@@ -330,7 +318,6 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 		}
 		index := uvm.UVMMountCounter()
 		uvmPath := fmt.Sprintf(guestpath.LCOWGlobalMountPrefixFmt, index)
-		// TODO katiewasnothere: IMPORTANT: use correct index for mount path
 		guestReq.Settings = guestresource.LCOWMappedVirtualDisk{
 			MountPath:  uvmPath,
 			Lun:        uint8(index),
@@ -357,7 +344,6 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 
 	scratchIndex := uvm.UVMMountCounter()
 	uvmScratchPath := fmt.Sprintf(guestpath.LCOWGlobalMountPrefixFmt, scratchIndex)
-	// TODO katiewasnothere: IMPORTANT: use correct index for mount path
 	guestReq.Settings = guestresource.LCOWMappedVirtualDisk{
 		MountPath:  uvmScratchPath,
 		Lun:        uint8(scratchIndex),
@@ -371,7 +357,6 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 		return nil, fmt.Errorf("failed to make guest request to add scsi disk: %w", err)
 	}
 
-	// katiewasnothere: Mount as contaienr layer? Do we need to combine them? yes right?
 	lcolRootInUVM := fmt.Sprintf(guestpath.LCOWRootPrefixInUVM+"/%s", id)
 
 	layers := []hcsschema.Layer{}
@@ -395,7 +380,7 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 
 	// update root path in spec
 	spec.Root.Path = rootfs
-	spec.Windows.LayerFolders = uvmLayerPaths // TODO Katiewasnothere: validate this
+	spec.Windows.LayerFolders = uvmLayerPaths
 
 	mounts := []specs.Mount{}
 	for _, m := range spec.Mounts {
