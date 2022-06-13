@@ -93,6 +93,7 @@ message DevicesConfig {
     // have a oneof here named PCIDevice with WindowsPCIDevice and LinuxPCIDevice
     // housed.
     repeated WindowsPCIDevice windows_device = 4;
+    repeated VirtioFSConfig virtiofs_config = 5;
 }
 
 message VMConfig {
@@ -263,6 +264,11 @@ message TapBackend {
 message WindowsPCIDevice {
     // e.g. PCIP\\VEN_10DE&DEV_13F2&SUBSYS_115E10DE&REV_A1\\6&17F903&0&00400000
     string instance_id = 1;
+}
+
+message VirtioFSConfig {
+    string tag = 1;
+    string root_path = 2;
 }
 
 message ModifyMemoryRequest {
