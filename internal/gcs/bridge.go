@@ -48,8 +48,6 @@ type rpc struct {
 	ch      chan struct{}
 }
 
-// TODO katiewasnothere: We could, but I think it's clearer to treat this as a magic number that is part of the protocol and not as an error. E.g. if we used this code on Linux, we would not want to rely on values of type syscall.Errno.
-
 // bridge represents a communcations bridge with the guest. It handles the
 // transport layer but (mostly) does not parse or construct the message payload.
 type bridge struct {

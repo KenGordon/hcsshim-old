@@ -227,7 +227,6 @@ func (e *lcolExec) Kill(ctx context.Context, signal uint32) error {
 		e.exitFromCreated(ctx, 1)
 		return nil
 	case shimservice.ExecStateRunning:
-		// TODO katiewasnothere: validate the signal sent, check response
 		guestSignal := &guestresource.SignalProcessOptionsLCOW{
 			Signal: int(signal),
 		}
@@ -261,7 +260,6 @@ func (e *lcolExec) ResizePty(ctx context.Context, width, height uint32) error {
 
 func (e *lcolExec) CloseIO(ctx context.Context, stdin bool) error {
 	// issue command to io to close stdin
-	// TODO katiewasnothere: ffix
 	e.io.CloseStdin(ctx)
 	return nil
 }

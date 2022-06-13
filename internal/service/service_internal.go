@@ -125,7 +125,6 @@ func (s *Service) createInternal(ctx context.Context, req *task.CreateTaskReques
 			resp.Pid = uint32(e.Pid())
 			return resp, nil
 		}
-		// TODO katiewasnothere: figure out how to properly create a new pod depending on what we're running
 		pod, err = s.podFactory.Create(ctx, s.events, req, &spec)
 		if err != nil {
 			s.cl.Unlock()

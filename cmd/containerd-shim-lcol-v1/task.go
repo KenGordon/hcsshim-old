@@ -40,7 +40,7 @@ type lcolTask struct {
 	ownsHost  bool
 	// TODO katiewasnothere: this probably needs to be fixed to
 	// build on linux
-	// containerResources *resources.Resources
+	// containerResources *resources.Resources 
 	host *hvlitevm.UtilityVM
 
 	// init is the init process of the container.
@@ -166,7 +166,6 @@ func newLCOLTask(
 // createContainer is a generic call to return either a process/hypervisor isolated container, or a job container
 //  based on what is set in the OCI spec.
 func createContainer(ctx context.Context, id, owner, netNS string, s *specs.Spec, parent *hvlitevm.UtilityVM, shimOpts *runhcsopts.Options) (cow.Container, error) {
-	// TODO katiewasnothere: this doesn't feel right
 	return parent.CreateContainer(ctx, id, s)
 }
 

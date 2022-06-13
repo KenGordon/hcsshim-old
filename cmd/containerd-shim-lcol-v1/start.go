@@ -56,29 +56,32 @@ The start command can either start a new shim or return an address to an existin
 			return err
 		}
 
-		// TODO katiewasnothere: what are the scenarios in which this code block is executed?
-		/*if ct == oci.KubernetesContainerTypeContainer {
-			// TODO katiewasnothere: use better variable names so this address is not confused with
-			// addressFlag
-			address = fmt.Sprintf(addrFmt, namespaceFlag, sbid)
+		/*if containerType == oci.KubernetesContainerTypeContainer {
+			// TODO katiewasnothere: can we rely on reading this? I'm not sure
+			shimSocketAddr, err := shim.ReadAddress(filepath.Join(cwd, "address"))
+			if err != nil {
+				return err
+			}
 
 			// Connect to the hosting shim and get the pid
-			c, err := winio.DialPipe(address, nil)
+			conn, err := shim.Connect(shimSocketAddr, shim.AnonDialer)
 			if err != nil {
-				return errors.Wrap(err, "failed to connect to hosting shim")
+				return err
 			}
-			cl := ttrpc.NewClient(c, ttrpc.WithOnClose(func() { c.Close() }))
-			t := task.NewTaskClient(cl)
-			ctx := gocontext.Background()
-			req := &task.ConnectRequest{ID: sbid}
-			cr, err := t.Connect(ctx, req)
+			client := ttrpc.NewClient(conn, ttrpc.WithOnClose(func() { conn.Close() }))
+			taskClient := task.NewTaskClient(client)
+			connectCtx := context.Background()
+			req := &task.ConnectRequest{ID: sandboxID}
+			connectResp, err := taskClient.Connect(connectCtx, req)
 
-			cl.Close()
-			c.Close()
+			client.Close()
+			conn.Close()
 			if err != nil {
 				return errors.Wrap(err, "failed to get shim pid from hosting shim")
 			}
-			pid = int(cr.ShimPid)
+			pid = int(connectResp.ShimPid)
+
+			// TODO katiewasnothere: go to the writing of files
 		}*/
 
 		// We need to serve a new one.
@@ -92,7 +95,6 @@ The start command can either start a new shim or return an address to an existin
 		}
 
 		// construct socket name
-		// TODO katiewasnothere: not sure if idFlag or sandboxID should be used here?
 		shimSocketAddr, err := shim.SocketAddress(ctx, addressFlag, idFlag)
 		if err != nil {
 			return err
@@ -102,18 +104,6 @@ The start command can either start a new shim or return an address to an existin
 		if err := os.MkdirAll(filepath.Dir(socketTemp), 777); err != nil {
 			return fmt.Errorf("%s: %w", socketTemp, err)
 		}
-
-		// create a new socket
-		/*shimSocket, err := shim.NewSocket(shimSocketAddr)
-		if err != nil {
-			return err
-		}
-
-		// get socket file so serve command can inheriet
-		socketFile, err := shimSocket.File()
-		if err != nil {
-			return err
-		}*/
 
 		self, err := os.Executable()
 		if err != nil {
@@ -126,12 +116,6 @@ The start command can either start a new shim or return an address to an existin
 		}
 		defer r.Close()
 		defer w.Close()
-
-		/*panicLogFile, err := os.Create(filepath.Join(cwd, "panic.log"))
-		if err != nil {
-			return err
-		}
-		defer panicLogFile.Close()*/
 
 		args := []string{
 			self,
@@ -152,8 +136,7 @@ The start command can either start a new shim or return an address to an existin
 			Dir:    cwd,
 			Stdin:  os.Stdin,
 			Stdout: w,
-			// Stderr: os.Stderr,
-			// ExtraFiles: []*os.File{socketFile},
+			// Stderr: os.Stderr, // TODO katiewasnothere: do we want to connect this to the panic log?
 		}
 
 		if err := cmd.Start(); err != nil {
@@ -166,14 +149,14 @@ The start command can either start a new shim or return an address to an existin
 			}
 		}()
 
-		// TODO katiewasnothere: what does this do? Forward the invocation stderr until the serve command closes it.
+		// Forward the invocation stderr until the serve command closes it.
+		// when the serve command closes it, that indicates that the server is ready for use.
 		_, err = io.Copy(os.Stderr, r)
 		if err != nil {
 			return err
 		}
 
 		pid := cmd.Process.Pid
-
 		if err := shim.WritePidFile(filepath.Join(cwd, "shim.pid"), pid); err != nil {
 			return err
 		}

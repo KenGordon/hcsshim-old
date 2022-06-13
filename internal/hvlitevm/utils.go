@@ -13,7 +13,7 @@ import (
 
 const (
 	entropyListenerPort   = 1
-	logOutputListenerPort = 109 // TODO katiewasnothere: 129 as port here doesn't work
+	logOutputListenerPort = 109
 )
 
 func outputHandler(r io.Reader) {

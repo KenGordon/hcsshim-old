@@ -3,7 +3,6 @@ package io
 import (
 	"context"
 	"io"
-	"os"
 	"syscall"
 	"time"
 
@@ -25,7 +24,6 @@ func NewUpstreamIO(ctx context.Context, id, stdout, stderr, stdin string, termin
 }
 
 func newPipeIO(ctx context.Context, stdin, stdout, stderr string, terminal bool, retryTimeout time.Duration) (*pipeIO, error) {
-	// TODO katiewasnothere: how to support terminal
 	var (
 		pipes                             []io.ReadWriteCloser
 		stdinFifo, stdoutFifo, stderrFifo io.ReadWriteCloser
@@ -85,31 +83,6 @@ func newPipeIO(ctx context.Context, stdin, stdout, stderr string, terminal bool,
 		errName:  stderr,
 		terminal: terminal,
 	}, nil
-}
-
-// TODO katiewasnothere: took this from go-runc
-type pipe struct {
-	r *os.File
-	w *os.File
-}
-
-func newPipe() (*pipe, error) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		return nil, err
-	}
-	return &pipe{
-		r: r,
-		w: w,
-	}, nil
-}
-
-func (p *pipe) Close() error {
-	err := p.w.Close()
-	if rerr := p.r.Close(); err == nil {
-		err = rerr
-	}
-	return err
 }
 
 type pipeIO struct {
