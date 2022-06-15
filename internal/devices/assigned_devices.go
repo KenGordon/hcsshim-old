@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/Microsoft/hcsshim/internal/cmd"
+	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/pkg/errors"
@@ -57,7 +58,7 @@ func AddDevice(ctx context.Context, vm *uvm.UtilityVM, idType, deviceID string, 
 // parent bus device for the children devices' location paths from the uvm's view.
 // Returns a slice of strings representing the resulting children location paths
 func getChildrenDeviceLocationPaths(ctx context.Context, vm *uvm.UtilityVM, vmBusInstanceID string, deviceUtilPath string) ([]string, error) {
-	p, l, err := cmd.CreateNamedPipeListener()
+	p, l, err := io.CreateNamedPipeListener()
 	if err != nil {
 		return nil, err
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
+	"github.com/Microsoft/hcsshim/pkg/service/stats"
 	v1 "github.com/containerd/cgroups/stats/v1"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/pkg/errors"

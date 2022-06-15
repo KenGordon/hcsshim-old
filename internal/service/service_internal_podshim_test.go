@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
+	"github.com/Microsoft/hcsshim/pkg/service/options"
+	"github.com/Microsoft/hcsshim/pkg/service/stats"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/containerd/typeurl"
