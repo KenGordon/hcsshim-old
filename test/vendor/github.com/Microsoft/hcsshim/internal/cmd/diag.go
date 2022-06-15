@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package cmd
 
@@ -7,6 +8,7 @@ import (
 	"errors"
 	"os/exec"
 
+	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/logfields"
 	"github.com/Microsoft/hcsshim/internal/uvm"
@@ -17,7 +19,7 @@ func ExecInUvm(ctx context.Context, vm *uvm.UtilityVM, req *CmdProcessRequest) (
 	if len(req.Args) == 0 {
 		return 0, errors.New("missing command")
 	}
-	np, err := NewNpipeIO(ctx, req.Stdin, req.Stdout, req.Stderr, req.Terminal, 0)
+	np, err := io.NewNpipeIO(ctx, req.Stdin, req.Stdout, req.Stderr, req.Terminal, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -48,7 +50,7 @@ func ExecInShimHost(ctx context.Context, req *CmdProcessRequest) (int, error) {
 	if len(req.Args) > 1 {
 		cmdArgsWithoutName = req.Args[1:]
 	}
-	np, err := NewNpipeIO(ctx, req.Stdin, req.Stdout, req.Stderr, req.Terminal, 0)
+	np, err := io.NewNpipeIO(ctx, req.Stdin, req.Stdout, req.Stderr, req.Terminal, 0)
 	if err != nil {
 		return 0, err
 	}

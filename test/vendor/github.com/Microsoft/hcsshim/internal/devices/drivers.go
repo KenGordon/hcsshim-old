@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/Microsoft/hcsshim/internal/cmd"
+	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/resources"
@@ -55,7 +56,7 @@ func InstallKernelDriver(ctx context.Context, vm *uvm.UtilityVM, driver string) 
 }
 
 func execModprobeInstallDriver(ctx context.Context, vm *uvm.UtilityVM, driverDir string) error {
-	p, l, err := cmd.CreateNamedPipeListener()
+	p, l, err := io.CreateNamedPipeListener()
 	if err != nil {
 		return err
 	}
