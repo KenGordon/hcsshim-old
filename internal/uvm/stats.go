@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package uvm
 
@@ -12,9 +13,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/windows"
 
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/log"
+	"github.com/Microsoft/hcsshim/pkg/service/stats"
 )
 
 // checkProcess checks if the process identified by the given pid has a name
