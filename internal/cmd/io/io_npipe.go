@@ -1,6 +1,7 @@
 //go:build windows
+// +build windows
 
-package cmd
+package io
 
 import (
 	"context"
