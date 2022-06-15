@@ -1,6 +1,4 @@
-//go:build windows
-
-package main
+package service
 
 import (
 	"context"
@@ -8,15 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
-	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	"github.com/Microsoft/hcsshim/internal/oci"
+	"github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
+	runhcsopts "github.com/Microsoft/hcsshim/pkg/service/options"
 	containerd_v1_types "github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/containerd/typeurl"
 	google_protobuf1 "github.com/gogo/protobuf/types"
@@ -32,35 +29,35 @@ var empty = &google_protobuf1.Empty{}
 //
 //
 // If `pod==nil` returns `errdefs.ErrFailedPrecondition`.
-func (s *service) getPod() (shimPod, error) {
+func (s *Service) getPod() (shim.Pod, error) {
 	raw := s.taskOrPod.Load()
 	if raw == nil {
 		return nil, errors.Wrapf(errdefs.ErrFailedPrecondition, "task with id: '%s' must be created first", s.tid)
 	}
-	return raw.(shimPod), nil
+	return raw.(shim.Pod), nil
 }
 
 // getTask returns a task matching `tid` or else returns `nil`. This properly
 // handles a task in a pod or a singular task shim.
 //
 // If `tid` is not found will return `errdefs.ErrNotFound`.
-func (s *service) getTask(tid string) (shimTask, error) {
+func (s *Service) getTask(tid string) (shim.Task, error) {
 	raw := s.taskOrPod.Load()
 	if raw == nil {
 		return nil, errors.Wrapf(errdefs.ErrNotFound, "task with id: '%s' not found", tid)
 	}
 	if s.isSandbox {
-		p := raw.(shimPod)
+		p := raw.(shim.Pod)
 		return p.GetTask(tid)
 	}
 	// When its not a sandbox only the init task is a valid id.
 	if s.tid != tid {
 		return nil, errors.Wrapf(errdefs.ErrNotFound, "task with id: '%s' not found", tid)
 	}
-	return raw.(shimTask), nil
+	return raw.(shim.Task), nil
 }
 
-func (s *service) stateInternal(ctx context.Context, req *task.StateRequest) (*task.StateResponse, error) {
+func (s *Service) stateInternal(ctx context.Context, req *task.StateRequest) (*task.StateResponse, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
@@ -72,8 +69,9 @@ func (s *service) stateInternal(ctx context.Context, req *task.StateRequest) (*t
 	return e.Status(), nil
 }
 
-func (s *service) createInternal(ctx context.Context, req *task.CreateTaskRequest) (*task.CreateTaskResponse, error) {
-	setupDebuggerEvent()
+func (s *Service) createInternal(ctx context.Context, req *task.CreateTaskRequest) (*task.CreateTaskResponse, error) {
+	// TODO katiewasnothere: fix this
+	// setupDebuggerEvent()
 
 	var shimOpts *runhcsopts.Options
 	if req.Options != nil {
@@ -104,58 +102,8 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 		return nil, errors.Wrap(err, "unable to process OCI Spec annotations")
 	}
 
-	// If sandbox isolation is set to hypervisor, make sure the HyperV option
-	// is filled in. This lessens the burden on Containerd to parse our shims
-	// options if we can set this ourselves.
-	if shimOpts.SandboxIsolation == runhcsopts.Options_HYPERVISOR {
-		if spec.Windows == nil {
-			spec.Windows = &specs.Windows{}
-		}
-		if spec.Windows.HyperV == nil {
-			spec.Windows.HyperV = &specs.WindowsHyperV{}
-		}
-	}
-
-	if len(req.Rootfs) == 0 {
-		// If no mounts are passed via the snapshotter its the callers full
-		// responsibility to manage the storage. Just move on without affecting
-		// the config.json at all.
-		if spec.Windows == nil || len(spec.Windows.LayerFolders) < 2 {
-			return nil, errors.Wrap(errdefs.ErrFailedPrecondition, "no Windows.LayerFolders found in oci spec")
-		}
-	} else if len(req.Rootfs) != 1 {
-		return nil, errors.Wrap(errdefs.ErrFailedPrecondition, "Rootfs does not contain exactly 1 mount for the root file system")
-	} else {
-		m := req.Rootfs[0]
-		if m.Type != "windows-layer" && m.Type != "lcow-layer" {
-			return nil, errors.Wrapf(errdefs.ErrFailedPrecondition, "unsupported mount type '%s'", m.Type)
-		}
-
-		// parentLayerPaths are passed in layerN, layerN-1, ..., layer 0
-		//
-		// The OCI spec expects:
-		//   layerN, layerN-1, ..., layer0, scratch
-		var parentLayerPaths []string
-		for _, option := range m.Options {
-			if strings.HasPrefix(option, mount.ParentLayerPathsFlag) {
-				err := json.Unmarshal([]byte(option[len(mount.ParentLayerPathsFlag):]), &parentLayerPaths)
-				if err != nil {
-					return nil, errors.Wrapf(errdefs.ErrFailedPrecondition, "failed to unmarshal parent layer paths from mount: %v", err)
-				}
-			}
-		}
-
-		// This is a Windows Argon make sure that we have a Root filled in.
-		if spec.Windows.HyperV == nil {
-			if spec.Root == nil {
-				spec.Root = &specs.Root{}
-			}
-		}
-
-		// Append the parents
-		spec.Windows.LayerFolders = append(spec.Windows.LayerFolders, parentLayerPaths...)
-		// Append the scratch
-		spec.Windows.LayerFolders = append(spec.Windows.LayerFolders, m.Source)
+	if err := oci.UpdateSpecWithLayerPaths(&spec, req.Rootfs); err != nil {
+		return nil, errors.Wrap(err, "failed to construct parent layer paths")
 	}
 
 	if req.Terminal && req.Stderr != "" {
@@ -177,7 +125,7 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 			resp.Pid = uint32(e.Pid())
 			return resp, nil
 		}
-		pod, err = createPod(ctx, s.events, req, &spec)
+		pod, err = s.podFactory.Create(ctx, s.events, req, &spec)
 		if err != nil {
 			s.cl.Unlock()
 			return nil, err
@@ -187,7 +135,9 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 		resp.Pid = uint32(e.Pid())
 		s.taskOrPod.Store(pod)
 	} else {
-		t, err := newHcsStandaloneTask(ctx, s.events, req, &spec)
+		// TODO katiewasnothere: figure out what to do with this
+		// figure out what happens if this is not set
+		t, err := s.standaloneTaskFactory.Create(ctx, s.events, req, &spec)
 		if err != nil {
 			s.cl.Unlock()
 			return nil, err
@@ -200,7 +150,7 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 	return resp, nil
 }
 
-func (s *service) startInternal(ctx context.Context, req *task.StartRequest) (*task.StartResponse, error) {
+func (s *Service) startInternal(ctx context.Context, req *task.StartRequest) (*task.StartResponse, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
@@ -218,7 +168,7 @@ func (s *service) startInternal(ctx context.Context, req *task.StartRequest) (*t
 	}, nil
 }
 
-func (s *service) deleteInternal(ctx context.Context, req *task.DeleteRequest) (*task.DeleteResponse, error) {
+func (s *Service) deleteInternal(ctx context.Context, req *task.DeleteRequest) (*task.DeleteResponse, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
@@ -249,7 +199,7 @@ func (s *service) deleteInternal(ctx context.Context, req *task.DeleteRequest) (
 	}, nil
 }
 
-func (s *service) pidsInternal(ctx context.Context, req *task.PidsRequest) (*task.PidsResponse, error) {
+func (s *Service) pidsInternal(ctx context.Context, req *task.PidsRequest) (*task.PidsResponse, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
@@ -275,7 +225,7 @@ func (s *service) pidsInternal(ctx context.Context, req *task.PidsRequest) (*tas
 	}, nil
 }
 
-func (s *service) pauseInternal(ctx context.Context, req *task.PauseRequest) (*google_protobuf1.Empty, error) {
+func (s *Service) pauseInternal(ctx context.Context, req *task.PauseRequest) (*google_protobuf1.Empty, error) {
 	/*
 		s.events <- cdevent{
 			topic: runtime.TaskPausedEventTopic,
@@ -287,7 +237,7 @@ func (s *service) pauseInternal(ctx context.Context, req *task.PauseRequest) (*g
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *service) resumeInternal(ctx context.Context, req *task.ResumeRequest) (*google_protobuf1.Empty, error) {
+func (s *Service) resumeInternal(ctx context.Context, req *task.ResumeRequest) (*google_protobuf1.Empty, error) {
 	/*
 		s.events <- cdevent{
 			topic: runtime.TaskResumedEventTopic,
@@ -299,11 +249,11 @@ func (s *service) resumeInternal(ctx context.Context, req *task.ResumeRequest) (
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *service) checkpointInternal(ctx context.Context, req *task.CheckpointTaskRequest) (*google_protobuf1.Empty, error) {
+func (s *Service) checkpointInternal(ctx context.Context, req *task.CheckpointTaskRequest) (*google_protobuf1.Empty, error) {
 	return nil, errdefs.ErrNotImplemented
 }
 
-func (s *service) killInternal(ctx context.Context, req *task.KillRequest) (*google_protobuf1.Empty, error) {
+func (s *Service) killInternal(ctx context.Context, req *task.KillRequest) (*google_protobuf1.Empty, error) {
 	if s.isSandbox {
 		pod, err := s.getPod()
 		if err != nil {
@@ -328,11 +278,12 @@ func (s *service) killInternal(ctx context.Context, req *task.KillRequest) (*goo
 	return empty, nil
 }
 
-func (s *service) execInternal(ctx context.Context, req *task.ExecProcessRequest) (*google_protobuf1.Empty, error) {
+func (s *Service) execInternal(ctx context.Context, req *task.ExecProcessRequest) (*google_protobuf1.Empty, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
 	}
+	req.Stderr = "" // TODO katiewasnothere: this is temporary - need to investigate why containerd is sending both over
 	if req.Terminal && req.Stderr != "" {
 		return nil, errors.Wrap(errdefs.ErrFailedPrecondition, "if using terminal, stderr must be empty")
 	}
@@ -347,7 +298,7 @@ func (s *service) execInternal(ctx context.Context, req *task.ExecProcessRequest
 	return empty, nil
 }
 
-func (s *service) diagExecInHostInternal(ctx context.Context, req *shimdiag.ExecProcessRequest) (*shimdiag.ExecProcessResponse, error) {
+func (s *Service) diagExecInHostInternal(ctx context.Context, req *shimdiag.ExecProcessRequest) (*shimdiag.ExecProcessResponse, error) {
 	if req.Terminal && req.Stderr != "" {
 		return nil, errors.Wrap(errdefs.ErrFailedPrecondition, "if using terminal, stderr must be empty")
 	}
@@ -362,7 +313,7 @@ func (s *service) diagExecInHostInternal(ctx context.Context, req *shimdiag.Exec
 	return &shimdiag.ExecProcessResponse{ExitCode: int32(ec)}, nil
 }
 
-func (s *service) diagShareInternal(ctx context.Context, req *shimdiag.ShareRequest) (*shimdiag.ShareResponse, error) {
+func (s *Service) diagShareInternal(ctx context.Context, req *shimdiag.ShareRequest) (*shimdiag.ShareResponse, error) {
 	t, err := s.getTask(s.tid)
 	if err != nil {
 		return nil, err
@@ -373,7 +324,7 @@ func (s *service) diagShareInternal(ctx context.Context, req *shimdiag.ShareRequ
 	return &shimdiag.ShareResponse{}, nil
 }
 
-func (s *service) resizePtyInternal(ctx context.Context, req *task.ResizePtyRequest) (*google_protobuf1.Empty, error) {
+func (s *Service) resizePtyInternal(ctx context.Context, req *task.ResizePtyRequest) (*google_protobuf1.Empty, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
@@ -389,7 +340,7 @@ func (s *service) resizePtyInternal(ctx context.Context, req *task.ResizePtyRequ
 	return empty, nil
 }
 
-func (s *service) closeIOInternal(ctx context.Context, req *task.CloseIORequest) (*google_protobuf1.Empty, error) {
+func (s *Service) closeIOInternal(ctx context.Context, req *task.CloseIORequest) (*google_protobuf1.Empty, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
@@ -405,7 +356,7 @@ func (s *service) closeIOInternal(ctx context.Context, req *task.CloseIORequest)
 	return empty, nil
 }
 
-func (s *service) updateInternal(ctx context.Context, req *task.UpdateTaskRequest) (*google_protobuf1.Empty, error) {
+func (s *Service) updateInternal(ctx context.Context, req *task.UpdateTaskRequest) (*google_protobuf1.Empty, error) {
 	if req.Resources == nil {
 		return nil, errors.Wrapf(errdefs.ErrInvalidArgument, "resources cannot be empty, updating container %s resources failed", req.ID)
 	}
@@ -419,7 +370,7 @@ func (s *service) updateInternal(ctx context.Context, req *task.UpdateTaskReques
 	return empty, nil
 }
 
-func (s *service) waitInternal(ctx context.Context, req *task.WaitRequest) (*task.WaitResponse, error) {
+func (s *Service) waitInternal(ctx context.Context, req *task.WaitRequest) (*task.WaitResponse, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
@@ -440,7 +391,7 @@ func (s *service) waitInternal(ctx context.Context, req *task.WaitRequest) (*tas
 	}, nil
 }
 
-func (s *service) statsInternal(ctx context.Context, req *task.StatsRequest) (*task.StatsResponse, error) {
+func (s *Service) statsInternal(ctx context.Context, req *task.StatsRequest) (*task.StatsResponse, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
@@ -456,7 +407,7 @@ func (s *service) statsInternal(ctx context.Context, req *task.StatsRequest) (*t
 	return &task.StatsResponse{Stats: any}, nil
 }
 
-func (s *service) connectInternal(ctx context.Context, req *task.ConnectRequest) (*task.ConnectResponse, error) {
+func (s *Service) connectInternal(ctx context.Context, req *task.ConnectRequest) (*task.ConnectResponse, error) {
 	// We treat the shim/task as the same pid on the Windows host.
 	pid := uint32(os.Getpid())
 	return &task.ConnectResponse{
@@ -465,7 +416,7 @@ func (s *service) connectInternal(ctx context.Context, req *task.ConnectRequest)
 	}, nil
 }
 
-func (s *service) shutdownInternal(ctx context.Context, req *task.ShutdownRequest) (*google_protobuf1.Empty, error) {
+func (s *Service) shutdownInternal(ctx context.Context, req *task.ShutdownRequest) (*google_protobuf1.Empty, error) {
 	// Because a pod shim hosts multiple tasks only the init task can issue the
 	// shutdown request.
 	if req.ID != s.tid {
@@ -482,7 +433,7 @@ func (s *service) shutdownInternal(ctx context.Context, req *task.ShutdownReques
 	return empty, nil
 }
 
-func (s *service) computeProcessorInfoInternal(ctx context.Context, req *extendedtask.ComputeProcessorInfoRequest) (*extendedtask.ComputeProcessorInfoResponse, error) {
+func (s *Service) computeProcessorInfoInternal(ctx context.Context, req *extendedtask.ComputeProcessorInfoRequest) (*extendedtask.ComputeProcessorInfoResponse, error) {
 	t, err := s.getTask(req.ID)
 	if err != nil {
 		return nil, err
@@ -492,6 +443,6 @@ func (s *service) computeProcessorInfoInternal(ctx context.Context, req *extende
 		return nil, err
 	}
 	return &extendedtask.ComputeProcessorInfoResponse{
-		Count: info.count,
+		Count: info.Count,
 	}, nil
 }
