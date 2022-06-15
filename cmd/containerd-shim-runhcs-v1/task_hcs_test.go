@@ -9,13 +9,15 @@ import (
 	"testing"
 	"time"
 
+	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/containerd/containerd/errdefs"
 )
 
 func setupTestHcsTask(t *testing.T) (*hcsTask, *testShimExec, *testShimExec) {
 	initExec := newTestShimExec(t.Name(), t.Name(), int(rand.Int31()))
 	lt := &hcsTask{
-		events: newFakePublisher(),
+		events: eventpublisher.NewFakePublisher(),
 		id:     t.Name(),
 		init:   initExec,
 		closed: make(chan struct{}),
@@ -81,12 +83,12 @@ func Test_hcsTask_KillExec_InitExecID_Unexited2ndExec_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("should not have failed, got: %v", err)
 	}
-	if init.state != shimExecStateExited {
+	if init.state != shimservice.ExecStateExited {
 		t.Fatalf("init should be in exited state got: %v", init.state)
 	}
 	// A real platform would take this down when the pid namespace or silo goes
 	// down. For the test verify the shim did not issue the signal.
-	if second.state != shimExecStateCreated {
+	if second.state != shimservice.ExecStateCreated {
 		t.Fatalf("2nd exec should be in created state, got: %v", second.state)
 	}
 }
@@ -98,10 +100,10 @@ func Test_hcsTask_KillExec_InitExecID_All_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("should not have failed, got: %v", err)
 	}
-	if init.state != shimExecStateExited {
+	if init.state != shimservice.ExecStateExited {
 		t.Fatalf("init should be in exited state got: %v", init.state)
 	}
-	if second.state != shimExecStateExited {
+	if second.state != shimservice.ExecStateExited {
 		t.Fatalf("2nd exec should be in exited state got: %v", second.state)
 	}
 }
@@ -113,7 +115,7 @@ func Test_hcsTask_KillExec_2ndExecID_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("should not have failed, got: %v", err)
 	}
-	if second.state != shimExecStateExited {
+	if second.state != shimservice.ExecStateExited {
 		t.Fatalf("2nd exec should be in exited state got: %v", second.state)
 	}
 }
@@ -222,7 +224,7 @@ func Test_hcsTask_DeleteExec_InitExecID_2ndExec_CreatedState_Error(t *testing.T)
 
 	verifyExpectedError(t, nil, err, errdefs.ErrFailedPrecondition)
 	verifyDeleteFailureValues(t, pid, status, at)
-	if second.state != shimExecStateExited {
+	if second.state != shimservice.ExecStateExited {
 		t.Fatalf("2nd exec should be in exited state, got: %v", second.state)
 	}
 }
@@ -243,7 +245,7 @@ func Test_hcsTask_DeleteExec_InitExecID_2ndExec_RunningState_Error(t *testing.T)
 
 	verifyExpectedError(t, nil, err, errdefs.ErrFailedPrecondition)
 	verifyDeleteFailureValues(t, pid, status, at)
-	if second.state != shimExecStateExited {
+	if second.state != shimservice.ExecStateExited {
 		t.Fatalf("2nd exec should be in exited state, got: %v", second.state)
 	}
 }

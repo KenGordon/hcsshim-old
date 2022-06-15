@@ -8,8 +8,6 @@ github.com/Microsoft/go-winio/vhd
 # github.com/Microsoft/hcsshim v0.8.23 => ../
 ## explicit; go 1.17
 github.com/Microsoft/hcsshim
-github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options
-github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats
 github.com/Microsoft/hcsshim/computestorage
 github.com/Microsoft/hcsshim/ext4/dmverity
 github.com/Microsoft/hcsshim/ext4/internal/compactext4
@@ -18,6 +16,7 @@ github.com/Microsoft/hcsshim/ext4/tar2ext4
 github.com/Microsoft/hcsshim/hcn
 github.com/Microsoft/hcsshim/internal/clone
 github.com/Microsoft/hcsshim/internal/cmd
+github.com/Microsoft/hcsshim/internal/cmd/io
 github.com/Microsoft/hcsshim/internal/cni
 github.com/Microsoft/hcsshim/internal/computeagent
 github.com/Microsoft/hcsshim/internal/copyfile
@@ -27,6 +26,8 @@ github.com/Microsoft/hcsshim/internal/credentials
 github.com/Microsoft/hcsshim/internal/devices
 github.com/Microsoft/hcsshim/internal/extendedtask
 github.com/Microsoft/hcsshim/internal/gcs
+github.com/Microsoft/hcsshim/internal/gcs/iochannel
+github.com/Microsoft/hcsshim/internal/gcs/transport
 github.com/Microsoft/hcsshim/internal/guest/spec
 github.com/Microsoft/hcsshim/internal/guestpath
 github.com/Microsoft/hcsshim/internal/hcs
@@ -50,6 +51,7 @@ github.com/Microsoft/hcsshim/internal/ncproxy/networking
 github.com/Microsoft/hcsshim/internal/ncproxyttrpc
 github.com/Microsoft/hcsshim/internal/oc
 github.com/Microsoft/hcsshim/internal/oci
+github.com/Microsoft/hcsshim/internal/ociuvm
 github.com/Microsoft/hcsshim/internal/ospath
 github.com/Microsoft/hcsshim/internal/processorinfo
 github.com/Microsoft/hcsshim/internal/protocol/guestrequest
@@ -76,6 +78,8 @@ github.com/Microsoft/hcsshim/pkg/go-runhcs
 github.com/Microsoft/hcsshim/pkg/ociwclayer
 github.com/Microsoft/hcsshim/pkg/octtrpc
 github.com/Microsoft/hcsshim/pkg/securitypolicy
+github.com/Microsoft/hcsshim/pkg/service/options
+github.com/Microsoft/hcsshim/pkg/service/stats
 # github.com/bits-and-blooms/bitset v1.2.0
 ## explicit; go 1.14
 github.com/bits-and-blooms/bitset
@@ -247,6 +251,9 @@ github.com/klauspost/compress/huff0
 github.com/klauspost/compress/snappy
 github.com/klauspost/compress/zstd
 github.com/klauspost/compress/zstd/internal/xxhash
+# github.com/linuxkit/virtsock v0.0.0-20201010232012-f8cee7dfc7a3
+## explicit
+github.com/linuxkit/virtsock/pkg/vsock
 # github.com/moby/locker v1.0.1
 ## explicit; go 1.13
 github.com/moby/locker

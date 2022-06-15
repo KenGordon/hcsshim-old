@@ -19,7 +19,7 @@ import (
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/layers"
 	"github.com/Microsoft/hcsshim/internal/log"
-	"github.com/Microsoft/hcsshim/internal/oci"
+	"github.com/Microsoft/hcsshim/internal/ociuvm"
 	"github.com/Microsoft/hcsshim/internal/processorinfo"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/internal/uvmfolder"
@@ -116,17 +116,17 @@ func createMountsConfig(ctx context.Context, coi *createOptionsInternal) (*mount
 // exclusive.
 func ConvertCPULimits(ctx context.Context, cid string, spec *specs.Spec, maxCPUCount int32) (int32, int32, int32, error) {
 	cpuNumSet := 0
-	cpuCount := oci.ParseAnnotationsCPUCount(ctx, spec, annotations.ContainerProcessorCount, 0)
+	cpuCount := ociuvm.ParseAnnotationsCPUCount(ctx, spec, annotations.ContainerProcessorCount, 0)
 	if cpuCount > 0 {
 		cpuNumSet++
 	}
 
-	cpuLimit := oci.ParseAnnotationsCPULimit(ctx, spec, annotations.ContainerProcessorLimit, 0)
+	cpuLimit := ociuvm.ParseAnnotationsCPULimit(ctx, spec, annotations.ContainerProcessorLimit, 0)
 	if cpuLimit > 0 {
 		cpuNumSet++
 	}
 
-	cpuWeight := oci.ParseAnnotationsCPUWeight(ctx, spec, annotations.ContainerProcessorWeight, 0)
+	cpuWeight := ociuvm.ParseAnnotationsCPUWeight(ctx, spec, annotations.ContainerProcessorWeight, 0)
 	if cpuWeight > 0 {
 		cpuNumSet++
 	}
@@ -247,7 +247,7 @@ func createWindowsContainerDocument(ctx context.Context, coi *createOptionsInter
 	}
 
 	// Memory Resources
-	memoryMaxInMB := oci.ParseAnnotationsMemory(ctx, coi.Spec, annotations.ContainerMemorySizeInMB, 0)
+	memoryMaxInMB := ociuvm.ParseAnnotationsMemory(ctx, coi.Spec, annotations.ContainerMemorySizeInMB, 0)
 	if memoryMaxInMB > 0 {
 		v1.MemoryMaximumInMB = int64(memoryMaxInMB)
 		v2Container.Memory = &hcsschema.Memory{
@@ -256,8 +256,8 @@ func createWindowsContainerDocument(ctx context.Context, coi *createOptionsInter
 	}
 
 	// Storage Resources
-	storageBandwidthMax := oci.ParseAnnotationsStorageBps(ctx, coi.Spec, annotations.ContainerStorageQoSBandwidthMaximum, 0)
-	storageIopsMax := oci.ParseAnnotationsStorageIops(ctx, coi.Spec, annotations.ContainerStorageQoSIopsMaximum, 0)
+	storageBandwidthMax := ociuvm.ParseAnnotationsStorageBps(ctx, coi.Spec, annotations.ContainerStorageQoSBandwidthMaximum, 0)
+	storageIopsMax := ociuvm.ParseAnnotationsStorageIops(ctx, coi.Spec, annotations.ContainerStorageQoSIopsMaximum, 0)
 	if storageBandwidthMax > 0 || storageIopsMax > 0 {
 		v1.StorageBandwidthMaximum = uint64(storageBandwidthMax)
 		v1.StorageIOPSMaximum = uint64(storageIopsMax)

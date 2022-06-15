@@ -10,6 +10,7 @@ import (
 	eventstypes "github.com/containerd/containerd/api/events"
 	containerd_v1_types "github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/runtime"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -18,10 +19,12 @@ import (
 	"go.opencensus.io/trace"
 
 	"github.com/Microsoft/hcsshim/internal/cmd"
+	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/signals"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/osversion"
@@ -33,14 +36,14 @@ import (
 // the process `spec.Process`.
 func newHcsExec(
 	ctx context.Context,
-	events publisher,
+	events events.Publisher,
 	tid string,
 	host *uvm.UtilityVM,
 	c cow.Container,
 	id, bundle string,
 	isWCOW bool,
 	spec *specs.Process,
-	io cmd.UpstreamIO) shimExec {
+	io io.UpstreamIO) shimservice.Exec {
 	log.G(ctx).WithFields(logrus.Fields{
 		"tid":    tid,
 		"eid":    id, // Init exec ID is always same as Task ID
@@ -59,7 +62,7 @@ func newHcsExec(
 		spec:        spec,
 		io:          io,
 		processDone: make(chan struct{}),
-		state:       shimExecStateCreated,
+		state:       shimservice.ExecStateCreated,
 		exitStatus:  255, // By design for non-exited process status.
 		exited:      make(chan struct{}),
 	}
@@ -67,10 +70,10 @@ func newHcsExec(
 	return he
 }
 
-var _ = (shimExec)(&hcsExec{})
+var _ = (shimservice.Exec)(&hcsExec{})
 
 type hcsExec struct {
-	events publisher
+	events events.Publisher
 	// tid is the task id of the container hosting this process.
 	//
 	// This MUST be treated as read only in the lifetime of the exec.
@@ -109,14 +112,14 @@ type hcsExec struct {
 	// create time in order to be valid.
 	//
 	// This MUST be treated as read only in the lifetime of the exec.
-	io              cmd.UpstreamIO
+	io              io.UpstreamIO
 	processDone     chan struct{}
 	processDoneOnce sync.Once
 
 	// sl is the state lock that MUST be held to safely read/write any of the
 	// following members.
 	sl         sync.Mutex
-	state      shimExecState
+	state      shimservice.ExecState
 	pid        int
 	exitStatus uint32
 	exitedAt   time.Time
@@ -137,7 +140,7 @@ func (he *hcsExec) Pid() int {
 	return he.pid
 }
 
-func (he *hcsExec) State() shimExecState {
+func (he *hcsExec) State() shimservice.ExecState {
 	he.sl.Lock()
 	defer he.sl.Unlock()
 	return he.state
@@ -149,11 +152,11 @@ func (he *hcsExec) Status() *task.StateResponse {
 
 	var s containerd_v1_types.Status
 	switch he.state {
-	case shimExecStateCreated:
+	case shimservice.ExecStateCreated:
 		s = containerd_v1_types.StatusCreated
-	case shimExecStateRunning:
+	case shimservice.ExecStateRunning:
 		s = containerd_v1_types.StatusRunning
-	case shimExecStateExited:
+	case shimservice.ExecStateExited:
 		s = containerd_v1_types.StatusStopped
 	}
 
@@ -175,8 +178,8 @@ func (he *hcsExec) Status() *task.StateResponse {
 func (he *hcsExec) startInternal(ctx context.Context, initializeContainer bool) (err error) {
 	he.sl.Lock()
 	defer he.sl.Unlock()
-	if he.state != shimExecStateCreated {
-		return newExecInvalidStateError(he.tid, he.id, he.state, "start")
+	if he.state != shimservice.ExecStateCreated {
+		return shimservice.NewExecInvalidStateError(he.tid, he.id, he.state, "start")
 	}
 	defer func() {
 		if err != nil {
@@ -219,12 +222,12 @@ func (he *hcsExec) startInternal(ctx context.Context, initializeContainer bool) 
 
 	// Assign the PID and transition the state.
 	he.pid = he.p.Process.Pid()
-	he.state = shimExecStateRunning
+	he.state = shimservice.ExecStateRunning
 
 	// Publish the task/exec start event. This MUST happen before waitForExit to
 	// avoid publishing the exit previous to the start.
 	if he.id != he.tid {
-		if err := he.events.publishEvent(
+		if err := he.events.Publish(
 			ctx,
 			runtime.TaskExecStartedEventTopic,
 			&eventstypes.TaskExecStarted{
@@ -235,7 +238,7 @@ func (he *hcsExec) startInternal(ctx context.Context, initializeContainer bool) 
 			return err
 		}
 	} else {
-		if err := he.events.publishEvent(
+		if err := he.events.Publish(
 			ctx,
 			runtime.TaskStartEventTopic,
 			&eventstypes.TaskStart{
@@ -261,10 +264,10 @@ func (he *hcsExec) Kill(ctx context.Context, signal uint32) error {
 	he.sl.Lock()
 	defer he.sl.Unlock()
 	switch he.state {
-	case shimExecStateCreated:
+	case shimservice.ExecStateCreated:
 		he.exitFromCreatedL(ctx, 1)
 		return nil
-	case shimExecStateRunning:
+	case shimservice.ExecStateRunning:
 		supported := false
 		if osversion.Build() >= osversion.RS5 {
 			supported = he.host == nil || he.host.SignalProcessSupported()
@@ -302,10 +305,10 @@ func (he *hcsExec) Kill(ctx context.Context, signal uint32) error {
 			return errors.Wrapf(errdefs.ErrNotFound, "exec: '%s' in task: '%s' not found", he.id, he.tid)
 		}
 		return nil
-	case shimExecStateExited:
+	case shimservice.ExecStateExited:
 		return errors.Wrapf(errdefs.ErrNotFound, "exec: '%s' in task: '%s' not found", he.id, he.tid)
 	default:
-		return newExecInvalidStateError(he.tid, he.id, he.state, "kill")
+		return shimservice.NewExecInvalidStateError(he.tid, he.id, he.state, "kill")
 	}
 }
 
@@ -316,7 +319,7 @@ func (he *hcsExec) ResizePty(ctx context.Context, width, height uint32) error {
 		return errors.Wrapf(errdefs.ErrFailedPrecondition, "exec: '%s' in task: '%s' is not a tty", he.id, he.tid)
 	}
 
-	if he.state == shimExecStateRunning {
+	if he.state == shimservice.ExecStateRunning {
 		return he.p.Process.ResizeConsole(ctx, uint16(width), uint16(height))
 	}
 	return nil
@@ -339,11 +342,11 @@ func (he *hcsExec) Wait() *task.StateResponse {
 func (he *hcsExec) ForceExit(ctx context.Context, status int) {
 	he.sl.Lock()
 	defer he.sl.Unlock()
-	if he.state != shimExecStateExited {
+	if he.state != shimservice.ExecStateExited {
 		switch he.state {
-		case shimExecStateCreated:
+		case shimservice.ExecStateCreated:
 			he.exitFromCreatedL(ctx, status)
-		case shimExecStateRunning:
+		case shimservice.ExecStateRunning:
 			// Kill the process to unblock `he.waitForExit`
 			_, _ = he.p.Process.Kill(ctx)
 		}
@@ -372,14 +375,14 @@ func (he *hcsExec) ForceExit(ctx context.Context, status int) {
 // We DO NOT send the async `TaskExit` event because we never would have sent
 // the `TaskStart`/`TaskExecStarted` event.
 func (he *hcsExec) exitFromCreatedL(ctx context.Context, status int) {
-	if he.state != shimExecStateExited {
+	if he.state != shimservice.ExecStateExited {
 		// Avoid logging the force if we already exited gracefully
 		log.G(ctx).WithField("status", status).Debug("hcsExec::exitFromCreatedL")
 
 		// Unblock the container exit goroutine
 		he.processDoneOnce.Do(func() { close(he.processDone) })
 		// Transition this exec
-		he.state = shimExecStateExited
+		he.state = shimservice.ExecStateExited
 		he.exitStatus = uint32(status)
 		he.exitedAt = time.Now()
 		// Release all upstream IO connections (if any)
@@ -442,7 +445,7 @@ func (he *hcsExec) waitForExit() {
 	}
 
 	he.sl.Lock()
-	he.state = shimExecStateExited
+	he.state = shimservice.ExecStateExited
 	he.exitStatus = uint32(code)
 	he.exitedAt = time.Now()
 	he.sl.Unlock()
@@ -455,7 +458,7 @@ func (he *hcsExec) waitForExit() {
 	// exec. For the `init` exec this is handled in task teardown.
 	if he.tid != he.id {
 		// We had a valid process so send the exited notification.
-		if err := he.events.publishEvent(
+		if err := he.events.Publish(
 			ctx,
 			runtime.TaskExitEventTopic,
 			&eventstypes.TaskExit{
@@ -498,9 +501,9 @@ func (he *hcsExec) waitForContainerExit() {
 		// state and cleanup any resources
 		he.sl.Lock()
 		switch he.state {
-		case shimExecStateCreated:
+		case shimservice.ExecStateCreated:
 			he.exitFromCreatedL(ctx, 1)
-		case shimExecStateRunning:
+		case shimservice.ExecStateRunning:
 			// Kill the process to unblock `he.waitForExit`.
 			_, _ = he.p.Process.Kill(ctx)
 		}

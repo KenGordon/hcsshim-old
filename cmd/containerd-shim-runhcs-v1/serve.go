@@ -25,14 +25,16 @@ import (
 	"github.com/urfave/cli"
 	"golang.org/x/sys/windows"
 
-	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
+	eventpublisher "github.com/Microsoft/hcsshim/internal/event-publisher"
 	"github.com/Microsoft/hcsshim/internal/extendedtask"
 	hcslog "github.com/Microsoft/hcsshim/internal/log"
+	shimservice "github.com/Microsoft/hcsshim/internal/service"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/Microsoft/hcsshim/pkg/octtrpc"
+	runhcsopts "github.com/Microsoft/hcsshim/pkg/service/options"
 )
 
-var svc *service
+var svc *shimservice.Service
 
 var serveCommand = cli.Command{
 	Name:           "serve",
@@ -177,20 +179,21 @@ var serveCommand = cli.Command{
 		}
 
 		ttrpcAddress := os.Getenv(ttrpcAddressEnv)
-		ttrpcEventPublisher, err := newEventPublisher(ttrpcAddress, namespaceFlag)
+		ttrpcEventPublisher, err := eventpublisher.NewEventPublisher(ttrpcAddress, namespaceFlag)
 		if err != nil {
 			return err
 		}
 		defer func() {
 			if err != nil {
-				ttrpcEventPublisher.close()
+				ttrpcEventPublisher.Close()
 			}
 		}()
 
 		// Setup the ttrpc server
-		svc, err = NewService(WithEventPublisher(ttrpcEventPublisher),
-			WithTID(idFlag),
-			WithIsSandbox(ctx.Bool("is-sandbox")))
+		svc, err = shimservice.NewService(shimservice.WithEventPublisher(ttrpcEventPublisher),
+			shimservice.WithTID(idFlag),
+			shimservice.WithIsSandbox(ctx.Bool("is-sandbox")),
+			shimservice.WithPodFactory(&hcsPodFactory{}))
 		if err != nil {
 			return fmt.Errorf("failed to create new service: %w", err)
 		}
@@ -249,7 +252,7 @@ var serveCommand = cli.Command{
 		case err = <-serrs:
 			// the ttrpc server shutdown without processing a shutdown request
 		case <-svc.Done():
-			if !svc.gracefulShutdown {
+			if !svc.GetGracefulShutdownValue() {
 				// Return immediately, but still close ttrpc server, pipes, and spans
 				// Shouldn't need to os.Exit without clean up (ie, deferred `.Close()`s)
 				return nil

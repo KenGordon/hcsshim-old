@@ -6,9 +6,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
-	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
+	"github.com/Microsoft/hcsshim/pkg/service/options"
+	"github.com/Microsoft/hcsshim/pkg/service/stats"
 	v1 "github.com/containerd/cgroups/stats/v1"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/runtime/v2/task"
@@ -17,7 +18,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-var _ = (shimTask)(&testShimTask{})
+var _ = (shimservice.Task)(&testShimTask{})
 
 type testShimTask struct {
 	id string
@@ -35,7 +36,7 @@ func (tst *testShimTask) CreateExec(ctx context.Context, req *task.ExecProcessRe
 	return errdefs.ErrNotImplemented
 }
 
-func (tst *testShimTask) GetExec(eid string) (shimExec, error) {
+func (tst *testShimTask) GetExec(eid string) (shimservice.Exec, error) {
 	if eid == "" {
 		return tst.exec, nil
 	}
@@ -106,7 +107,7 @@ func (tst *testShimTask) Share(ctx context.Context, req *shimdiag.ShareRequest) 
 	return errors.New("not implemented")
 }
 
-func (tst *testShimTask) ProcessorInfo(ctx context.Context) (*processorInfo, error) {
+func (tst *testShimTask) ProcessorInfo(ctx context.Context) (*shimservice.ProcessorInfo, error) {
 	return nil, errors.New("not implemented")
 }
 

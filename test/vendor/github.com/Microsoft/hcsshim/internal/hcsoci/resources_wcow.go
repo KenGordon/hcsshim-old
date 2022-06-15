@@ -17,6 +17,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/Microsoft/hcsshim/internal/cmd"
+	"github.com/Microsoft/hcsshim/internal/cmd/io"
 	"github.com/Microsoft/hcsshim/internal/credentials"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
 	"github.com/Microsoft/hcsshim/internal/layers"
@@ -194,7 +195,7 @@ func setupMounts(ctx context.Context, coi *createOptionsInternal, r *resources.R
 				// Create the directory, but also run dir afterwards regardless of if mkdir succeeded to handle the case where the directory already exists
 				// e.g. from a previous container specifying the same mount (and thus creating the same directory).
 				b := &bytes.Buffer{}
-				stderr, err := cmd.CreatePipeAndListen(b, false)
+				stderr, err := io.CreatePipeAndListen(b, false)
 				if err != nil {
 					return err
 				}
