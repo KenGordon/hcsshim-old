@@ -15,9 +15,9 @@ import (
 )
 
 func SetupNet(ctx context.Context, name string, uvmb vm.UVMBuilder) (*VethEndpoint, error) {
-	currNS, err := netns.GetFromName(name)
+	currNS, err := netns.GetFromPath(name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get namespace from name: %w", err)
 	}
 	defer currNS.Close()
 
@@ -36,7 +36,7 @@ func SetupNet(ctx context.Context, name string, uvmb vm.UVMBuilder) (*VethEndpoi
 	for _, link := range linkList {
 		netInfo, err := infoFromLink(netlinkHandle, link)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to get info from link: %w", err)
 		}
 
 		if len(netInfo.Addrs) == 0 {
@@ -52,7 +52,7 @@ func SetupNet(ctx context.Context, name string, uvmb vm.UVMBuilder) (*VethEndpoi
 			endpoint, err = addSingleEndpoint(ctx, netInfo, uvmb)
 			return err
 		}); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed run doinnetns: %w", err)
 		}
 	}
 	return endpoint, nil
@@ -81,6 +81,7 @@ type NetworkInfo struct {
 	Addrs     []netlink.Addr
 	Routes    []netlink.Route
 	Neighbors []netlink.Neigh
+	NicID     string
 }
 
 // NetworkInterface defines a network interface.
