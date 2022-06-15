@@ -57,6 +57,10 @@ type ProcessorManager interface {
 	SetProcessorLimits(ctx context.Context, limits *ProcessorLimits) error
 }
 
+type VirtiofsManager interface {
+	SetVirtiofsMount(tag, root string) error
+}
+
 // SerialManager manages setting up serial consoles for the Utility VM.
 type SerialManager interface {
 	// SetSerialConsole sets up a serial console for `port`. Output will be relayed to the listener specified

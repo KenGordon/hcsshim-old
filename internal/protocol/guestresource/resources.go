@@ -35,6 +35,8 @@ const (
 	// container constraints
 	ResourceTypeContainerConstraints guestrequest.ResourceType = "ContainerConstraints"
 	ResourceTypeHvSocket             guestrequest.ResourceType = "HvSocket"
+	// ResourceTypeVirtiofs is the modify resource type for updating a virtiofs mount.
+	ResourceTypeVirtiofs guestrequest.ResourceType = "Virtiofs"
 	// ResourceTypeSecurityPolicy is the modify resource type for updating the security
 	// policy
 	ResourceTypeSecurityPolicy guestrequest.ResourceType = "SecurityPolicy"
@@ -71,6 +73,13 @@ type LCOWMappedVirtualDisk struct {
 	Encrypted  bool              `json:"Encrypted,omitempty"`
 	Options    []string          `json:"Options,omitempty"`
 	VerityInfo *DeviceVerityInfo `json:"VerityInfo,omitempty"`
+}
+
+type VirtiofsMappedDir struct {
+	Source    string  `json:"Source,omitempty"`
+	MountPath string  `json:"MountPath,omitempty"`
+	Options   string  `json:"Options,omitempty"`
+	Flags     uintptr `json:"Flags,omitempty"`
 }
 
 type WCOWMappedVirtualDisk struct {
