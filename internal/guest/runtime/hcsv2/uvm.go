@@ -67,7 +67,8 @@ func NewHost(rtime runtime.Runtime, vsock transport.Transport) *Host {
 		rtime:                     rtime,
 		vsock:                     vsock,
 		securityPolicyEnforcerSet: false,
-		securityPolicyEnforcer:    &securitypolicy.ClosedDoorSecurityPolicyEnforcer{},
+		// TODO katiewasnothere: needed to do this for the lcol prototype without cc
+		securityPolicyEnforcer:    &securitypolicy.OpenDoorSecurityPolicyEnforcer{},
 	}
 }
 
