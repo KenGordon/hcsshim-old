@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	shimservice "github.com/Microsoft/hcsshim/internal/shim"
 	"github.com/containerd/containerd/runtime/v2/task"
 )
 
@@ -16,11 +17,11 @@ func newTestShimExec(tid, id string, pid int) *testShimExec {
 		tid:   tid,
 		id:    id,
 		pid:   pid,
-		state: shimExecStateCreated,
+		state: shimservice.ExecStateCreated,
 	}
 }
 
-var _ = (shimExec)(&testShimExec{})
+var _ = (shimservice.Exec)(&testShimExec{})
 
 type testShimExec struct {
 	tid    string
@@ -29,7 +30,7 @@ type testShimExec struct {
 	status uint32
 	at     time.Time
 
-	state shimExecState
+	state shimservice.ExecState
 }
 
 func (tse *testShimExec) ID() string {
@@ -38,7 +39,7 @@ func (tse *testShimExec) ID() string {
 func (tse *testShimExec) Pid() int {
 	return tse.pid
 }
-func (tse *testShimExec) State() shimExecState {
+func (tse *testShimExec) State() shimservice.ExecState {
 	return tse.state
 }
 func (tse *testShimExec) Status() *task.StateResponse {
@@ -51,12 +52,12 @@ func (tse *testShimExec) Status() *task.StateResponse {
 	}
 }
 func (tse *testShimExec) Start(ctx context.Context) error {
-	tse.state = shimExecStateRunning
+	tse.state = shimservice.ExecStateRunning
 	tse.status = 255
 	return nil
 }
 func (tse *testShimExec) Kill(ctx context.Context, signal uint32) error {
-	tse.state = shimExecStateExited
+	tse.state = shimservice.ExecStateExited
 	tse.status = 0
 	tse.at = time.Now()
 	return nil
@@ -71,8 +72,8 @@ func (tse *testShimExec) Wait() *task.StateResponse {
 	return tse.Status()
 }
 func (tse *testShimExec) ForceExit(ctx context.Context, status int) {
-	if tse.state != shimExecStateExited {
-		tse.state = shimExecStateExited
+	if tse.state != shimservice.ExecStateExited {
+		tse.state = shimservice.ExecStateExited
 		tse.status = 1
 		tse.at = time.Now()
 	}
