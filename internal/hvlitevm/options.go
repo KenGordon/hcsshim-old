@@ -10,7 +10,6 @@ import (
 type Options struct {
 	ID    string
 	Owner string
-
 	// BootFilesPath specifies the location to find boot files and binaries
 	BootFilesPath string
 	// KernelFile specifies the name of the kernel image to boot from
@@ -18,10 +17,8 @@ type Options struct {
 	// InitrdPath specifies the name of the initrd to use as the rootfs
 	InitrdPath string
 	// BinPath is the name of the binary implementing the vmservice interface
-	BinPath string
-
+	BinPath      string
 	TTRPCAddress string
-
 	// OCISpec is the spec that the remote VM should be created with
 	OCISpec *specs.Spec
 }

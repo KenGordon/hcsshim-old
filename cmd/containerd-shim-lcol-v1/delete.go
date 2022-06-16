@@ -4,6 +4,10 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
+	"github.com/Microsoft/hcsshim/internal/hvlitevm"
 	"github.com/urfave/cli"
 )
 
@@ -23,6 +27,12 @@ The delete command will be executed in the container's bundle as its cwd.
 		// log contents of panic log file
 
 		// stop running pod
+
+		// Remove shared FS path made for the VM.
+		sharedFSPath := fmt.Sprintf(hvlitevm.SharedHostPathFmt, idFlag)
+		if err := os.RemoveAll(sharedFSPath); err != nil {
+			return err
+		}
 
 		return nil
 	},
