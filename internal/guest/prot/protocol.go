@@ -578,6 +578,12 @@ func UnmarshalContainerModifySettings(b []byte) (*ContainerModifySettings, error
 			return &request, errors.Wrap(err, "failed to unmarshal settings as ContainerConstraintsV2")
 		}
 		msr.Settings = cc
+	case guestresource.ResourceTypeVirtiofs:
+		vfs := &guestresource.VirtiofsMappedDir{}
+		if err := commonutils.UnmarshalJSONWithHresult(msrRawSettings, vfs); err != nil {
+			return &request, errors.Wrap(err, "failed to unmarshal settings as VirtiofsMappedDir")
+		}
+		msr.Settings = vfs
 	case guestresource.ResourceTypeSecurityPolicy:
 		policy := &securitypolicy.EncodedSecurityPolicy{}
 		if err := commonutils.UnmarshalJSONWithHresult(msrRawSettings, policy); err != nil {

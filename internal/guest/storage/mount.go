@@ -15,6 +15,7 @@ import (
 	"go.opencensus.io/trace"
 	"golang.org/x/sys/unix"
 
+	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
 )
 
@@ -95,6 +96,26 @@ func ParseMountOptions(options []string) (flagOpts uintptr, pgFlags []uintptr, d
 		}
 	}
 	return
+}
+
+// Mount mounts source to target via unix.Mount
+func Mount(ctx context.Context, source, target, fsType, options string, flags uintptr) (err error) {
+	if err := os.MkdirAll(target, 0700); err != nil {
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			if err := os.RemoveAll(target); err != nil {
+				log.G(ctx).WithError(err).Debugf("error cleaning up target: %s", target)
+			}
+		}
+	}()
+
+	if err := unix.Mount(source, target, fsType, flags, options); err != nil {
+		return fmt.Errorf("failed to mount %s onto %s: %w", source, target, err)
+	}
+	return nil
 }
 
 // MountRShared creates a bind mountpoint and marks it as rshared

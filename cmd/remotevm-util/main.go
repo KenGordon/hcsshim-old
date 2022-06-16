@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/Microsoft/hcsshim/internal/vm/remotevm"
 	"github.com/containerd/console"
 	"github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"golang.org/x/sync/errgroup"
@@ -69,6 +69,7 @@ const (
 	blockDev   = "blockdev"
 	tapDev     = "tap"
 	netNS      = "netns"
+	virtiofs   = "virtiofs"
 )
 
 const (
@@ -92,15 +93,15 @@ func randomUnixSockAddr() (string, error) {
 	// Make a temp file and delete to "reserve" a unique name for the unix socket
 	f, err := ioutil.TempFile("", "")
 	if err != nil {
-		return "", errors.Wrap(err, "failed to create temp file for unix socket")
+		return "", fmt.Errorf("failed to create temp file for unix socket: %w", err)
 	}
 
 	if err := f.Close(); err != nil {
-		return "", errors.Wrap(err, "failed to close temp file")
+		return "", fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	if err := os.Remove(f.Name()); err != nil {
-		return "", errors.Wrap(err, "failed to delete temp file to free up name")
+		return "", fmt.Errorf("failed to delete temp file to free up name: %w", err)
 	}
 
 	return f.Name(), nil
@@ -132,7 +133,7 @@ var launchVMCommand = cli.Command{
 		},
 		cli.StringSliceFlag{
 			Name:  blockDev,
-			Usage: "Specifies path(s) to files representing block devices to add to the VM",
+			Usage: "Specifies path to a file representing a block device to add to the VM",
 		},
 		cli.StringFlag{
 			Name:  tapDev,
@@ -142,12 +143,18 @@ var launchVMCommand = cli.Command{
 			Name: netNS,
 			Usage: `Run the VMM in a specific network namespace. A tap<->veth pair will be created
 			in the network namespace if any veth devices exist, and the tap device will subsequently
-			be added to the VM. Traffic will be forwarded between the veth<->tap pair.
-			`,
+			be added to the VM. Traffic will be forwarded between the veth<->tap pair.`,
+		},
+		cli.StringFlag{
+			Name: virtiofs,
+			Usage: `Specifies a tag+path to a directory or file to share into the guest via virtiofs. Must be in the format tag:path.
+			For example:
+
+			myfs:/home`,
 		},
 	},
 	Action: func(clictx *cli.Context) error {
-		kernelArgs := `pci=off brd.rd_nr=0 pmtmr=0 -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -disable-time-sync -loglevel debug`
+		kernelArgs := `panic=-1 pci=off noapic -- -e 1 /bin/vsockexec -e 109 /bin/gcs -loglevel debug -v4 -log-format json -disable-time-sync -loglevel debug`
 		ctx := context.Background()
 
 		builder, err := remotevm.NewUVMBuilder(
@@ -206,6 +213,29 @@ var launchVMCommand = cli.Command{
 			}
 		}
 
+		type vfsMount struct {
+			tag  string
+			path string
+		}
+
+		var vfsmountsToAdd []vfsMount
+		if mount := clictx.String(virtiofs); mount != "" {
+			vfs, ok := builder.(vm.VirtiofsManager)
+			if !ok {
+				return fmt.Errorf("failed to add virtiofs mount: %w", vm.ErrNotSupported)
+			}
+
+			parts := strings.Split(mount, ":")
+			if len(parts) != 2 {
+				return fmt.Errorf("invalid virtiofs tag:path passed: %s", mount)
+			}
+			tag, root := parts[0], parts[1]
+			if err := vfs.SetVirtiofsMount(tag, root); err != nil {
+				return err
+			}
+			vfsmountsToAdd = append(vfsmountsToAdd, vfsMount{tag, "/run/mounts/m2"})
+		}
+
 		vmsock := builder.(vm.HybridVMSocketManager)
 		udsPath, err := randomUnixSockAddr()
 		if err != nil {
@@ -220,7 +250,7 @@ var launchVMCommand = cli.Command{
 				return err
 			}
 
-			fmt.Printf("\nAdapter properties: %+v\n", ep.Properties())
+			log.G(ctx).Info("Adapter properties: %+v\n", ep.Properties())
 			opts = append(opts, remotevm.WithNetWorkNamespace(ns))
 		}
 
@@ -246,7 +276,7 @@ var launchVMCommand = cli.Command{
 		if blockDevs := clictx.StringSlice(blockDev); blockDevs != nil {
 			scsi, ok := remoteVM.(vm.SCSIManager)
 			if !ok {
-				return vm.ErrNotSupported
+				return fmt.Errorf("failed to add block device: %w", vm.ErrNotSupported)
 			}
 			for i, blockDev := range blockDevs {
 				guestReq := guestrequest.ModificationRequest{
@@ -266,6 +296,22 @@ var launchVMCommand = cli.Command{
 				if err := gc.Modify(ctx, guestReq); err != nil {
 					return fmt.Errorf("failed to make guest request to add scsi disk: %w", err)
 				}
+			}
+		}
+
+		for _, mount := range vfsmountsToAdd {
+			guestReq := guestrequest.ModificationRequest{
+				ResourceType: guestresource.ResourceTypeVirtiofs,
+				RequestType:  guestrequest.RequestTypeAdd,
+			}
+
+			guestReq.Settings = guestresource.VirtiofsMappedDir{
+				Source:    mount.tag,
+				MountPath: mount.path,
+			}
+
+			if err := gc.Modify(ctx, guestReq); err != nil {
+				return fmt.Errorf("failed to make guest request to add virtiofs mount: %w", err)
 			}
 		}
 

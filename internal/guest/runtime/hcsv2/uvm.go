@@ -367,6 +367,8 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 		return modifyCombinedLayers(ctx, req.RequestType, req.Settings.(*guestresource.LCOWCombinedLayers), h.securityPolicyEnforcer)
 	case guestresource.ResourceTypeNetwork:
 		return modifyNetwork(ctx, req.RequestType, req.Settings.(*guestresource.LCOWNetworkAdapter))
+	case guestresource.ResourceTypeVirtiofs:
+		return modifyVirtiofsMount(ctx, req.RequestType, req.Settings.(*guestresource.VirtiofsMappedDir))
 	case guestresource.ResourceTypeVPCIDevice:
 		return modifyMappedVPCIDevice(ctx, req.RequestType, req.Settings.(*guestresource.LCOWMappedVPCIDevice))
 	case guestresource.ResourceTypeContainerConstraints:
@@ -516,6 +518,17 @@ func (h *Host) GetExternalProcess(pid int) (Process, error) {
 
 func newInvalidRequestTypeError(rt guestrequest.RequestType) error {
 	return errors.Errorf("the RequestType %q is not supported", rt)
+}
+
+func modifyVirtiofsMount(ctx context.Context, rt guestrequest.RequestType, vfs *guestresource.VirtiofsMappedDir) error {
+	switch rt {
+	case guestrequest.RequestTypeAdd:
+		return storage.Mount(ctx, vfs.Source, vfs.MountPath, "virtiofs", vfs.Options, vfs.Flags)
+	case guestrequest.RequestTypeRemove:
+		return storage.UnmountPath(ctx, vfs.MountPath, true)
+	default:
+		return newInvalidRequestTypeError(rt)
+	}
 }
 
 func modifyMappedVirtualDisk(ctx context.Context, rt guestrequest.RequestType, mvd *guestresource.LCOWMappedVirtualDisk, securityPolicy securitypolicy.SecurityPolicyEnforcer) (err error) {

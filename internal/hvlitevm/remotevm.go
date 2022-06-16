@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -38,7 +40,11 @@ type UtilityVM struct {
 	udsPath              string
 	endpoints            map[string]remotevm.Endpoint
 	netNamespace         string
-	mountCounter         uint64
+	sharedFSPath         string
+	// Must be accessed atomically. Prevent mounting the shared
+	// virtiofs mount more than once.
+	sharedFSMounted *uint32
+	mountCounter    uint64
 }
 
 func (uvm *UtilityVM) UVMMountCounter() uint64 {
@@ -58,9 +64,16 @@ func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
 		return nil, err
 	}
 
-	// TODO katiewasnothere: we should probably stat these files
 	kernelFile := filepath.Join(opts.BootFilesPath, opts.KernelFile)
 	initrdPath := filepath.Join(opts.BootFilesPath, opts.InitrdPath)
+
+	if _, err := os.Stat(kernelFile); err != nil {
+		return nil, fmt.Errorf("failed to find kernel at %q: %w", kernelFile, err)
+	}
+
+	if _, err := os.Stat(initrdPath); err != nil {
+		return nil, fmt.Errorf("failed to find initrd at %q: %w", initrdPath, err)
+	}
 
 	kernelArgs := `pci=off brd.rd_nr=0 pmtmr=0 -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -disable-time-sync -loglevel debug`
 	boot := builder.(vm.BootManager)
@@ -99,7 +112,7 @@ func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
 
 	endpoints := make(map[string]remotevm.Endpoint)
 	networkNamspace := getNetworkNamespace(opts.OCISpec)
-	log.G(ctx).WithField("network namesoace", networkNamspace).Info("in pod create")
+	log.G(ctx).WithField("network namespace", networkNamspace).Info("in pod create")
 	endpoint, err := remotevm.InitialNetSetup(ctx, networkNamspace, builder)
 	if err != nil {
 		return nil, err
@@ -110,13 +123,21 @@ func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
 	netNsOpt := remotevm.WithNetWorkNamespace(netNSClean)
 	endpoints[endpoint.Name()] = endpoint
 
+	// Should have a shim config to disable this. For now always set this up.
+	sharedFSPath, err := setupVirtiofs(ctx, opts.ID, builder)
+	if err != nil {
+		return nil, err
+	}
+
 	vmCreateOpts := []vm.CreateOpt{remotevm.WithIgnoreSupported(), netNsOpt}
 	system, err := builder.Create(ctx, vmCreateOpts)
 	if err != nil {
 		return nil, err
 	}
 	return &UtilityVM{
+		ID:                   system.ID(),
 		System:               system,
+		sharedFSPath:         sharedFSPath,
 		udsPath:              udsPath,
 		outputProcessingDone: make(chan struct{}),
 		endpoints:            endpoints,
@@ -211,7 +232,6 @@ func (uvm *UtilityVM) Start(ctx context.Context) error {
 	}
 	log.G(ctx).Info("Accepted GCS connection")
 
-	var initGuestState *gcs.InitialGuestState
 	// Start the GCS protocol.
 	gcc := &gcs.GuestConnectionConfig{
 		Conn: conn,
@@ -219,7 +239,6 @@ func (uvm *UtilityVM) Start(ctx context.Context) error {
 		IoListen: func(port uint32) (net.Listener, error) {
 			return listenHybridVsock(uvm.udsPath, port)
 		},
-		InitGuestState: initGuestState,
 	}
 	guestConnection, err := gcc.Connect(ctx, true)
 	if err != nil {
@@ -357,8 +376,7 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 		return nil, fmt.Errorf("failed to make guest request to add scsi disk: %w", err)
 	}
 
-	lcolRootInUVM := fmt.Sprintf(guestpath.LCOWRootPrefixInUVM+"/%s", id)
-
+	lcolRootInUVM := path.Join(guestpath.LCOWRootPrefixInUVM, id)
 	layers := []hcsschema.Layer{}
 	for _, l := range uvmLayerPaths {
 		layers = append(layers, hcsschema.Layer{Path: l})
@@ -384,11 +402,18 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 
 	mounts := []specs.Mount{}
 	for _, m := range spec.Mounts {
-		if m.Destination != "/dev/shm" && m.Destination != "/etc/resolv.conf" {
+		if m.Destination != "/dev/shm" {
 			mounts = append(mounts, m)
 		}
 	}
 	spec.Mounts = mounts
+
+	// Mounts are handled by binding in the mounts requested into the virtiofs mount that was shared on Create. Then the OCI spec
+	// is updated to search in this new location in the guest. If the virtiofs mount hasn't been mounted in the guest yet this
+	// call will do so.
+	if err := uvm.setupMounts(ctx, id, spec); err != nil {
+		return nil, fmt.Errorf("failed to setup mounts for container %s: %w", id, err)
+	}
 
 	containerSettings := &linuxHostedSystem{
 		SchemaVersion:    &hcsschema.Version{Major: 2, Minor: 1},
@@ -398,7 +423,7 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, spec *spec
 
 	c, err := uvm.GuestConnection.CreateContainer(ctx, id, containerSettings)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create container %s: %s", id, err)
+		return nil, fmt.Errorf("failed to create container %s: %w", id, err)
 	}
 	return c, nil
 }
