@@ -43,7 +43,7 @@ type UtilityVM struct {
 	sharedFSPath         string
 	// Must be accessed atomically. Prevent mounting the shared
 	// virtiofs mount more than once.
-	sharedFSMounted *uint32
+	sharedFSMounted uint32
 	mountCounter    uint64
 }
 
@@ -75,7 +75,7 @@ func Create(ctx context.Context, opts *Options) (*UtilityVM, error) {
 		return nil, fmt.Errorf("failed to find initrd at %q: %w", initrdPath, err)
 	}
 
-	kernelArgs := `pci=off brd.rd_nr=0 pmtmr=0 -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -disable-time-sync -loglevel debug`
+	kernelArgs := `pci=off -- -e 1 /bin/vsockexec -e 109 /bin/gcs -v4 -log-format json -disable-time-sync -loglevel debug`
 	boot := builder.(vm.BootManager)
 	if err := boot.SetLinuxKernelDirectBoot(
 		kernelFile,
