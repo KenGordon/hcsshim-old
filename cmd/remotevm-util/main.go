@@ -154,7 +154,7 @@ var launchVMCommand = cli.Command{
 		},
 	},
 	Action: func(clictx *cli.Context) error {
-		kernelArgs := `panic=-1 pci=off noapic -- -e 1 /bin/vsockexec -e 109 /bin/gcs -loglevel debug -v4 -log-format json -disable-time-sync -loglevel debug`
+		kernelArgs := `panic=-1 pci=off -- -e 1 /bin/vsockexec -e 109 /bin/gcs -loglevel debug -v4 -log-format json -disable-time-sync -loglevel debug`
 		ctx := context.Background()
 
 		builder, err := remotevm.NewUVMBuilder(
