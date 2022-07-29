@@ -1,6 +1,14 @@
 trigger:
   - master
 
+parameters:
+  - name: TrueValue
+    type: boolean
+    default: true
+  - name: FalseValue
+    type: boolean
+    default: false
+
 variables:
   WindowsContainerImage: cdpxwin1809.azurecr.io/global/vse2019:latest
   LinuxContainerImage: cdpxa0712bf275644e58a9d28a8053e650ba00.azurecr.io/official/containerplatform/linux/golang:ms-1.17.9
@@ -27,4 +35,18 @@ extends:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
         suppressionSet: default
     stages:
+      - stage: bool_params
+        jobs:
+          - job: bool_param
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: $(Build.StagingDirectory)
+            steps:
+              - ${{ if parameters.TrueValue }}:
+                  - script: |
+                      echo "it's true"
+              - ${{ if not(parameters.FalseValue) }}:
+                  - script: |
+                      echo "it's false"
       - template: shared-build-stages.yml@self
