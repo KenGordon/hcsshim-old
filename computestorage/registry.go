@@ -51,16 +51,17 @@ func setDebugOn(storePath string) error {
 	if err := bcdExec(storePath, "/set", "{default}", "testsigning", "on"); err != nil {
 		return err
 	}
-	if err := bcdExec(storePath, "/set", "{default}", "bootdebug", "on"); err != nil {
-		return err
-	}
-	if err := bcdExec(storePath, "/set", "{bootmgr}", "bootdebug", "on"); err != nil {
-		return err
-	}
-	if err := bcdExec(storePath, "/dbgsettings", "SERIAL", "DEBUGPORT:1", "BAUDRATE:115200"); err != nil {
-		return err
-	}
-	return bcdExec(storePath, "/set", "{default}", "debug", "on")
+	// if err := bcdExec(storePath, "/set", "{default}", "bootdebug", "on"); err != nil {
+	// 	return err
+	// }
+	// if err := bcdExec(storePath, "/set", "{bootmgr}", "bootdebug", "on"); err != nil {
+	// 	return err
+	// }
+	// if err := bcdExec(storePath, "/dbgsettings", "SERIAL", "DEBUGPORT:1", "BAUDRATE:115200"); err != nil {
+	// 	return err
+	// }
+	// return bcdExec(storePath, "/set", "{default}", "debug", "on")
+	return nil
 }
 
 // updateBcdStoreForBoot Updates the bcd store at path `storePath` to boot with the disk
