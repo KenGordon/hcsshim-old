@@ -58,6 +58,6 @@ require (
 )
 
 replace (
-	github.com/containerd/containerd => ../containerd
+	github.com/containerd/containerd => dev.azure.com/msazure/ContainerPlatform/_git/containerd.containerd.git v1.2.1-0.20220723001311-77eb12ac477a
 	google.golang.org/genproto => google.golang.org/genproto v0.0.0-20200224152610-e50cd9704f63
 )
