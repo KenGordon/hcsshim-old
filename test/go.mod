@@ -61,6 +61,6 @@ require (
 
 replace (
 	github.com/Microsoft/hcsshim => ../
-	github.com/containerd/containerd => ../../containerd
+	github.com/containerd/containerd => dev.azure.com/msazure/ContainerPlatform/_git/containerd.containerd.git v1.2.1-0.20220812045540-14ee6f093fba
 	google.golang.org/genproto => google.golang.org/genproto v0.0.0-20200224152610-e50cd9704f63
 )
