@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	input      = flag.String("i", "", "input file")
+	input      = flag.String("i", "", "input file(s), comma separated")
 	output     = flag.String("o", "", "output file")
 	overlay    = flag.Bool("overlay", false, "produce overlayfs-compatible layer image")
 	vhd        = flag.Bool("vhd", false, "add a VHD footer to the end of the image")
@@ -26,7 +26,7 @@ func main() {
 	}
 
 	err := func() (err error) {
-		in := os.Stdin
+		in := os.Stdin // TODO katiewasnothere: fix this later
 		if *input != "" {
 			in, err = os.Open(*input)
 			if err != nil {

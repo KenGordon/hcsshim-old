@@ -97,6 +97,7 @@ const (
 	inodeLostAndFound = inodeFirst
 
 	BlockSize               = 4096
+	BlockSizeInBytes        = BlockSize / 8
 	blocksPerGroup          = BlockSize * 8
 	inodeSize               = 256
 	maxInodesPerGroup       = BlockSize * 8 // Limited by the inode bitmap
@@ -740,6 +741,11 @@ func (w *Writer) block() uint32 {
 	return uint32(w.pos / BlockSize)
 }
 
+// TODO katiewasnothere helper to get the end position of an ext4 partition in bytes
+func (w *Writer) Position() uint64 {
+	return uint64(w.pos)
+}
+
 func (w *Writer) seekBlock(block uint32) {
 	w.pos = int64(block) * BlockSize
 	if w.err != nil {
@@ -922,6 +928,7 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 	w.startInode("", dir, 0x7fffffffffffffff)
 	left := BlockSize
 	finishBlock := func() error {
+		// katiewasnothere: finish block by making a directory entry with just zeros
 		if left > 0 {
 			e := format.DirectoryEntry{
 				RecordLength: uint16(left),
@@ -944,12 +951,16 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 	}
 
 	writeEntry := func(ino format.InodeNumber, name string) error {
-		rlb := directoryEntrySize + len(name)
-		rl := (rlb + 3) & ^3
+		rlb := directoryEntrySize + len(name) // katiewasnothere: record length in bytes
+		rl := (rlb + 3) & ^3                  // katiewasnothere: record length aligned? to be divisible by 4 bytes
 		if left < rl+12 {
+			// katiewasnothere: if there isn't enough space left for this directory,
+			// create a directory entry for the rest of the block that's
+			// zero'd out,
 			if err := finishBlock(); err != nil {
 				return err
 			}
+			// katiewasnothere: now we're starting a new inode
 		}
 		e := format.DirectoryEntry{
 			Inode:        ino,
@@ -957,25 +968,31 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 			NameLength:   uint8(len(name)),
 			FileType:     modeToFileType(w.getInode(ino).Mode),
 		}
+		// katiewasnothere: write the directory entry as binary representation
 		err := binary.Write(w, binary.LittleEndian, e)
 		if err != nil {
 			return err
 		}
+		// katiewasnothere: write the name of the directory immediately after
 		_, err = w.Write([]byte(name))
 		if err != nil {
 			return err
 		}
 		var zero [4]byte
+		// katiewasnothere: zero out the space left needed to align the entry
 		_, err = w.Write(zero[:rl-rlb])
 		if err != nil {
 			return err
 		}
+		// katiewasnothere: calculate space left on this block
 		left -= rl
 		return nil
 	}
+	// katiewasnothere: write entry for the directory
 	if err := writeEntry(dir.Number, "."); err != nil {
 		return err
 	}
+	// katiewasnothere: write entry for the parent directory
 	if err := writeEntry(parent.Number, ".."); err != nil {
 		return err
 	}
@@ -997,10 +1014,13 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 
 	for _, name := range children {
 		child := dir.Children[name]
+		// katiewasnothere: write the children entries
 		if err := writeEntry(child.Number, name); err != nil {
 			return err
 		}
 	}
+	// katiewasnothere: finish the current block with zeros when we're done
+	// with writing children entries
 	if err := finishBlock(); err != nil {
 		return err
 	}
@@ -1009,6 +1029,9 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 	return nil
 }
 
+// katiewasnothere:
+// helper function to write the current directory then recursively
+// write children directory entries.
 func (w *Writer) writeDirectoryRecursive(dir, parent *inode) error {
 	if err := w.writeDirectory(dir, parent); err != nil {
 		return err
@@ -1195,6 +1218,7 @@ func (w *Writer) Close() error {
 		return err
 	}
 	root := w.root()
+	// katiewasnothere: writes all directories recursively starting at the root
 	if err := w.writeDirectoryRecursive(root, root); err != nil {
 		return err
 	}
@@ -1204,7 +1228,7 @@ func (w *Writer) Close() error {
 	}
 
 	// Write the inode table
-	inodeTableOffset := w.block()
+	inodeTableOffset := w.block() // katiewasnothere: get the number of blocks we've written
 	groups, inodesPerGroup := bestGroupCount(inodeTableOffset, uint32(len(w.inodes)))
 	err := w.writeInodeTable(groups * inodesPerGroup * inodeSize)
 	if err != nil {
@@ -1343,6 +1367,6 @@ func (w *Writer) Close() error {
 	if _, err := w.write(blk[:]); err != nil {
 		return err
 	}
-	w.seekBlock(diskSize)
+	w.seekBlock(diskSize) // TODO katiewasnothere: why do we do this??? how do we get the size???
 	return w.err
 }
