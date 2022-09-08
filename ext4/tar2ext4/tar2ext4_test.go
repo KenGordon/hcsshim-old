@@ -294,7 +294,7 @@ func Test_GPT(t *testing.T) {
 	}
 
 	opts := []Option{AppendVhdFooter, ConvertWhiteout}
-	tmpVhdPath := filepath.Join(os.TempDir(), "test-vhd.vhdx")
+	tmpVhdPath := filepath.Join(os.TempDir(), "test-vhd.vhd")
 	layerVhd, err := os.Create(tmpVhdPath)
 	if err != nil {
 		t.Fatalf("failed to create output VHD: %s", err)
@@ -305,15 +305,34 @@ func Test_GPT(t *testing.T) {
 		t.Fatalf("failed to convert tar to layer vhd: %s", err)
 	}
 
-	// read content
-	/*if _, err := layerVhd.Seek(0, 0); err != nil {
-		t.Fatalf("failed to seek file: %s", err)
-	}
-	content, err := io.ReadAll(layerVhd)
+	// primary header is in lba 1
+	header, err := ReadGPTHeader(layerVhd, 1)
 	if err != nil {
-		t.Fatalf("failed to read file: %s", err)
+		t.Fatalf("failed to read header from tar file %v", err)
 	}
+	t.Logf("header was read as: %v", header)
 
-	t.Log(content)*/
+	altHeader, err := ReadGPTHeader(layerVhd, header.AlternateLBA)
+	if err != nil {
+		t.Fatalf("failed to read header from tar file %v", err)
+	}
+	t.Logf("alt header was read as: %v", altHeader)
 
+	entryArray, err := ReadGPTPartitionArray(layerVhd, header.PartitionEntryLBA, header.NumberOfPartitionEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("entry array read is: %v", entryArray)
+
+	altEntryArray, err := ReadGPTPartitionArray(layerVhd, altHeader.PartitionEntryLBA, altHeader.NumberOfPartitionEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("alt entry array read is: %v", altEntryArray)
+
+	pMBR, err := ReadPMBR(layerVhd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("pMBR is: %v", pMBR)
 }

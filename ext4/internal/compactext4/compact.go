@@ -23,7 +23,7 @@ type Writer struct {
 	inodes               []*inode
 	curName              string
 	curInode             *inode
-	pos                  int64
+	pos                  int64 // TODO katiewasnothere: this is in bytes
 	dataWritten, dataMax int64
 	err                  error
 	initialized          bool
@@ -96,8 +96,8 @@ const (
 	inodeFirst        = 11
 	inodeLostAndFound = inodeFirst
 
-	BlockSize               = 4096
-	BlockSizeInBytes        = BlockSize / 8
+	BlockSize               = 4096 // TODO katiewasnothere: this is the PHYSICAL block size, different than the logical block size
+	BlockSizeLogical        = 512
 	blocksPerGroup          = BlockSize * 8
 	inodeSize               = 256
 	maxInodesPerGroup       = BlockSize * 8 // Limited by the inode bitmap
@@ -339,7 +339,7 @@ func (w *Writer) writeXattrs(inode *inode, state *xattrState) error {
 		binary.LittleEndian.PutUint32(b[8:], 1)                       // Blocks
 		putXattrs(state.block, b[32:], 32)
 
-		orig := w.block()
+		orig := w.Block()
 		if inode.XattrBlock == 0 {
 			inode.XattrBlock = orig
 			inode.BlockCount++
@@ -371,7 +371,7 @@ func (w *Writer) write(b []byte) (int, error) {
 	return n, err
 }
 
-func (w *Writer) zero(n int64) (int64, error) {
+func (w *Writer) Zero(n int64) (int64, error) {
 	if w.err != nil {
 		return 0, w.err
 	}
@@ -681,7 +681,7 @@ func (w *Writer) Stat(name string) (*File, error) {
 	f.Xattrs = make(map[string][]byte)
 	if node.XattrBlock != 0 || len(node.XattrInline) != 0 {
 		if node.XattrBlock != 0 {
-			orig := w.block()
+			orig := w.Block()
 			w.seekBlock(node.XattrBlock)
 			if w.err != nil {
 				return nil, w.err
@@ -737,11 +737,11 @@ func (w *Writer) startInode(name string, inode *inode, size int64) {
 	w.dataMax = size
 }
 
-func (w *Writer) block() uint32 {
+func (w *Writer) Block() uint32 {
 	return uint32(w.pos / BlockSize)
 }
 
-// TODO katiewasnothere helper to get the end position of an ext4 partition in bytes
+// TODO katiewasnothere helper to get the end position of an ext4 partition in bits
 func (w *Writer) Position() uint64 {
 	return uint64(w.pos)
 }
@@ -758,10 +758,10 @@ func (w *Writer) seekBlock(block uint32) {
 	_, w.err = w.f.Seek(w.pos, io.SeekStart)
 }
 
-func (w *Writer) nextBlock() {
+func (w *Writer) NextBlock() {
 	if w.pos%BlockSize != 0 {
 		// Simplify callers; w.err is updated on failure.
-		_, _ = w.zero(BlockSize - w.pos%BlockSize)
+		_, _ = w.Zero(BlockSize - w.pos%BlockSize)
 	}
 }
 
@@ -792,10 +792,10 @@ func (w *Writer) writeExtents(inode *inode) error {
 	if start%BlockSize != 0 {
 		panic("unaligned")
 	}
-	w.nextBlock()
+	w.NextBlock()
 
 	startBlock := uint32(start / BlockSize)
-	blocks := w.block() - startBlock
+	blocks := w.Block() - startBlock
 	usedBlocks := blocks
 
 	const extentNodeSize = 12
@@ -831,7 +831,7 @@ func (w *Writer) writeExtents(inode *inode) error {
 		for i := uint32(0); i < extentBlocks; i++ {
 			root.nodes[i] = format.ExtentIndexNode{
 				Block:   i * extentsPerBlock * maxBlocksPerExtent,
-				LeafLow: w.block(),
+				LeafLow: w.Block(),
 			}
 			extentsInBlock := extents - i*extentBlocks
 			if extentsInBlock > extentsPerBlock {
@@ -1118,7 +1118,7 @@ func (w *Writer) writeInodeTable(tableSize uint32) error {
 		}
 	}
 	rest := tableSize - uint32(len(w.inodes)*inodeSize)
-	if _, err := w.zero(int64(rest)); err != nil {
+	if _, err := w.Zero(int64(rest)); err != nil {
 		return err
 	}
 	return nil
@@ -1228,7 +1228,7 @@ func (w *Writer) Close() error {
 	}
 
 	// Write the inode table
-	inodeTableOffset := w.block() // katiewasnothere: get the number of blocks we've written
+	inodeTableOffset := w.Block() // katiewasnothere: get the number of blocks we've written
 	groups, inodesPerGroup := bestGroupCount(inodeTableOffset, uint32(len(w.inodes)))
 	err := w.writeInodeTable(groups * inodesPerGroup * inodeSize)
 	if err != nil {
@@ -1236,7 +1236,7 @@ func (w *Writer) Close() error {
 	}
 
 	// Write the bitmaps.
-	bitmapOffset := w.block()
+	bitmapOffset := w.Block()
 	bitmapSize := groups * 2
 	validDataSize := bitmapOffset + bitmapSize
 	diskSize := validDataSize
@@ -1315,7 +1315,7 @@ func (w *Writer) Close() error {
 	}
 
 	// Zero up to the disk size.
-	_, err = w.zero(int64(diskSize-bitmapOffset-bitmapSize) * BlockSize)
+	_, err = w.Zero(int64(diskSize-bitmapOffset-bitmapSize) * BlockSize)
 	if err != nil {
 		return err
 	}

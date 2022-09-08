@@ -15,14 +15,14 @@ var (
 )
 
 // katiewasnothere: little endian
-// ProtectiveMBR is 512 bytes, which is == BlockSize
+// ProtectiveMBR is 512 bytes, which is == BlockSizeLogical
 type ProtectiveMBR struct {
 	BootCode               [440]byte       // 440 bytes
 	UniqueMBRDiskSignature uint32          // 4 bytes, unused set to zero
 	Unknown                uint16          // 2 bytes, unused set to zero
 	PartitionRecord        [4]PartitionMBR // 16*4 bytes, array of four MBR parititions, one actual record and 3 records set to zero
 	Signature              uint16          // 2 bytes, set to 0xAA55
-	// Reserved                               // rest of the logical block if any
+	// Reserved               [3584]byte      // rest of the logical block if any
 }
 
 // PartitionMBR is 16 bytes
@@ -38,7 +38,7 @@ type PartitionMBR struct {
 // GPT info: GPT primary table must be in LBA 1 (aka the second logical block) and the
 // secondary (alternate) table must be in the last LBA of the disk
 type Header struct {
-	Signature                [8]byte   // 8 bytes
+	Signature                uint64    // 8 bytes
 	Revision                 uint32    // 4 bytes, 0x00010000
 	HeaderSize               uint32    // 4 bytes, must be greater than or equal to 92 and must be less than or equal to the logical block size
 	HeaderCRC32              uint32    // 4 bytes, CRC32 checksum for the GPT header structure. Computed by setting this to zer0, and computing the 32 bit crc for headersize in bytes
