@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
@@ -110,6 +111,10 @@ func main() {
 			Name:  "input,i",
 			Usage: "input file(s)",
 		},
+		cli.BoolFlag{
+			Name:  "gpt",
+			Usage: "indicates if this disk should be produced as a gpt disk",
+		},
 	}
 	app.Action = func(cliCtx *cli.Context) (err error) {
 		defer func() {
@@ -146,21 +151,24 @@ func main() {
 		if cliCtx.Bool("inline") {
 			opts = append(opts, tar2ext4.InlineData)
 		}
-		if len(inputs) == 1 {
-			err = tar2ext4.Convert(inputs[0], out, opts...)
-			if err != nil {
+
+		if cliCtx.Bool("gpt") {
+			if err = tar2ext4.ConvertMultiple(inputs, out, opts...); err != nil {
 				return err
+			}
+			// Exhaust all tar streams used.
+
+			for _, r := range inputs {
+				_, _ = io.Copy(ioutil.Discard, r)
 			}
 		} else {
-			err = tar2ext4.ConvertMultiple(inputs, out, opts...)
-			if err != nil {
+			if err = tar2ext4.Convert(inputs[0], out, opts...); err != nil {
 				return err
 			}
+			// Exhaust the tar stream.
+			_, _ = io.Copy(ioutil.Discard, inputs[0])
 		}
 
-		// Exhaust the tar stream.
-		// TODO katiewasnothere: do we need this?
-		// _, _ = io.Copy(ioutil.Discard, in)
 		return nil
 	}
 	if err := app.Run(os.Args); err != nil {
@@ -200,6 +208,14 @@ var readGPTCommand = cli.Command{
 		cli.BoolFlag{
 			Name:  "all",
 			Usage: "read all bytes",
+		},
+		cli.Uint64Flag{
+			Name:  "partition",
+			Usage: "partition to print",
+		},
+		cli.Uint64Flag{
+			Name:  "partition-sb",
+			Usage: "superblock of partition to print",
 		},
 	},
 	Action: func(cliCtx *cli.Context) error {
@@ -275,6 +291,41 @@ var readGPTCommand = cli.Command{
 				resultAsString += fmt.Sprintf(" %x", b)
 			}
 			log.G(context.Background()).WithField("byte", resultAsString).Infof("file all content")
+
+		}
+
+		if cliCtx.Uint64("partition") != 0 {
+			partitionIndex := cliCtx.Uint64("partition")
+			header, err := tar2ext4.ReadGPTHeader(inFile, 1)
+			if err != nil {
+				return err
+			}
+			entry, err := tar2ext4.ReadGPTPartitionArray(inFile, header.PartitionEntryLBA, header.NumberOfPartitionEntries)
+			if err != nil {
+				return err
+			}
+			partitionContent, err := tar2ext4.ReadPartitionRaw(inFile, entry[partitionIndex-1].StartingLBA, entry[partitionIndex-1].EndingLBA)
+			if err != nil {
+				return err
+			}
+			log.G(context.Background()).WithField("partition", partitionContent).Infof("content of partition %v", partitionIndex)
+		}
+
+		if cliCtx.Uint64("partition-sb") != 0 {
+			partitionIndex := cliCtx.Uint64("partition-sb")
+			header, err := tar2ext4.ReadGPTHeader(inFile, 1)
+			if err != nil {
+				return err
+			}
+			entry, err := tar2ext4.ReadGPTPartitionArray(inFile, header.PartitionEntryLBA, header.NumberOfPartitionEntries)
+			if err != nil {
+				return err
+			}
+			sb, err := tar2ext4.ReadExt4SuperBlockFromPartition(inFile.Name(), int64(entry[partitionIndex-1].StartingLBA))
+			if err != nil {
+				return err
+			}
+			log.G(context.Background()).WithField("partition-sb", sb).Infof("content of partition %v", partitionIndex)
 
 		}
 		return nil

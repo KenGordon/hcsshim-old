@@ -335,4 +335,15 @@ func Test_GPT(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("pMBR is: %v", pMBR)
+
+	_, err = layerVhd.Seek(0, io.SeekStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	partitionOne, err := ReadPartitionRaw(layerVhd, entryArray[0].StartingLBA, entryArray[0].EndingLBA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("partition: \n %v", partitionOne)
 }

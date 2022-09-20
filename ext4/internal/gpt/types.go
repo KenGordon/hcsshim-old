@@ -12,6 +12,8 @@ var (
 	SizeOfPMBRInBytes    = binary.Size(ProtectiveMBR{})
 	SizeOfHeaderInBytes  = binary.Size(Header{})
 	SizeOfPartitionEntry = binary.Size(PartitionEntry{})
+
+	HeaderSize = 92
 )
 
 // katiewasnothere: little endian
@@ -22,7 +24,6 @@ type ProtectiveMBR struct {
 	Unknown                uint16          // 2 bytes, unused set to zero
 	PartitionRecord        [4]PartitionMBR // 16*4 bytes, array of four MBR parititions, one actual record and 3 records set to zero
 	Signature              uint16          // 2 bytes, set to 0xAA55
-	// Reserved               [3584]byte      // rest of the logical block if any
 }
 
 // PartitionMBR is 16 bytes

@@ -24,6 +24,7 @@ type Writer struct {
 	curName              string
 	curInode             *inode
 	pos                  int64 // TODO katiewasnothere: this is in bytes
+	startOffset          int64 // katiewasnothere: offset in the underlying writter to write the data to
 	dataWritten, dataMax int64
 	err                  error
 	initialized          bool
@@ -365,12 +366,13 @@ func (w *Writer) write(b []byte) (int, error) {
 		w.err = exceededMaxSizeError{w.maxDiskSize}
 		return 0, w.err
 	}
-	n, err := w.bw.Write(b)
+	n, err := w.bw.Write(b) //TODO katiewasnothere: would this be okay with multi disk?
 	w.pos += int64(n)
 	w.err = err
 	return n, err
 }
 
+// TODO katiewasnothere: does this need to be edited for multi readers?
 func (w *Writer) Zero(n int64) (int64, error) {
 	if w.err != nil {
 		return 0, w.err
@@ -741,13 +743,13 @@ func (w *Writer) Block() uint32 {
 	return uint32(w.pos / BlockSize)
 }
 
-// TODO katiewasnothere helper to get the end position of an ext4 partition in bits
+// TODO katiewasnothere helper to get the end position of an ext4 partition in bytes
 func (w *Writer) Position() uint64 {
 	return uint64(w.pos)
 }
 
 func (w *Writer) seekBlock(block uint32) {
-	w.pos = int64(block) * BlockSize
+	w.pos = int64(block) * BlockSize // TODO katiewasnothere: this won't be right either
 	if w.err != nil {
 		return
 	}
@@ -755,7 +757,7 @@ func (w *Writer) seekBlock(block uint32) {
 	if w.err != nil {
 		return
 	}
-	_, w.err = w.f.Seek(w.pos, io.SeekStart)
+	_, w.err = w.f.Seek(w.startOffset+w.pos, io.SeekStart) // TODO katiewasnothere: this won't be right when we have multiple writters
 }
 
 func (w *Writer) NextBlock() {
@@ -1162,6 +1164,12 @@ func MaximumDiskSize(size int64) Option {
 	}
 }
 
+func StartWritePosition(start int64) Option {
+	return func(w *Writer) {
+		w.startOffset = start
+	}
+}
+
 func (w *Writer) init() error {
 	// Skip the defective block inode.
 	w.inodes = make([]*inode, 1, 32)
@@ -1228,6 +1236,7 @@ func (w *Writer) Close() error {
 	}
 
 	// Write the inode table
+	// TODO katiewasnothere: would this be correct with multi readers
 	inodeTableOffset := w.Block() // katiewasnothere: get the number of blocks we've written
 	groups, inodesPerGroup := bestGroupCount(inodeTableOffset, uint32(len(w.inodes)))
 	err := w.writeInodeTable(groups * inodesPerGroup * inodeSize)
@@ -1236,7 +1245,8 @@ func (w *Writer) Close() error {
 	}
 
 	// Write the bitmaps.
-	bitmapOffset := w.Block()
+	bitmapOffset := w.Block() // TODO katiewasnothere: would this be correct with multi readers
+
 	bitmapSize := groups * 2
 	validDataSize := bitmapOffset + bitmapSize
 	diskSize := validDataSize
