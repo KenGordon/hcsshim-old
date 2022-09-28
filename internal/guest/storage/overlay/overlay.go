@@ -93,6 +93,16 @@ func Mount(ctx context.Context, basePaths []string, upperdirPath, workdirPath, t
 		trace.StringAttribute("target", target),
 		trace.BoolAttribute("readonly", readonly))
 
+	// TODO katiewasnothere: unable to find runmountsm21
+	// Add code to check if basepaths are valid
+	//
+
+	for _, p := range basePaths {
+		if _, err := os.Stat(p); err != nil {
+			logrus.WithField("base path", p).Info("failed to find base path")
+		}
+	}
+
 	// If we got an ENOSPC error on creating any directories, log disk space and inode info for the mount that the directory belongs to get a better
 	// view of the where the problem lies.
 	defer func() {

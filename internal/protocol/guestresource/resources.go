@@ -67,6 +67,7 @@ type LCOWMappedVirtualDisk struct {
 	MountPath  string            `json:"MountPath,omitempty"`
 	Lun        uint8             `json:"Lun,omitempty"`
 	Controller uint8             `json:"Controller,omitempty"`
+	Partitions []int             `json:"Partition,omitempty"` // optional field: if specified, check if the device has a partition with this index
 	ReadOnly   bool              `json:"ReadOnly,omitempty"`
 	Encrypted  bool              `json:"Encrypted,omitempty"`
 	Options    []string          `json:"Options,omitempty"`

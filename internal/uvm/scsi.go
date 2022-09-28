@@ -102,6 +102,10 @@ type addSCSIRequest struct {
 	hostPath string
 	// the path inside the uvm at which this disk should show up. Can be empty.
 	uvmPath string
+
+	// TODO katiewasnothere
+	partitions []int
+
 	// attachmentType is required and `must` be `VirtualDisk` for vhd/vhdx
 	// attachments, `PassThru` for physical disk and `ExtensibleVirtualDisk` for
 	// Extensible virtual disks.
@@ -238,6 +242,7 @@ func (uvm *UtilityVM) RemoveSCSI(ctx context.Context, hostPath string) error {
 				"rootDigest": v.RootDigest,
 			}).Debug("removing SCSI with dm-verity")
 		}
+		//TODO katiewasnothere: temp removing this
 		verity = v
 	}
 
@@ -264,11 +269,13 @@ func (uvm *UtilityVM) RemoveSCSI(ctx context.Context, hostPath string) error {
 				MountPath:  sm.UVMPath, // May be blank in attach-only
 				Lun:        uint8(sm.LUN),
 				Controller: uint8(sm.Controller),
+				Partitions: []int{}, // TODO katiewasnothere: this is temporary
 				VerityInfo: verity,
 			},
 		}
 	}
 
+	log.G(ctx).WithField("settings", scsiModification).Info("scsi modification")
 	if err := uvm.modify(ctx, scsiModification); err != nil {
 		return fmt.Errorf("failed to remove SCSI disk %s from container %s: %s", hostPath, uvm.id, err)
 	}
@@ -373,6 +380,29 @@ func (uvm *UtilityVM) AddSCSIExtensibleVirtualDisk(ctx context.Context, hostPath
 	return uvm.addSCSIActual(ctx, addReq)
 }
 
+func (uvm *UtilityVM) AddSCSIPartitions(
+	ctx context.Context,
+	hostPath string,
+	uvmPath string,
+	partitions []int,
+	readOnly bool,
+	encrypted bool,
+	guestOptions []string,
+	vmAccess VMAccessType,
+) (*SCSIMount, error) {
+	addReq := &addSCSIRequest{
+		hostPath:       hostPath,
+		uvmPath:        uvmPath,
+		partitions:     partitions,
+		attachmentType: "VirtualDisk",
+		readOnly:       readOnly,
+		encrypted:      encrypted,
+		guestOptions:   guestOptions,
+		vmAccess:       vmAccess,
+	}
+	return uvm.addSCSIActual(ctx, addReq)
+}
+
 // addSCSIActual is the implementation behind the external functions AddSCSI,
 // AddSCSIPhysicalDisk, AddSCSIExtensibleVirtualDisk.
 //
@@ -449,6 +479,7 @@ func (uvm *UtilityVM) addSCSIActual(ctx context.Context, addReq *addSCSIRequest)
 				MountPath:  sm.UVMPath,
 				Lun:        uint8(sm.LUN),
 				Controller: uint8(sm.Controller),
+				Partitions: addReq.partitions,
 				ReadOnly:   addReq.readOnly,
 				Encrypted:  addReq.encrypted,
 				Options:    addReq.guestOptions,

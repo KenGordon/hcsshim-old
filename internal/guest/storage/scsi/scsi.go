@@ -26,6 +26,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
+	"github.com/sirupsen/logrus"
 )
 
 // Test dependencies
@@ -93,6 +94,7 @@ func mount(
 	ctx context.Context,
 	controller,
 	lun uint8,
+	partitions []int,
 	target string,
 	readonly bool,
 	encrypted bool,
@@ -165,31 +167,75 @@ func mount(
 		source = encryptedSource
 	}
 
-	for {
-		if err := unixMount(source, target, "ext4", flags, data); err != nil {
-			// The `source` found by controllerLunToName can take some time
-			// before its actually available under `/dev/sd*`. Retry while we
-			// wait for `source` to show up.
-			if err == unix.ENOENT {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-					time.Sleep(10 * time.Millisecond)
-					continue
+	if partitions != nil && len(partitions) != 0 {
+		for _, p := range partitions {
+			index := strconv.Itoa(p)
+			newSource := source + index
+			newTarget := filepath.Join(target, index)
+			if err := osMkdirAll(newTarget, 0700); err != nil {
+				return err
+			}
+			logrus.WithField("new source", newSource).Info("Mounting new source")
+			for {
+				if err := unixMount(newSource, newTarget, "ext4", flags, data); err != nil {
+					// The `source` found by controllerLunToName can take some time
+					// before its actually available under `/dev/sd*`. Retry while we
+					// wait for `source` to show up.
+					logrus.WithField("err", err).Info("Failed to mount source")
+
+					if err == unix.ENOENT {
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						default:
+							time.Sleep(10 * time.Millisecond)
+							continue
+						}
+					}
+					return err
+				}
+				break
+			}
+
+			logrus.WithField("new source", newSource).Info("Mounted new source, about to remount")
+
+			// remount the target to account for propagation flags
+			_, pgFlags, _ := storage.ParseMountOptions(options)
+			if len(pgFlags) != 0 {
+				for _, pg := range pgFlags {
+					if err := unixMount(newTarget, newTarget, "", pg, ""); err != nil {
+						return err
+					}
 				}
 			}
-			return err
 		}
-		break
-	}
-
-	// remount the target to account for propagation flags
-	_, pgFlags, _ := storage.ParseMountOptions(options)
-	if len(pgFlags) != 0 {
-		for _, pg := range pgFlags {
-			if err := unixMount(target, target, "", pg, ""); err != nil {
+	} else {
+		for {
+			if err := unixMount(source, target, "ext4", flags, data); err != nil {
+				// The `source` found by controllerLunToName can take some time
+				// before its actually available under `/dev/sd*`. Retry while we
+				// wait for `source` to show up.
+				if err == unix.ENOENT {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					default:
+						time.Sleep(10 * time.Millisecond)
+						continue
+					}
+				}
 				return err
+			}
+			break
+		}
+
+		// remount the target to account for propagation flags
+		_, pgFlags, _ := storage.ParseMountOptions(options)
+		if len(pgFlags) != 0 {
+			for _, pg := range pgFlags {
+				if err := unixMount(target, target, "", pg, ""); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -203,6 +249,7 @@ func Mount(
 	ctx context.Context,
 	controller,
 	lun uint8,
+	partitions []int,
 	target string,
 	readonly bool,
 	encrypted bool,
@@ -214,7 +261,7 @@ func Mount(
 	if err != nil {
 		return err
 	}
-	return mount(ctx, cNum, lun, target, readonly, encrypted, options, verityInfo, securityPolicy)
+	return mount(ctx, cNum, lun, partitions, target, readonly, encrypted, options, verityInfo, securityPolicy)
 }
 
 // unmount unmounts a SCSI device mounted at `target`.
@@ -224,6 +271,7 @@ func unmount(
 	ctx context.Context,
 	controller,
 	lun uint8,
+	partitions []int,
 	target string,
 	encrypted bool,
 	verityInfo *guestresource.DeviceVerityInfo,
@@ -242,11 +290,22 @@ func unmount(
 		return errors.Wrapf(err, "unmounting scsi controller %d lun %d from  %s denied by policy", controller, lun, target)
 	}
 
-	// Unmount unencrypted device
-	if err := storage.UnmountPath(ctx, target, true); err != nil {
-		return errors.Wrapf(err, "unmount failed: "+target)
+	if partitions != nil && len(partitions) != 0 {
+		for _, p := range partitions {
+			newTarget := filepath.Join(target, strconv.Itoa(p))
+			// Unmount unencrypted device
+			if err := storage.UnmountPath(ctx, newTarget, true); err != nil {
+				return errors.Wrapf(err, "unmount failed: "+newTarget)
+			}
+		}
+	} else {
+		// Unmount unencrypted device
+		if err := storage.UnmountPath(ctx, target, true); err != nil {
+			return errors.Wrapf(err, "unmount failed: "+target)
+		}
 	}
 
+	// TODO katiewasnothere: accomodate the partition here
 	if verityInfo != nil {
 		dmVerityName := fmt.Sprintf(verityDeviceFmt, controller, lun, verityInfo.RootDigest)
 		if err := removeDevice(dmVerityName); err != nil {
@@ -270,6 +329,7 @@ func Unmount(
 	ctx context.Context,
 	controller,
 	lun uint8,
+	partitions []int,
 	target string,
 	encrypted bool,
 	verityInfo *guestresource.DeviceVerityInfo,
@@ -279,7 +339,7 @@ func Unmount(
 	if err != nil {
 		return err
 	}
-	return unmount(ctx, cNum, lun, target, encrypted, verityInfo, securityPolicy)
+	return unmount(ctx, cNum, lun, partitions, target, encrypted, verityInfo, securityPolicy)
 }
 
 // ControllerLunToName finds the `/dev/sd*` path to the SCSI device on
@@ -291,7 +351,8 @@ func ControllerLunToName(ctx context.Context, controller, lun uint8) (_ string, 
 
 	span.AddAttributes(
 		trace.Int64Attribute("controller", int64(controller)),
-		trace.Int64Attribute("lun", int64(lun)))
+		trace.Int64Attribute("lun", int64(lun)),
+	)
 
 	scsiID := fmt.Sprintf("%d:0:0:%d", controller, lun)
 	// Devices matching the given SCSI code should each have a subdirectory
@@ -358,6 +419,10 @@ func unplugDevice(ctx context.Context, controller, lun uint8) (err error) {
 func UnplugDevice(ctx context.Context, controller, lun uint8) (err error) {
 	cNum, err := fetchActualControllerNumber(ctx, controller)
 	if err != nil {
+		// TODO katiewasnothere: temp added this
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 	return unplugDevice(ctx, cNum, lun)

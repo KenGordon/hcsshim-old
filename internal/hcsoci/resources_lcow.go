@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -21,7 +22,23 @@ import (
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/resources"
 	"github.com/Microsoft/hcsshim/internal/uvm"
+	"github.com/Microsoft/hcsshim/pkg/annotations"
 )
+
+func getPartitionsAnnotation(annot map[string]string) []int {
+	partitionsRaw, ok := annot[annotations.LayerFolderPartitions]
+	if !ok || partitionsRaw == "" {
+		return nil
+	}
+	partitions := strings.Split(partitionsRaw, ",")
+	results := make([]int, len(partitions))
+	for i, p := range partitions {
+		// TODO katiewasnothere: ignoring error for now
+		value, _ := strconv.Atoi(p)
+		results[i] = value
+	}
+	return results
+}
 
 func allocateLinuxResources(ctx context.Context, coi *createOptionsInternal, r *resources.Resources, isSandbox bool) error {
 	if coi.Spec.Root == nil {
@@ -30,7 +47,8 @@ func allocateLinuxResources(ctx context.Context, coi *createOptionsInternal, r *
 	containerRootInUVM := r.ContainerRootInUVM()
 	if coi.Spec.Windows != nil && len(coi.Spec.Windows.LayerFolders) > 0 {
 		log.G(ctx).Debug("hcsshim::allocateLinuxResources mounting storage")
-		rootPath, scratchPath, err := layers.MountLCOWLayers(ctx, coi.actualID, coi.Spec.Windows.LayerFolders, containerRootInUVM, "", coi.HostingSystem)
+		partitions := getPartitionsAnnotation(coi.Spec.Annotations)
+		rootPath, scratchPath, err := layers.MountLCOWLayers(ctx, coi.actualID, coi.Spec.Windows.LayerFolders, partitions, containerRootInUVM, "", coi.HostingSystem)
 		if err != nil {
 			return errors.Wrap(err, "failed to mount container storage")
 		}

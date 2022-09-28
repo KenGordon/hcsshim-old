@@ -286,6 +286,8 @@ const (
 	// file share mounts, for hostile multi-tenant environments. See `AnnotationExpansions`
 	// for more information
 	DisableUnsafeOperations = "io.microsoft.disable-unsafe-operations"
+
+	LayerFolderPartitions = "io.microsoft.layerfolder.partitions"
 )
 
 // AnnotationExpansions maps annotations that will be expanded into an array of

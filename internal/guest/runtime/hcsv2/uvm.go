@@ -36,6 +36,7 @@ import (
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
 	"github.com/mattn/go-shellwords"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // UVMContainerID is the ContainerID that will be sent on any prot.MessageBase
@@ -528,15 +529,16 @@ func modifyMappedVirtualDisk(ctx context.Context, rt guestrequest.RequestType, m
 		mountCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 		defer cancel()
 		if mvd.MountPath != "" {
-			return scsi.Mount(mountCtx, mvd.Controller, mvd.Lun, mvd.MountPath, mvd.ReadOnly, mvd.Encrypted, mvd.Options, mvd.VerityInfo, securityPolicy)
+			return scsi.Mount(mountCtx, mvd.Controller, mvd.Lun, mvd.Partitions, mvd.MountPath, mvd.ReadOnly, mvd.Encrypted, mvd.Options, mvd.VerityInfo, securityPolicy)
 		}
 		return nil
 	case guestrequest.RequestTypeRemove:
 		if mvd.MountPath != "" {
-			if err := scsi.Unmount(ctx, mvd.Controller, mvd.Lun, mvd.MountPath, mvd.Encrypted, mvd.VerityInfo, securityPolicy); err != nil {
+			if err := scsi.Unmount(ctx, mvd.Controller, mvd.Lun, mvd.Partitions, mvd.MountPath, mvd.Encrypted, mvd.VerityInfo, securityPolicy); err != nil {
 				return err
 			}
 		}
+		logrus.WithField("finish", mvd).Info("finished unmounting, going to unplug")
 		return scsi.UnplugDevice(ctx, mvd.Controller, mvd.Lun)
 	default:
 		return newInvalidRequestTypeError(rt)
