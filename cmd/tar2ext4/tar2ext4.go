@@ -111,6 +111,14 @@ func main() {
 			Name:  "input,i",
 			Usage: "input file(s)",
 		},
+		cli.StringSliceFlag{
+			Name:  "guid,g",
+			Usage: "guid(s) to use for gpt partitions",
+		},
+		cli.StringFlag{
+			Name:  "disk-guid",
+			Usage: "guid for the resulting gpt disk",
+		},
 		cli.BoolFlag{
 			Name:  "gpt",
 			Usage: "indicates if this disk should be produced as a gpt disk",
@@ -153,7 +161,15 @@ func main() {
 		}
 
 		if cliCtx.Bool("gpt") {
-			if err = tar2ext4.ConvertMultiple(inputs, out, opts...); err != nil {
+			diskGUID := cliCtx.String("disk-guid")
+			if diskGUID == "" {
+				return fmt.Errorf("must provide a disk guid when creating gpt disk")
+			}
+			partitionGUIDs := cliCtx.StringSlice("guid")
+			if len(partitionGUIDs) == 0 {
+				return fmt.Errorf("must provide partition guids when creating gpt disk")
+			}
+			if err = tar2ext4.ConvertMultiple(inputs, out, partitionGUIDs, diskGUID, opts...); err != nil {
 				return err
 			}
 			// Exhaust all tar streams used.

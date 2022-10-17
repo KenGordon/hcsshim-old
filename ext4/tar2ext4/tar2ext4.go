@@ -342,10 +342,13 @@ func findNextLogicalBlock(bytePosition uint64) uint64 {
 }
 
 // Katiewasnothere: Convert overloads the previous Convert by allowing multiple readers
-func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, options ...Option) error {
+func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitionGUIDs []string, diskGUIDString string, options ...Option) error {
 	var p params
 	for _, opt := range options {
 		opt(&p)
+	}
+	if len(partitionGUIDs) != len(multipleReaders) {
+		return fmt.Errorf("must supply a single guid for every input file")
 	}
 	if len(multipleReaders) > 128 {
 		return fmt.Errorf("readers exceeds max number of partitions for a GPT disk: %d", len(multipleReaders))
@@ -378,9 +381,13 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, options 
 
 	// write partitions out and create entries
 	for i, r := range multipleReaders {
-		entryGuid, err := guid.NewV4()
+		/*entryGuid, err := guid.NewV4()
 		if err != nil {
 			return fmt.Errorf("failed to construct unique guid for partition entry")
+		}*/
+		entryGuid, err := guid.FromString(partitionGUIDs[i])
+		if err != nil {
+			return fmt.Errorf("error using supplied guid: %v", err)
 		}
 
 		_, err = w.Seek(int64(startLBA*compactext4.BlockSizeLogical), io.SeekStart)
@@ -441,9 +448,13 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, options 
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
 
-	diskGUID, err := guid.NewV4()
+	/*diskGUID, err := guid.NewV4()
 	if err != nil {
 		return fmt.Errorf("failed to create unique disk guid with %v", err)
+	}*/
+	diskGUID, err := guid.FromString(diskGUIDString)
+	if err != nil {
+		return fmt.Errorf("error using supplied disk guid %v", err)
 	}
 
 	// TODO: need to have written the entries before this point
