@@ -41,9 +41,6 @@ func (uvm *UtilityVM) MountInUVM(ctx context.Context, uvmCimPath string) (_ stri
 	if !strings.HasSuffix(uvmCimPath, ".cim") {
 		return "", fmt.Errorf("invalid cim file path: %s", uvmCimPath)
 	}
-	if !uvm.MountCimSupported() {
-		return "", fmt.Errorf("uvm %s doesn't support mounting cim", uvm.ID())
-	}
 	uvm.cimMountMapLock.Lock()
 	defer uvm.cimMountMapLock.Unlock()
 	if _, ok := uvm.cimMounts[uvmCimPath]; !ok {

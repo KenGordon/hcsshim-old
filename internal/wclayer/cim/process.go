@@ -59,6 +59,7 @@ func processUtilityVMLayer(ctx context.Context, layerPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to mount cim : %s", err)
 	}
+
 	defer func() {
 		// Try to unmount irrespective of errors
 		if uErr := cimfs.Unmount(mountpath); uErr != nil {

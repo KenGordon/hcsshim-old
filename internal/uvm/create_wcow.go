@@ -5,10 +5,8 @@ package uvm
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/go-winio/pkg/guid"
@@ -29,8 +27,6 @@ import (
 	"github.com/Microsoft/hcsshim/internal/wcow"
 	"github.com/Microsoft/hcsshim/osversion"
 )
-
-const cimVsmbShareName = "bootcimdir"
 
 // OptionsWCOW are the set of options passed to CreateWCOW() to create a utility vm.
 type OptionsWCOW struct {
@@ -66,7 +62,7 @@ type OptionsWCOW struct {
 // are as follows:
 // 1. To notify the uvm that this boot should happen directly from a cim:
 // - ControlSet001\Control\HVSI /v WCIFSCIMFSContainerMode /t REG_DWORD /d 0x1
-// - ControlSet001\Control\HVSI /v WCIFSContainerMode /t REG_DWORD /d 0x1
+//
 // 2. We also need to provide the path inside the uvm at which this cim can be
 // accessed. In order to share the cim inside the uvm at boot time we always add a vsmb
 // share by name `$cimVsmbShareName` into the uvm to share the directory which contains
@@ -79,8 +75,6 @@ type OptionsWCOW struct {
 // contains all the uvm related files.
 // - ControlSet001\Control\HVSI /v UvmLayerRelativePath /t REG_SZ /d UtilityVM\\Files\\ (the ending \\ is important)
 func addBootFromCimRegistryChanges(layerFolders []string, reg *hcsschema.RegistryChanges) {
-	cimRelativePath := cimVsmbShareName + "\\" + cimlayer.GetCimNameFromLayer(layerFolders[0])
-
 	regChanges := []hcsschema.RegistryValue{
 		{
 			Key: &hcsschema.RegistryKey{
@@ -91,23 +85,14 @@ func addBootFromCimRegistryChanges(layerFolders []string, reg *hcsschema.Registr
 			Type_:      "DWord",
 			DWordValue: 1,
 		},
-		// {
-		// 	Key: &hcsschema.RegistryKey{
-		// 		Hive: "System",
-		// 		Name: "ControlSet001\\Control\\HVSI",
-		// 	},
-		// 	Name:       "WCIFSContainerMode",
-		// 	Type_:      "DWord",
-		// 	DWordValue: 1,
-		// },
 		{
 			Key: &hcsschema.RegistryKey{
 				Hive: "System",
 				Name: "ControlSet001\\Control\\HVSI",
 			},
-			Name:        "CimRelativePath",
-			Type_:       "String",
-			StringValue: cimRelativePath,
+			Name:       "CimKernelMount",
+			Type_:      "DWord",
+			DWordValue: 1,
 		},
 		{
 			Key: &hcsschema.RegistryKey{
@@ -119,24 +104,7 @@ func addBootFromCimRegistryChanges(layerFolders []string, reg *hcsschema.Registr
 			StringValue: "UtilityVM\\Files\\",
 		},
 	}
-
 	reg.AddValues = append(reg.AddValues, regChanges...)
-}
-
-// getUvmBuildVersion tries to read the `uvmbuildversion` file from the layer directory in order
-// to get the build of the uvm.
-// The file is expected to be present on the base layer i.e layerPaths[len(layerPaths) - 2] layer.
-func getUvmBuildVersion(layerPaths []string) (uint16, error) {
-	buildFilePath := filepath.Join(layerPaths[len(layerPaths)-2], "uvmbuildversion")
-	data, err := ioutil.ReadFile(buildFilePath)
-	if err != nil {
-		return 0, err
-	}
-	ver, err := strconv.ParseUint(string(data), 10, 16)
-	if err != nil {
-		return 0, err
-	}
-	return uint16(ver), nil
 }
 
 // NewDefaultOptionsWCOW creates the default options for a bootable version of
@@ -182,8 +150,23 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uv
 	// UVM rootfs share is readonly.
 	vsmbOpts := uvm.DefaultVSMBOptions(true)
 	vsmbOpts.TakeBackupPrivilege = true
-	if cimlayer.IsCimLayer(opts.LayerFolders[1]) {
-		vsmbOpts.NoDirectmap = !uvm.MountCimSupported()
+	osSmbShare := hcsschema.VirtualSmbShare{
+		Name:    "os",
+		Path:    filepath.Join(uvmFolder, `UtilityVM\Files`),
+		Options: vsmbOpts,
+	}
+
+	bootThis := &hcsschema.UefiBootEntry{
+		DevicePath: `\EFI\Microsoft\Boot\bootmgfw.efi`,
+		DeviceType: "VmbFs",
+	}
+
+	if cimlayer.IsCimLayer(opts.LayerFolders[0]) {
+		// We need to share the directory that contains both cim-layers directory and the layer
+		// directory inside the UVM.
+		osSmbShare.Path = filepath.Dir(uvmFolder)
+		osSmbShare.Options.NoDirectmap = false
+		bootThis.DevicePath = filepath.Join(string(os.PathSeparator), filepath.Base(uvmFolder), `\UtilityVM\Files\EFI\Microsoft\Boot\bootmgfw.efi`)
 	}
 
 	virtualSMB := &hcsschema.VirtualSmb{
@@ -194,17 +177,12 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uv
 		// the physical memory used by the UVM hence setting a high value
 		// shouldn't affect existing workflows.
 		DirectFileMappingInMB: 32768, // Sensible default, but could be a tuning parameter somewhere
-		Shares: []hcsschema.VirtualSmbShare{
-			{
-				Name:    "os",
-				Path:    filepath.Join(uvmFolder, `UtilityVM\Files`),
-				Options: vsmbOpts,
-			},
-		},
+		Shares:                []hcsschema.VirtualSmbShare{osSmbShare},
 	}
-	err = uvm.registerVSMBShare(filepath.Join(uvmFolder, `UtilityVM\Files`), vsmbOpts, "os")
+
+	err = uvm.registerVSMBShare(osSmbShare.Path, vsmbOpts, "os")
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to register VSMB os share at host path: %s", filepath.Join(uvmFolder, `UtilityVM\Files`))
+		return nil, errors.Wrapf(err, "failed to register VSMB os share at host path: %s", osSmbShare.Path)
 	}
 
 	var registryChanges hcsschema.RegistryChanges
@@ -257,21 +235,8 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uv
 		)
 	}
 
-	if cimlayer.IsCimLayer(opts.LayerFolders[1]) && uvm.MountCimSupported() {
-		// If mount cim is supported then we must include a VSMB share in uvm
-		// config that contains the cim which the uvm should use to boot.
-		cimVsmbShare := hcsschema.VirtualSmbShare{
-			Name:    cimVsmbShareName,
-			Path:    cimlayer.GetCimDirFromLayer(opts.LayerFolders[1]),
-			Options: vsmbOpts,
-		}
-		virtualSMB.Shares = append(virtualSMB.Shares, cimVsmbShare)
-		err = uvm.registerVSMBShare(cimlayer.GetCimDirFromLayer(opts.LayerFolders[1]), vsmbOpts, cimVsmbShareName)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to register VSMB share %s for host path %s", cimVsmbShareName, cimlayer.GetCimDirFromLayer(opts.LayerFolders[1]))
-		}
-
-		// enable boot from cim
+	if cimlayer.IsCimLayer(opts.LayerFolders[0]) {
+		// if using cim layers we need to include certain registry keys to enable booting from cim
 		addBootFromCimRegistryChanges(opts.LayerFolders[1:], &registryChanges)
 	}
 
@@ -296,10 +261,7 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uv
 			StopOnReset: true,
 			Chipset: &hcsschema.Chipset{
 				Uefi: &hcsschema.Uefi{
-					BootThis: &hcsschema.UefiBootEntry{
-						DevicePath: `\EFI\Microsoft\Boot\bootmgfw.efi`,
-						DeviceType: "VmbFs",
-					},
+					BootThis: bootThis,
 				},
 			},
 			RegistryChanges: &registryChanges,
@@ -386,11 +348,6 @@ func CreateWCOW(ctx context.Context, opts *OptionsWCOW) (_ *UtilityVM, err error
 		layerFolders:            opts.LayerFolders,
 	}
 
-	uvm.buildVersion, err = getUvmBuildVersion(opts.LayerFolders)
-	if err != nil {
-		return nil, err
-	}
-
 	defer func() {
 		if err != nil {
 			uvm.Close()
@@ -403,12 +360,9 @@ func CreateWCOW(ctx context.Context, opts *OptionsWCOW) (_ *UtilityVM, err error
 
 	var uvmFolder string
 	templateVhdFolder := opts.LayerFolders[len(opts.LayerFolders)-2]
-	if cimlayer.IsCimLayer(opts.LayerFolders[1]) {
-		uvmLayers := []string{opts.LayerFolders[0], opts.LayerFolders[len(opts.LayerFolders)-1]}
-		uvmFolder, err = uvmfolder.LocateUVMFolder(ctx, uvmLayers)
-		if err != nil {
-			return nil, fmt.Errorf("failed to locate utility VM folder from cim layer folders: %s", err)
-		}
+	if cimlayer.IsCimLayer(opts.LayerFolders[0]) {
+		// In case of cimfs the directory containing all the cims should be added as the "os" share.
+		uvmFolder = opts.LayerFolders[0]
 	} else {
 		uvmFolder, err = uvmfolder.LocateUVMFolder(ctx, opts.LayerFolders)
 		if err != nil {
