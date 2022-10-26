@@ -174,7 +174,7 @@ func verifyOptions(ctx context.Context, options interface{}) error {
 		if opts.IsTemplate && opts.FullyPhysicallyBacked {
 			return errors.New("template can not be created from a full physically backed UVM")
 		}
-		if (opts.IsTemplate || opts.IsClone) && cimlayer.IsCimLayer(opts.LayerFolders[1]) {
+		if (opts.IsTemplate || opts.IsClone) && cimlayer.IsCimLayer(opts.LayerFolders[0]) {
 			return errors.New("cloning is not supported with cimfs")
 		}
 	}

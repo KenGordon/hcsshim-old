@@ -28,11 +28,16 @@ func (e *MountError) Error() string {
 	return s
 }
 
+type cimMountInfo struct {
+	cimPath  string
+	refCount uint32
+	volume   string
+}
+
+var mountMapping = make(map[string]*cimMountInfo)
 var mountLock sync.Mutex
 
 func MountWithFlags(cimPath string, mountFlags uint32) (string, error) {
-	mountLock.Lock()
-	defer mountLock.Unlock()
 	layerGUID, err := guid.NewV4()
 	if err != nil {
 		return "", &MountError{Cim: cimPath, Op: "Mount", Err: err}
@@ -53,9 +58,6 @@ func Mount(cimPath string) (string, error) {
 
 // Unmount unmounts the cim at mounted at path `volumePath`.
 func Unmount(volumePath string) error {
-	mountLock.Lock()
-	defer mountLock.Unlock()
-
 	// The path is expected to be in the \\?\Volume{GUID}\ format
 	if volumePath[len(volumePath)-1] != '\\' {
 		volumePath += "\\"
@@ -78,4 +80,60 @@ func Unmount(volumePath string) error {
 	}
 
 	return nil
+}
+
+func MountRefCounted(cimPath string) (string, error) {
+	mountLock.Lock()
+	defer mountLock.Unlock()
+
+	var mountInfo *cimMountInfo
+	var ok bool
+	if mountInfo, ok = mountMapping[cimPath]; !ok {
+		mountInfo = &cimMountInfo{
+			cimPath:  cimPath,
+			refCount: 0,
+		}
+		mountMapping[cimPath] = mountInfo
+
+		mountedVol, err := Mount(cimPath)
+		if err != nil {
+			return "", err
+		}
+		mountInfo.volume = mountedVol
+	}
+
+	mountInfo.refCount += 1
+	return mountInfo.volume, nil
+}
+
+func UnmountRefCounted(cimPath string) error {
+	mountLock.Lock()
+	defer mountLock.Unlock()
+
+	var mountInfo *cimMountInfo
+	var ok bool
+	if mountInfo, ok = mountMapping[cimPath]; !ok {
+		return nil
+	}
+
+	mountInfo.refCount -= 1
+	if mountInfo.refCount == 0 {
+		if err := Unmount(mountInfo.volume); err != nil {
+			return err
+		}
+		delete(mountMapping, cimPath)
+	}
+	return nil
+}
+
+func GetCimMountPath(cimPath string) (string, error) {
+	mountLock.Lock()
+	defer mountLock.Unlock()
+
+	var mountInfo *cimMountInfo
+	var ok bool
+	if mountInfo, ok = mountMapping[cimPath]; !ok {
+		return "", errors.Errorf("cim %s not mounted", cimPath)
+	}
+	return mountInfo.volume, nil
 }

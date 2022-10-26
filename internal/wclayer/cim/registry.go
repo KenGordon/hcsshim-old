@@ -6,12 +6,14 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"unsafe"
 
 	"github.com/Microsoft/hcsshim/internal/cimfs"
 	"github.com/Microsoft/hcsshim/internal/wclayer"
 	"github.com/Microsoft/hcsshim/internal/winapi"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/pkg/errors"
+	"golang.org/x/sys/windows"
 )
 
 // enableCimBoot Opens the SYSTEM registry hive at path `hivePath` in
@@ -24,8 +26,21 @@ import (
 // uvm config doesn't work.
 func enableCimBoot(layerPath, hivePath string) (err error) {
 	dataZero := make([]byte, 4)
+	dataOne := make([]byte, 4)
+	binary.LittleEndian.PutUint32(dataOne, 1)
 	dataFour := make([]byte, 4)
 	binary.LittleEndian.PutUint32(dataFour, 4)
+
+	// bootGUID := []byte("{b890454c-80de-4e98-a7ab-56b74b4fbd0c}")
+	bootGUID, err := windows.UTF16FromString("{b890454c-80de-4e98-a7ab-56b74b4fbd0c}")
+	if err != nil {
+		return fmt.Errorf("failed to encode boot guid to utf16: %w", err)
+	}
+
+	overrideBootPath, err := windows.UTF16FromString("\\Windows\\")
+	if err != nil {
+		return fmt.Errorf("failed to encode override boot path to utf16: %w", err)
+	}
 
 	regChanges := []struct {
 		keyPath   string
@@ -34,9 +49,11 @@ func enableCimBoot(layerPath, hivePath string) (err error) {
 		data      *byte
 		dataLen   uint32
 	}{
-		{"ControlSet001\\Services\\CimFS", "Start", winapi.REG_TYPE_DWORD, &dataZero[0], uint32(len(dataZero))},
-		{"ControlSet001\\Services\\wcifs", "Start", winapi.REG_TYPE_DWORD, &dataFour[0], uint32(len(dataFour))},
+		{"ControlSet001\\Control", "BootContainerGuid", winapi.REG_TYPE_SZ, (*byte)(unsafe.Pointer(&bootGUID[0])), 2 * uint32(len(bootGUID))},
 		{"ControlSet001\\Services\\UnionFS", "Start", winapi.REG_TYPE_DWORD, &dataZero[0], uint32(len(dataZero))},
+		{"ControlSet001\\Services\\wcifs", "Start", winapi.REG_TYPE_DWORD, &dataFour[0], uint32(len(dataZero))},
+		// The bootmgr loads the uvm files from the cim and so uses the relative path `UtilityVM\\Files` inside the cim to access the uvm files. However, once the cim is mounted UnionFS will merge the correct directory (UtilityVM\\Files) of the cim with the scratch and then that point onwards we don't need to use the relative path. Below registry key tells the kernel that the boot path that was provided in BCD should now be overriden with this new path.
+		{"Setup", "BootPathOverride", winapi.REG_TYPE_SZ, (*byte)(unsafe.Pointer(&overrideBootPath[0])), 2 * uint32(len(overrideBootPath))},
 	}
 
 	var storeHandle winapi.OrHKey

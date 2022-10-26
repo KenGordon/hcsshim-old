@@ -199,24 +199,16 @@ func GetHCSLayers(ctx context.Context, vm *uvm.UtilityVM, paths []string) (layer
 
 // GetCimHCSLayer finds the uvm mount path of the given cim and returns a hcs schema v2
 // layer of it.  The cim must have already been mounted inside the uvm.
-func GetCimHCSLayer(ctx context.Context, vm *uvm.UtilityVM, cimPath, cimMountLocation string) (layers []hcsschema.Layer, err error) {
-	var uvmPath string
-	if vm.MountCimSupported() {
-		hostCimDir := filepath.Dir(cimPath)
-		uvmCimDir, err := vm.GetVSMBUvmPath(ctx, hostCimDir, true)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get vsmb uvm path: %s", err)
-		}
-		uvmPath, err = vm.GetCimUvmMountPathNt(filepath.Join(uvmCimDir, filepath.Base(cimPath)))
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		uvmPath, err = vm.GetVSMBUvmPath(ctx, cimMountLocation, true)
-		if err != nil {
-			return nil, err
-		}
+func GetCimHCSLayer(ctx context.Context, vm *uvm.UtilityVM, cimPath string) (layers []hcsschema.Layer, err error) {
+	uvmCimDir, err := vm.GetVSMBUvmPath(ctx, filepath.Dir(cimPath), true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get vsmb uvm path: %s", err)
 	}
+	uvmPath, err := vm.GetCimUvmMountPathNt(filepath.Join(uvmCimDir, filepath.Base(cimPath)))
+	if err != nil {
+		return nil, err
+	}
+
 	// Note: the LayerID must still be calculated with the cim path. The layer id
 	// calculations fail if we pass it the volume path and that results in very
 	// cryptic errors when starting containers.

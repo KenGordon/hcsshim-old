@@ -231,8 +231,9 @@ func SetupUtilityVMBaseLayer(ctx context.Context, uvmPath, baseVhdPath, diffVhdP
 		return errors.Wrap(err, "failed to get base vhd layout info")
 	}
 
+	cimPath := filepath.Join("cim-layers", filepath.Base(filepath.Dir(filepath.Dir(baseVhdPath)))+".cim")
 	bcdPath := filepath.Join(filepath.Dir(baseVhdPath), bcdFilePath)
-	if err = updateBcdStoreForBoot(bcdPath, partitionInfo.DiskID, partitionInfo.PartitionID); err != nil {
+	if err = updateBcdStoreForBoot(bcdPath, cimPath, partitionInfo.DiskID, partitionInfo.PartitionID); err != nil {
 		return errors.Wrap(err, "failed to update BCD")
 	}
 
