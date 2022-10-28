@@ -20,7 +20,7 @@ github.com/containerd/cgroups/stats/v1
 # github.com/containerd/console v1.0.3
 ## explicit; go 1.13
 github.com/containerd/console
-# github.com/containerd/containerd v1.6.6 => ../containerd
+# github.com/containerd/containerd v1.6.6 => dev.azure.com/msazure/ContainerPlatform/_git/containerd.containerd.git v1.2.1-0.20221027171108-4e93c2ad2923
 ## explicit; go 1.17
 github.com/containerd/containerd/api/events
 github.com/containerd/containerd/api/services/ttrpc/events/v1
@@ -313,5 +313,5 @@ google.golang.org/protobuf/types/descriptorpb
 google.golang.org/protobuf/types/known/anypb
 google.golang.org/protobuf/types/known/durationpb
 google.golang.org/protobuf/types/known/timestamppb
-# github.com/containerd/containerd => ../containerd
+# github.com/containerd/containerd => dev.azure.com/msazure/ContainerPlatform/_git/containerd.containerd.git v1.2.1-0.20221027171108-4e93c2ad2923
 # google.golang.org/genproto => google.golang.org/genproto v0.0.0-20200224152610-e50cd9704f63

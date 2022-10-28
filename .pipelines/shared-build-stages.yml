@@ -1,0 +1,138 @@
+# Build stages shared between Official, Buddy and nightly builds.
+# For nightly builds, parameters.Nightly will be set to True
+# The parent template must include ContainerPlatform/ContainerPlatform repository with "cplat" alias
+parameters:
+  - name: Nightly
+    type: boolean
+    default: false
+
+stages:
+  - stage: build_repo
+    jobs:
+
+      # Nightly builds use different versioning scheme
+      - ${{ if not(eq(parameters.Nightly, true))}}:
+          - template: .pipelines/templates/build/version.yml@cplat
+      - job: build
+        pool:
+          type: linux
+        variables:
+          ob_outputDirectory: '$(Build.StagingDirectory)'
+        steps:
+          - ${{ if eq(parameters.Nightly, true) }}:
+            - script: |
+                set -eux
+
+                git config user.email "containerplat-dev@microsoft.com"
+                git config user.name "ContainerPlat"
+                # Pull upstream changes
+                git remote add upstream https://github.com/microsoft/hcsshim.git
+                git fetch upstream
+                git merge upstream/main
+
+                # OneBranch custom versioning for nightly builds
+                gitVersion=$(git rev-parse upstream/main)
+                timeStamp=$(date --utc +%Y%m%d)
+                ver=ob-${gitVersion}-nightly-${timeStamp}-$(Build.BuildId)
+                echo '##vso[task.setvariable variable=versionString]'${ver//\//_}
+              displayName: Merge upstream changes for nightly build
+
+            - task: onebranch.pipeline.version@1
+              inputs:
+                system: 'Custom'
+                customVersion: '$(versionString)'
+
+          - script: |
+              set -eux
+
+              mkdir -p $OUT_DIR
+
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/runhcs
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/shimdiag
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/device-util
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/ncproxy
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/jobobject-util
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/zapdir
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
+
+              GOOS=linux go build -buildmode=pie -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
+            env:
+              GOPROXY: off
+              GOFLAGS: -mod=vendor
+              GOOS: windows
+              OUT_DIR: '$(Build.StagingDirectory)/out'
+            displayName: build hcsshim binaries
+
+          - script: |
+              set -eoux
+
+              go test -gcflags=all=-d=checkptr -c github.com/Microsoft/hcsshim/test/cri-containerd --tags functional
+              go test -gcflags=all=-d=checkptr -tags=functional -c github.com/Microsoft/hcsshim/test/functional
+              GOOS=linux go test -gcflags=all=-d=checkptr -tags=functional -c github.com/Microsoft/hcsshim/test/gcs
+              go build -o sample-logging-driver.exe cri-containerd/helpers/log.go
+
+              mv ./cri-containerd.test.exe $OUT_DIR
+              mv ./functional.test.exe $OUT_DIR
+              mv ./gcs.test $OUT_DIR
+              mv ./sample-logging-driver.exe $OUT_DIR
+            env:
+              GOOS: windows
+              OUT_DIR: '$(Build.StagingDirectory)/out'
+              GOFLAGS: -mod=mod
+            workingDirectory: test
+            displayName: build test binaries
+
+          - script: |
+              set -eoux
+
+              make out/delta-dev.tar.gz CC=musl-gcc # First make the linux gcs bits
+              cp out/delta.tar.gz $OUT_DIR
+              cp out/delta-dev.tar.gz $OUT_DIR
+              cp hack/catcpio.sh $OUT_DIR
+
+              # cleanup and rebuild with rego enforcer support
+              make clean
+              make out/delta-dev.tar.gz CC=musl-gcc GO_BUILD_TAGS=rego
+              cp out/delta-dev.tar.gz $OUT_DIR/delta-dev-rego.tar.gz
+            env:
+              GOPROXY: off
+              GOFLAGS: -mod=vendor
+              GOOS: linux
+              OUT_DIR: '$(Build.StagingDirectory)/out'
+            displayName: build opengcs
+
+          - template: .pipelines/templates/build/go-licenses.yml@cplat
+            parameters:
+              outputDirectory: '$(Agent.TempDirectory)/windows-notices'
+              components:
+                - github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+                - github.com/Microsoft/hcsshim/cmd/runhcs
+                - github.com/Microsoft/hcsshim/cmd/shimdiag
+                - github.com/Microsoft/hcsshim/cmd/tar2ext4
+                - github.com/Microsoft/hcsshim/cmd/device-util
+                - github.com/Microsoft/hcsshim/cmd/ncproxy
+                - github.com/Microsoft/hcsshim/cmd/jobobject-util
+                - github.com/Microsoft/hcsshim/internal/tools/zapdir
+                - github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
+
+          - template: .pipelines/templates/build/go-licenses.yml@cplat
+            parameters:
+              outputDirectory: '$(Agent.TempDirectory)/linux-notices'
+              targetOS: linux
+              components:
+                - github.com/Microsoft/hcsshim/cmd/tar2ext4
+                - github.com/Microsoft/hcsshim/cmd/gcs
+                - github.com/Microsoft/hcsshim/cmd/gcstools
+
+          - template: .pipelines/templates/build/combine-go-licenses.yml@cplat
+            parameters:
+              outputDirectory: '$(Build.StagingDirectory)/out/notices'
+              inputDirectories:
+                - '$(Agent.TempDirectory)/windows-notices'
+                - '$(Agent.TempDirectory)/linux-notices'
+
+      - template: .pipelines/templates/build/sign.yml@cplat
+        parameters:
+          parentJob: build
