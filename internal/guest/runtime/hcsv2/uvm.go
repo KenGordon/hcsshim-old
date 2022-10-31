@@ -6,9 +6,9 @@ package hcsv2
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -39,6 +39,7 @@ import (
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
 	"github.com/mattn/go-shellwords"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
@@ -64,25 +65,28 @@ type Host struct {
 	securityPolicyEnforcer    securitypolicy.SecurityPolicyEnforcer
 	securityPolicyEnforcerSet bool
 	uvmReferenceInfo          string
+
+	// logging target
+	logWriter io.Writer
 }
 
-func NewHost(rtime runtime.Runtime, vsock transport.Transport) *Host {
+func NewHost(rtime runtime.Runtime, vsock transport.Transport, initialEnforcer securitypolicy.SecurityPolicyEnforcer, logWriter io.Writer) *Host {
 	return &Host{
 		containers:                make(map[string]*Container),
 		externalProcesses:         make(map[int]*externalProcess),
 		rtime:                     rtime,
 		vsock:                     vsock,
 		securityPolicyEnforcerSet: false,
-		securityPolicyEnforcer:    &securitypolicy.ClosedDoorSecurityPolicyEnforcer{},
+		securityPolicyEnforcer:    initialEnforcer,
+		logWriter:                 logWriter,
 	}
 }
 
 // SetConfidentialUVMOptions takes guestresource.LCOWConfidentialOptions
 // to set up our internal data structures we use to store and enforce
 // security policy. The options can contain security policy enforcer type,
-// encoded security policy, signed UVM reference information and a UVM path
-// of an arbitrary pod startup security policy fragment. The security policy
-// and uvm reference information can be further presented to workload
+// encoded security policy and signed UVM reference information The security
+// policy and uvm reference information can be further presented to workload
 // containers for validation and attestation purposes.
 func (h *Host) SetConfidentialUVMOptions(ctx context.Context, r *guestresource.LCOWConfidentialOptions) error {
 	h.policyMutex.Lock()
@@ -103,6 +107,18 @@ func (h *Host) SetConfidentialUVMOptions(ctx context.Context, r *guestresource.L
 		return err
 	}
 
+	// This is one of two points at which we might change our logging.
+	// At this time, we now have a policy and can determine what the policy
+	// author put as policy around runtime logging.
+	// The other point is on startup where we take a flag to set the default
+	// policy enforcer to use before a policy arrives. After that flag is set,
+	// we use the enforcer in question to set up logging as well.
+	if err = p.EnforceRuntimeLoggingPolicy(); err == nil {
+		logrus.SetOutput(h.logWriter)
+	} else {
+		logrus.SetOutput(io.Discard)
+	}
+
 	hostData, err := securitypolicy.NewSecurityPolicyDigest(r.EncodedSecurityPolicy)
 	if err != nil {
 		return err
@@ -115,19 +131,6 @@ func (h *Host) SetConfidentialUVMOptions(ctx context.Context, r *guestresource.L
 	h.securityPolicyEnforcer = p
 	h.securityPolicyEnforcerSet = true
 	h.uvmReferenceInfo = r.EncodedUVMReference
-
-	if r.PodStartupFragment != "" {
-		fragmentData, err := os.ReadFile(r.PodStartupFragment)
-		if err != nil {
-			return err
-		}
-
-		encodedFragment := base64.StdEncoding.EncodeToString(fragmentData)
-		// TODO (maksiman): Replace with internal fragment injection calls, when they're implemented
-		if err := h.InjectFragment(ctx, &guestresource.LCOWSecurityPolicyFragment{Fragment: encodedFragment}); err != nil {
-			return err
-		}
-	}
 
 	return nil
 }

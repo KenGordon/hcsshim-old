@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	backoff "github.com/cenkalti/backoff/v4"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/containerd/cgroups"
 	cgroupstats "github.com/containerd/cgroups/stats/v1"
 	oci "github.com/opencontainers/runtime-spec/specs-go"
@@ -29,6 +29,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guestpath"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
+	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
 )
 
 func memoryLogFormat(metrics *cgroupstats.Metrics) logrus.Fields {
@@ -194,6 +195,9 @@ func main() {
 		false,
 		"If true do not run chronyd time synchronization service inside the UVM")
 	scrubLogs := flag.Bool("scrub-logs", false, "If true, scrub potentially sensitive information from logging")
+	initialPolicyStance := flag.String("initial-policy-stance",
+		"allow",
+		"Stance: allow, deny.")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "\nUsage of %s:\n", os.Args[0])
@@ -213,7 +217,7 @@ func main() {
 
 	logrus.AddHook(log.NewHook())
 
-	// Use a file instead of stdout
+	var logWriter *os.File
 	if *logFile != "" {
 		logFileHandle, err := os.OpenFile(*logFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
@@ -222,7 +226,25 @@ func main() {
 				logrus.ErrorKey: err,
 			}).Fatal("failed to create log file")
 		}
-		logrus.SetOutput(logFileHandle)
+		logWriter = logFileHandle
+	} else {
+		// logrus uses os.Stderr. see logrus.New()
+		logWriter = os.Stderr
+	}
+
+	// set up our initial stance policy enforcer
+	var initialEnforcer securitypolicy.SecurityPolicyEnforcer
+	switch *initialPolicyStance {
+	case "allow":
+		initialEnforcer = &securitypolicy.OpenDoorSecurityPolicyEnforcer{}
+		logrus.SetOutput(logWriter)
+	case "deny":
+		initialEnforcer = &securitypolicy.ClosedDoorSecurityPolicyEnforcer{}
+		logrus.SetOutput(io.Discard)
+	default:
+		logrus.WithFields(logrus.Fields{
+			"initial-policy-stance": *initialPolicyStance,
+		}).Fatal("unknown initial-policy-stance")
 	}
 
 	switch *logFormat {
@@ -277,7 +299,7 @@ func main() {
 		Handler:  mux,
 		EnableV4: *v4,
 	}
-	h := hcsv2.NewHost(rtime, tport)
+	h := hcsv2.NewHost(rtime, tport, initialEnforcer, logWriter)
 	b.AssignHandlers(mux, h)
 
 	var bridgeIn io.ReadCloser
