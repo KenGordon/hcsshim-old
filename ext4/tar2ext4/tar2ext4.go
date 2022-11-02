@@ -433,14 +433,13 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 			return fmt.Errorf("failed to write backup entry array with: %v", err)
 		}
 	}
-
-	sizeAfterBackupEntryArrayInBytes, err := w.Seek(int64(int(altEntriesArrayStart)+sizeOfEntryArrayBytes), io.SeekStart)
+	// todo katiewasnothere: make sure that the min size if 16384 bytes
+	sizeAfterBackupEntryArrayInBytes, err := w.Seek(int64(int(altEntriesArrayStart)+16384), io.SeekStart)
 	if err != nil {
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
 
 	// TODO katiewasnothere: round to nearest block
-	// TODO katiewasnothere: need to align array to at least
 	alternateHeaderLBA := findNextLogicalBlock(uint64(sizeAfterBackupEntryArrayInBytes))
 	alternateHeaderInBytes := alternateHeaderLBA * compactext4.BlockSizeLogical
 	_, err = w.Seek(int64(alternateHeaderInBytes), io.SeekStart)
@@ -457,7 +456,6 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("error using supplied disk guid %v", err)
 	}
 
-	// TODO: need to have written the entries before this point
 	altEntriesCheckSum, err := getChecksumPartitionEntryArray(w, uint32(altEntriesArrayStartLBA), uint32(sizeOfEntryArrayBytes))
 	if err != nil {
 		return err
@@ -489,7 +487,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("failed to write backup header with: %v", err)
 	}
 
-	// update the size in protectiveMBR
+	// write the protectiveMBR at the beginning of the disk
 	_, err = w.Seek(0, io.SeekStart)
 	if err != nil {
 		return fmt.Errorf("failed to seek file: %v", err)
@@ -564,8 +562,6 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 	if err := binary.Write(w, binary.LittleEndian, hGPT); err != nil {
 		return fmt.Errorf("failed to write backup header with: %v", err)
 	}
-
-	// TODO katiewasnothere: append dmverity to each layer and final disk???
 
 	/*if p.appendDMVerity {
 		if err := dmverity.ComputeAndWriteHashDevice(w, w); err != nil {

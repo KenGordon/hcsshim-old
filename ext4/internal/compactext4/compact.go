@@ -98,7 +98,7 @@ const (
 	inodeLostAndFound = inodeFirst
 
 	BlockSize               = 4096 // TODO katiewasnothere: this is the PHYSICAL block size, different than the logical block size
-	BlockSizeLogical        = 512
+	BlockSizeLogical        = 512  // this is the logical block size in bytes
 	blocksPerGroup          = BlockSize * 8
 	inodeSize               = 256
 	maxInodesPerGroup       = BlockSize * 8 // Limited by the inode bitmap
