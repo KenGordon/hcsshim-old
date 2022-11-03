@@ -9,9 +9,17 @@ device_mounted(target) {
 
 default deviceHash_ok := false
 
+# test if a device hash exists as a layer in a policy container
 deviceHash_ok {
-    some container in data.policy.containers
-    some layer in container.layers
+    layer := data.policy.containers[_].layers[_]
+    input.deviceHash == layer
+}
+
+# test if a device hash exists as a layer in a fragment container
+deviceHash_ok {
+    feed := data.metadata.issuers[_].feeds[_]
+    some fragment in feed
+    layer := fragment.containers[_].layers[_]
     input.deviceHash == layer
 }
 
@@ -59,10 +67,20 @@ default mount_overlay := {"allowed": false}
 
 mount_overlay := {"matches": matches, "overlayTargets": overlay_targets, "allowed": true} {
     not overlay_exists
-    containers := [container |
-        some container in data.policy.containers
+    # we need to assemble a list of all possible containers
+    # which match the overlay requested, including both
+    # containers in the policy and those included from fragments.
+    policy_containers := [container |
+        container := data.policy.containers[_]
         layerPaths_ok(container.layers)
     ]
+    fragment_containers := [container |
+        feed := data.metadata.issuers[_].feeds[_]
+        some fragment in feed
+        container := fragment.containers[_]
+        layerPaths_ok(container.layers)
+    ]
+    containers := array.concat(policy_containers, fragment_containers)
     count(containers) > 0
     matches := {
         "action": "add",
@@ -110,16 +128,65 @@ rule_ok(rule, env) {
     env_ok(rule.pattern, rule.strategy, env)
 }
 
-envList_ok(env_rules) {
-    every env in input.envList {
+envList_ok(env_rules, envList) {
+    every rule in env_rules {
+        some env in envList
+        rule_ok(rule, env)
+    }
+
+    every env in envList {
         some rule in env_rules
         env_ok(rule.pattern, rule.strategy, env)
     }
+}
 
-    every rule in env_rules {
+valid_envs_subset(env_rules) := envs {
+    envs := {env |
         some env in input.envList
-        rule_ok(rule, env)
+        some rule in env_rules
+        env_ok(rule.pattern, rule.strategy, env)
     }
+}
+
+valid_envs_for_all(items) := envs {
+    data.policy.allow_environment_variable_dropping
+
+    # for each item, find a subset of the environment rules
+    # that are valid
+    valid := [envs |
+        some item in items
+        envs := valid_envs_subset(item.env_rules)
+    ]
+    
+    # we want to select the most specific matches, which in this
+    # case consists of those matches which require dropping the
+    # fewest environment variables (i.e. the longest lists)
+    counts := [num_envs |
+        envs := valid[_]
+        num_envs := count(envs)
+    ]
+    max_count := max(counts)
+
+    largest_env_sets := {envs |
+        some i
+        counts[i] == max_count
+        envs := valid[i]
+    }
+
+    # if there is more than one set with the same size, we
+    # can only proceed if they are all the same, so we verify
+    # that the intersection is equal to the union. For a single
+    # set this is trivially true.
+    envs_i := intersection(largest_env_sets)
+    envs_u := union(largest_env_sets)
+    envs_i == envs_u
+    envs := envs_i
+}
+
+valid_envs_for_all(items) := envs {
+    not data.policy.allow_environment_variable_dropping
+    # no dropping allowed, so we just return the input
+    envs := input.envList
 }
 
 workingDirectory_ok(working_dir) {
@@ -134,15 +201,27 @@ container_started {
 
 default create_container := {"allowed": false}
 
-create_container := {"matches": matches, "started": started, "allowed": true} {
+create_container := {"matches": matches, "env_list": env_list, "started": started, "allowed": true} {
     not container_started
-    containers := [container |
-        some container in data.metadata.matches[input.containerID]
-        command_ok(container.command)
-        envList_ok(container.env_rules)
+    # narrow the matches based upon command, working directory, and
+    # mount list
+    possible_containers := [container |
+        container := data.metadata.matches[input.containerID][_]
         workingDirectory_ok(container.working_dir)
+        command_ok(container.command)
         mountList_ok(container.mounts, container.allow_elevated)
     ]
+
+    count(possible_containers) > 0
+
+    # check to see if the environment variables match, dropping
+    # them if allowed (and necessary)
+    env_list := valid_envs_for_all(possible_containers)
+    containers := [container |
+        container := possible_containers[_]
+        envList_ok(container.env_rules, env_list)
+    ]
+
     count(containers) > 0
     matches := {
         "action": "update",
@@ -224,16 +303,28 @@ mountList_ok(mounts, allow_elevated) {
 
 default exec_in_container := {"allowed": false}
 
-exec_in_container := {"matches": matches, "allowed": true} {
+exec_in_container := {"matches": matches, "env_list": env_list, "allowed": true} {
     container_started
-    containers := [container |
-        some container in data.metadata.matches[input.containerID]
-        envList_ok(container.env_rules)
+    # narrow our matches based upon the process requested
+    possible_containers := [container |
+        container := data.metadata.matches[input.containerID][_]
         workingDirectory_ok(container.working_dir)
         some process in container.exec_processes
         command_ok(process.command)
     ]
+
+    count(possible_containers) > 0
+
+    # check to see if the environment variables match, dropping
+    # them if allowed (and necessary)
+    env_list := valid_envs_for_all(possible_containers)
+    containers := [container |
+        container := possible_containers[_]
+        envList_ok(container.env_rules, env_list)
+    ]
+
     count(containers) > 0
+
     matches := {
         "action": "update",
         "key": input.containerID,
@@ -257,7 +348,7 @@ signal_container_process := {"matches": matches, "allowed": true} {
     container_started
     input.isInitProcess
     containers := [container |
-        some container in data.metadata.matches[input.containerID]
+        container := data.metadata.matches[input.containerID][_]
         signal_ok(container.signals)
     ]
     count(containers) > 0
@@ -272,7 +363,7 @@ signal_container_process := {"matches": matches, "allowed": true} {
     container_started
     not input.isInitProcess
     containers := [container |
-        some container in data.metadata.matches[input.containerID]
+        container := data.metadata.matches[input.containerID][_]
         some process in container.exec_processes
         command_ok(process.command)
         signal_ok(process.signals)
@@ -333,13 +424,42 @@ enforcement_point_info := {"available": false, "allowed": false, "unknown": fals
     semver.compare(data.api.svn, enforcement_point.introducedVersion) < 0
 }
 
+external_process_ok(process) {
+    command_ok(process.command)
+    envList_ok(process.env_rules, input.envList)
+    workingDirectory_ok(process.working_dir)
+}
+
 default exec_external := {"allowed": false}
 
-exec_external := {"allowed": true} {
-    some process in data.policy.external_processes
-    command_ok(process.command)
-    envList_ok(process.env_rules)
-    workingDirectory_ok(process.working_dir)
+exec_external := {"allowed": true, "env_list": env_list} {
+    # we need to assemble a list of all possible external processes which
+    # have a matching working directory and command
+    policy_processes := [process |
+        some process in data.policy.external_processes
+        workingDirectory_ok(process.working_dir)
+        command_ok(process.command)
+    ]
+
+    fragment_processes := [process |
+        feed := data.metadata.issuers[_].feeds[_]
+        some fragment in feed
+        some process in fragment.external_processes
+        workingDirectory_ok(process.working_dir)
+        command_ok(process.command)
+    ]
+
+    possible_processes := array.concat(policy_processes, fragment_processes)
+
+    # check to see if the environment variables match, dropping
+    # them if allowed (and necessary)
+    env_list := valid_envs_for_all(possible_processes)
+    processes := [process |
+        process := possible_processes[_]
+        envList_ok(process.env_rules, env_list)
+    ]
+
+    count(processes) > 0
 }
 
 default get_properties := {"allowed": false}
@@ -352,6 +472,108 @@ default dump_stacks := {"allowed": false}
 
 dump_stacks := {"allowed": true} {
     data.policy.allow_dump_stacks
+}
+
+default runtime_logging := {"allowed": false}
+
+runtime_logging := {"allowed": true} {
+    data.policy.allow_runtime_logging
+}
+
+default fragment_containers := []
+fragment_containers := data[input.namespace].containers
+
+default fragment_fragments := []
+fragment_fragments := data[input.namespace].fragments
+
+default fragment_external_processes := []
+fragment_external_processes := data[input.namespace].external_processes
+
+extract_fragment_includes(includes) := fragment {
+    objects := {
+        "containers": fragment_containers,
+        "fragments": fragment_fragments,
+        "external_processes": fragment_external_processes
+    }
+
+    fragment := {
+        include: objects[include] | include := includes[_]
+    }
+}
+
+issuer_exists(iss) {
+    data.metadata.issuers[iss]
+}
+
+feed_exists(iss, feed) {
+    data.metadata.issuers[iss].feeds[feed]
+}
+
+update_issuer(includes) := issuer {
+    feed_exists(input.issuer, input.feed)
+    old_issuer := data.metadata.issuers[input.issuer]
+    old_fragments := old_issuer.feeds[input.feed]
+    new_issuer := {
+        "feeds": {
+            input.feed: array.concat([extract_fragment_includes(includes)], old_fragments)
+        }
+    }
+    issuer := object.union(old_issuer, new_issuer)
+}
+
+update_issuer(includes) := issuer {
+    not feed_exists(input.issuer, input.feed)
+    old_issuer := data.metadata.issuers[input.issuer]
+    new_issuer := {
+        "feeds": {
+            input.feed: [extract_fragment_includes(includes)]
+        }
+    }
+    issuer := object.union(old_issuer, new_issuer)
+}
+
+update_issuer(includes) := issuer {
+    not issuer_exists(input.issuer)
+    issuer := {
+        "feeds": {
+            input.feed: [extract_fragment_includes(includes)]
+        }
+    }
+}
+
+default load_fragment := {"allowed": false}
+
+fragment_ok(fragment) {
+    input.issuer == fragment.issuer
+    input.feed == fragment.feed
+    semver.compare(data[input.namespace].svn, fragment.minimum_svn) >= 0
+}
+
+
+# test if there is a matching fragment in the policy
+matching_fragment := fragment {
+    some fragment in data.policy.fragments
+    fragment_ok(fragment)
+}
+
+# test if there is a matching fragment in a fragment
+matching_fragment := subfragment {
+    feed := data.metadata.issuers[_].feeds[_]
+    some fragment in feed
+    some subfragment in fragment.fragments
+    fragment_ok(subfragment)
+}
+
+load_fragment := {"issuers": issuers, "add_module": add_module, "allowed": true} {
+    fragment := matching_fragment
+    issuer := update_issuer(fragment.includes)
+    issuers := {
+        "action": "update",
+        "key": input.issuer,
+        "value": issuer
+    }
+
+    add_module := "namespace" in fragment.includes
 }
 
 # error messages
@@ -393,6 +615,13 @@ overlay_matches {
     layerPaths_ok(container.layers)
 }
 
+overlay_matches {
+    feed := data.metadata.issuers[_].feeds[_]
+    some fragment in feed
+    some container in fragment.containers
+    layerPaths_ok(container.layers)
+}
+
 errors["no overlay at path to unmount"] {
     input.rule == "unmount_overlay"
     not overlay_mounted(input.unmountTarget)
@@ -429,23 +658,27 @@ errors["invalid command"] {
     not command_matches
 }
 
-default envList_matches := false
-
-envList_matches {
+env_matches(env) {
     input.rule in ["create_container", "exec_in_container"]
     some container in data.metadata.matches[input.containerID]
-    envList_ok(container.env_rules)
+    some rule in container.env_rules
+    env_ok(rule.pattern, rule.strategy, env)
 }
 
-envList_matches {
-    input.rule == "exec_external"
+env_matches(env) {
+    input.rule in ["exec_external"]
     some process in data.policy.external_processes
-    envList_ok(process.env_rules)
+    some rule in process.env_rules
+    env_ok(rule.pattern, rule.strategy, input.envList)
 }
 
-errors["invalid env list"] {
+errors[envError] {
     input.rule in ["create_container", "exec_in_container", "exec_external"]
-    not envList_matches
+    bad_envs := [env | 
+        env := input.envList[_]
+        not env_matches(env)]
+    count(bad_envs) > 0
+    envError := concat(" ", ["invalid env list:", concat(",", bad_envs)])    
 }
 
 default workingDirectory_matches := false
@@ -467,16 +700,18 @@ errors["invalid working directory"] {
     not workingDirectory_matches
 }
 
-default mountList_matches := false
-
-mountList_matches {
+mount_matches(mount) {
     some container in data.metadata.matches[input.containerID]
-    data.framework.mountList_ok(container, container.allow_elevated)
+    mount_ok(container.mounts, container.allow_elevated, mount)
 }
 
-errors["invalid mount list"] {
+errors[mountError] {
     input.rule == "create_container"
-    not mountList_matches
+    bad_mounts := [mount.destination | 
+        mount := input.mounts[_]
+        not mount_matches(mount)]
+    count(bad_mounts) > 0
+    mountError := concat(" ", ["invalid mount list:", concat(",", bad_mounts)])
 }
 
 default signal_allowed := false
@@ -506,4 +741,58 @@ errors["device already mounted at path"] {
 errors["no device at path to unmount"] {
     input.rule == "plan9_unmount"
     not plan9_mounted(input.unmountTarget)
+}
+
+default fragment_issuer_matches := false
+
+fragment_issuer_matches {
+    some fragment in data.policy.fragments
+    fragment.issuer == input.issuer
+}
+
+fragment_issuer_matches {
+    input.issuer in data.metadata.issuers
+}
+
+errors["invalid fragment issuer"] {
+    input.rule == "load_fragment"
+    not fragment_issuer_matches
+}
+
+default fragment_feed_matches := false
+
+fragment_feed_matches {
+    some fragment in data.policy.fragments
+    fragment.issuer == input.issuer
+    fragment.feed == input.feed
+}
+
+fragment_feed_matches {
+    input.feed in data.metadata.issuers[input.issuer]
+}
+
+errors["invalid fragment feed"] {
+    input.rule == "load_fragment"
+    fragment_issuer_matches
+    not fragment_feed_matches
+}
+
+default fragment_version_is_valid := false
+
+fragment_version_is_valid {
+    some fragment in data.policy.fragments
+    fragment.issuer == input.issuer
+    fragment.feed == input.feed
+    semver.compare(data[input.namespace].svn, fragment.minimum_svn) >= 0
+}
+
+fragment_version_is_valid {
+    some fragment in data.metadata.issuers[input.issuer][input.feed]
+    semver.compare(data[input.namespace].svn, fragment.minimum_svn) >= 0
+}
+
+errors["fragment version is below the specified minimum"] {
+    input.rule == "load_fragment"
+    fragment_feed_matches
+    not fragment_version_is_valid
 }
