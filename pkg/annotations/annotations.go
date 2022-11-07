@@ -286,6 +286,11 @@ const (
 	// file share mounts, for hostile multi-tenant environments. See `AnnotationExpansions`
 	// for more information
 	DisableUnsafeOperations = "io.microsoft.disable-unsafe-operations"
+
+	// KryptonSandbox specifies whether a krypton sandbox will be created.
+	KryptonSandboxType = "io.kubernetes.cri.kryptonsandbox"
+
+	DirectFileMappingInMB = "io.microsoft.virtualmachine.computetopology.memory.directfilemappinginmb"
 )
 
 // AnnotationExpansions maps annotations that will be expanded into an array of

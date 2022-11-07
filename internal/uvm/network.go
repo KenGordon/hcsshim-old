@@ -36,6 +36,20 @@ var (
 	ErrNICNotFound = errors.New("NIC not found in network namespace")
 )
 
+func (uvm *UtilityVM) SetupNetworkNamespace(ctx context.Context, nsid string) error {
+	log.G(ctx).Debugf("SetupNetworkNamespace : %s", nsid)
+
+	// Query endpoints with actual nsid
+	endpoints, err := GetNamespaceEndpoints(ctx, nsid)
+	if err != nil {
+		log.G(ctx).Debugf("GetNamespaceEndpoints failed : %s", err.Error())
+
+		return err
+	}
+
+	return uvm.SetupNetworkNamespaceWithEndpoints(ctx, nsid, endpoints)
+}
+
 // Network namespace setup is a bit different for templates and clones.
 // For templates and clones we use a special network namespace ID.
 // Details about this can be found in the Networking section of the late-clone wiki page.
@@ -44,21 +58,20 @@ var (
 // UVM. We hot add the namespace (with the default ID if this is a template). We get the
 // endpoints associated with this namespace and then hot add those endpoints (by changing
 // their namespace IDs by the default IDs if it is a template).
-func (uvm *UtilityVM) SetupNetworkNamespace(ctx context.Context, nsid string) error {
+func (uvm *UtilityVM) SetupNetworkNamespaceWithEndpoints(ctx context.Context, nsid string, endpoints []*hns.HNSEndpoint) error {
+	log.G(ctx).Debugf("SetupNetworkNamespaceWithEndpoints - Start : %s %v", nsid, endpoints)
+
 	nsidInsideUVM := nsid
 	if uvm.IsTemplate || uvm.IsClone {
 		nsidInsideUVM = DefaultCloneNetworkNamespaceID
 	}
-
-	// Query endpoints with actual nsid
-	endpoints, err := GetNamespaceEndpoints(ctx, nsid)
-	if err != nil {
-		return err
-	}
+	log.G(ctx).Debugf("SetupNetworkNamespaceWithEndpoints - 1")
 
 	// Add the network namespace inside the UVM if it is not a clone. (Clones will
 	// inherit the namespace from template)
 	if !uvm.IsClone {
+		log.G(ctx).Debugf("SetupNetworkNamespaceWithEndpoints - Not clone")
+
 		// Get the namespace struct from the actual nsid.
 		hcnNamespace, err := hcn.GetNamespaceByID(nsid)
 		if err != nil {
@@ -75,10 +88,13 @@ func (uvm *UtilityVM) SetupNetworkNamespace(ctx context.Context, nsid string) er
 			return err
 		}
 	}
+	log.G(ctx).Debugf("SetupNetworkNamespaceWithEndpoints - 2")
 
 	// If adding a network endpoint to clones or a template override nsid associated
 	// with it.
 	if uvm.IsClone || uvm.IsTemplate {
+		log.G(ctx).Debugf("SetupNetworkNamespaceWithEndpoints - clone or template")
+
 		// replace nsid for each endpoint
 		for _, ep := range endpoints {
 			ep.Namespace = &hns.Namespace{
@@ -86,14 +102,19 @@ func (uvm *UtilityVM) SetupNetworkNamespace(ctx context.Context, nsid string) er
 			}
 		}
 	}
+	log.G(ctx).Debugf("SetupNetworkNamespaceWithEndpoints - 3")
 
-	if err = uvm.AddEndpointsToNS(ctx, nsidInsideUVM, endpoints); err != nil {
+	if err := uvm.AddEndpointsToNS(ctx, nsidInsideUVM, endpoints); err != nil {
 		// Best effort clean up the NS
+		log.G(ctx).Debugf("SetupNetworkNamespaceWithEndpoints - AddEndpointsToNS Failed %s", err.Error())
+
 		if removeErr := uvm.RemoveNetNS(ctx, nsidInsideUVM); removeErr != nil {
 			log.G(ctx).Warn(removeErr)
 		}
 		return err
 	}
+
+	log.G(ctx).Debugf("SetupNetworkNamespaceWithEndpoints - Done")
 	return nil
 }
 
@@ -507,7 +528,7 @@ func (uvm *UtilityVM) RemoveEndpointsFromNS(ctx context.Context, id string, endp
 	return nil
 }
 
-// RemoveEndpointFromNS removes ``endpoint` in the network
+// RemoveEndpointFromNS removes “endpoint` in the network
 // namespace matching `id`. If no endpoint matching `endpoint.Id` is found in
 // the network namespace this command returns `ErrNICNotFound`.
 //
@@ -555,6 +576,9 @@ func getNetworkModifyRequest(adapterID string, requestType guestrequest.RequestT
 // addNIC adds a nic to the Utility VM.
 func (uvm *UtilityVM) addNIC(ctx context.Context, id string, endpoint *hns.HNSEndpoint) error {
 	// First a pre-add. This is a guest-only request and is only done on Windows.
+
+	endpoint.Namespace.ID = "00000000-0000-0000-0000-000000000000"
+
 	if uvm.operatingSystem == "windows" {
 		preAddRequest := hcsschema.ModifySettingRequest{
 			GuestRequest: guestrequest.ModificationRequest{

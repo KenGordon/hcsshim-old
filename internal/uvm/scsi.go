@@ -93,12 +93,6 @@ type SCSIMount struct {
 	serialVersionID uint32
 	// Make sure that serialVersionID is always the last field and its value is
 	// incremented every time this structure is updated
-
-	// A channel to wait on while mount of this SCSI disk is in progress.
-	waitCh chan struct{}
-	// The error field that is set if the mounting of this disk fails. Any other waiters on waitCh
-	// can use this waitErr after the channel is closed.
-	waitErr error
 }
 
 // addSCSIRequest is an internal struct used to hold all the parameters that are sent to
@@ -169,7 +163,6 @@ func newSCSIMount(
 		attachmentType:            attachmentType,
 		extensibleVirtualDiskType: evdType,
 		serialVersionID:           scsiCurrentSerialVersionID,
-		waitCh:                    make(chan struct{}),
 	}
 }
 
@@ -387,7 +380,7 @@ func (uvm *UtilityVM) AddSCSIExtensibleVirtualDisk(ctx context.Context, hostPath
 // so-on tracking what SCSI locations are available or used.
 //
 // Returns result from calling modify with the given scsi mount
-func (uvm *UtilityVM) addSCSIActual(ctx context.Context, addReq *addSCSIRequest) (_ *SCSIMount, err error) {
+func (uvm *UtilityVM) addSCSIActual(ctx context.Context, addReq *addSCSIRequest) (sm *SCSIMount, err error) {
 	sm, existed, err := uvm.allocateSCSIMount(
 		ctx,
 		addReq.readOnly,
@@ -402,26 +395,19 @@ func (uvm *UtilityVM) addSCSIActual(ctx context.Context, addReq *addSCSIRequest)
 		return nil, err
 	}
 
-	if existed {
-		// another mount request might be in progress, wait for it to finish and if that operation
-		// fails return that error.
-		<-sm.waitCh
-		if sm.waitErr != nil {
-			return nil, sm.waitErr
-		}
-		return sm, nil
-	}
-
-	// This is the first goroutine to add this disk, close the waitCh after we are done.
 	defer func() {
 		if err != nil {
 			uvm.deallocateSCSIMount(ctx, sm)
 		}
-
-		// error must be set _before_ the channel is closed.
-		sm.waitErr = err
-		close(sm.waitCh)
 	}()
+
+	if existed {
+		return sm, nil
+	}
+
+	if uvm.scsiControllerCount == 0 {
+		return nil, ErrNoSCSIControllers
+	}
 
 	SCSIModification := &hcsschema.ModifySettingRequest{
 		RequestType: guestrequest.RequestTypeAdd,
