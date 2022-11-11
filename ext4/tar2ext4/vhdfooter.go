@@ -16,7 +16,7 @@ const (
 	diskTypeFixed          = 2
 )
 
-type vhdFooter struct {
+type VHDFooter struct {
 	Cookie             [8]byte
 	Features           uint32
 	FileFormatVersion  uint32
@@ -35,8 +35,8 @@ type vhdFooter struct {
 	Reserved           [427]uint8
 }
 
-func makeFixedVHDFooter(size int64) *vhdFooter {
-	footer := &vhdFooter{
+func makeFixedVHDFooter(size int64) *VHDFooter {
+	footer := &VHDFooter{
 		Features:          featureMask,
 		FileFormatVersion: fileFormatVersionMagic,
 		DataOffset:        fixedDataOffset,
@@ -51,7 +51,7 @@ func makeFixedVHDFooter(size int64) *vhdFooter {
 	return footer
 }
 
-func calculateCheckSum(footer *vhdFooter) uint32 {
+func calculateCheckSum(footer *VHDFooter) uint32 {
 	oldchk := footer.Checksum
 	footer.Checksum = 0
 

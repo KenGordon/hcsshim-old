@@ -233,6 +233,10 @@ var readGPTCommand = cli.Command{
 			Name:  "partition-sb",
 			Usage: "superblock of partition to print",
 		},
+		cli.BoolFlag{
+			Name:  "vhd-footer",
+			Usage: "prints the vhd footer of a disk",
+		},
 	},
 	Action: func(cliCtx *cli.Context) error {
 		input := cliCtx.String("input")
@@ -343,6 +347,14 @@ var readGPTCommand = cli.Command{
 			}
 			log.G(context.Background()).WithField("partition-sb", sb).Infof("content of partition %v", partitionIndex)
 
+		}
+
+		if cliCtx.Bool("vhd-footer") {
+			footer, err := tar2ext4.ReadVHDFooter(inFile)
+			if err != nil {
+				return err
+			}
+			log.G(context.Background()).Infof("content of vhd footer %+v", footer)
 		}
 		return nil
 	},

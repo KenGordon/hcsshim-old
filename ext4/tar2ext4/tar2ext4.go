@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -21,7 +20,6 @@ import (
 	"github.com/Microsoft/hcsshim/ext4/internal/compactext4"
 	"github.com/Microsoft/hcsshim/ext4/internal/format"
 	"github.com/Microsoft/hcsshim/ext4/internal/gpt"
-	"github.com/Microsoft/hcsshim/internal/log"
 )
 
 type params struct {
@@ -84,10 +82,10 @@ func ConvertTarToExt4GPT(r io.Reader, w io.ReadWriteSeeker, options ...Option) (
 	for _, opt := range options {
 		opt(&p)
 	}
-	log.G(context.Background()).Infof("params: %v", p)
+	// log.G(context.Background()).Infof("params: %v", p)
 
 	fs := compactext4.NewWriter(w, p.ext4opts...)
-	log.G(context.Background()).Infof("start position: %v", fs.Position())
+	//log.G(context.Background()).Infof("start position: %v", fs.Position())
 
 	t := tar.NewReader(bufio.NewReader(r))
 	for {
@@ -498,7 +496,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		UniqueMBRDiskSignature: 0,           // set to 0
 		Unknown:                0,
 		PartitionRecord:        [4]gpt.PartitionMBR{},
-		Signature:              0xAA55,
+		Signature:              0xAA55, // according to spec
 	}
 	pMBR.PartitionRecord[0] = gpt.PartitionMBR{
 		BootIndicator: 0,
@@ -569,8 +567,10 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		}
 	}*/
 
+	// TODO katiewasnothere: update the pmbr to use the alt header lba + the extra size up to the vhd header?
+	// not sure but that's what it seems to be wanting
 	if p.appendVhdFooter {
-		return ConvertToVhd(w)
+		return convertToVhdAlignToMB(w)
 	}
 	return nil
 }
@@ -809,4 +809,50 @@ func ConvertToVhd(w io.WriteSeeker) error {
 		return err
 	}
 	return binary.Write(w, binary.BigEndian, makeFixedVHDFooter(size))
+}
+
+func convertToVhdAlignToMB(w io.WriteSeeker) error {
+	size, err := w.Seek(0, io.SeekEnd) // TODO katiewasnothere, maybe I can use this to figure out where the end of the previously written disk is?
+	if err != nil {
+		return err
+	}
+
+	size = size + 512 // size plus the size of the vhd footer
+	if size%1048576 != 0 {
+		remainder := 1048576 - (size % 1048576)
+		// seek the number of zeros needed to make this MB aligned
+		size, err = w.Seek(remainder, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+	}
+
+	return binary.Write(w, binary.BigEndian, makeFixedVHDFooter(size))
+}
+
+func ReadVHDFooter(r io.ReadSeeker) (*VHDFooter, error) {
+	// seek to position of entry array
+	currentBytePosition, err := r.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return nil, err
+	}
+
+	// seek to where the vhd footer should be starting from the end
+	// since we're seeking from the end, the offset needs to be negative
+	_, err = r.Seek(-int64(binary.Size(VHDFooter{})), io.SeekEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	footer := &VHDFooter{}
+	// vhd footer is written big endian, make sure to read it as such
+	if err := binary.Read(r, binary.BigEndian, footer); err != nil && err != io.ErrUnexpectedEOF {
+		return nil, fmt.Errorf("failed to read vhd footer: %v", err)
+	}
+
+	// set writer back to position we started at
+	if _, err := r.Seek(currentBytePosition, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return footer, nil
 }
