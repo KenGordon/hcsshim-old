@@ -89,6 +89,10 @@ stages:
               cp out/delta.tar.gz $OUT_DIR
               cp out/delta-dev.tar.gz $OUT_DIR
               cp hack/catcpio.sh $OUT_DIR
+
+              make clean
+              make out/delta-dev.tar.gz CC=musl-gcc GO_BUILD_TAGS=rego
+              cp out/delta-dev.tar.gz $OUT_DIR/delta-dev-rego.tar.gz
             env:
               GOPROXY: off
               GOFLAGS: -mod=vendor
