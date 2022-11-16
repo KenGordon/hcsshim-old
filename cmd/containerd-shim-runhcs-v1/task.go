@@ -9,12 +9,12 @@ import (
 
 	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
-	"github.com/Microsoft/hcsshim/internal/gcs"
 	"github.com/Microsoft/hcsshim/internal/hcs"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
+	"github.com/Microsoft/hcsshim/pkg/ctrdtaskapi"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/runtime/v2/task"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 var (
@@ -38,6 +38,10 @@ type shimTask interface {
 	//
 	// If `eid` is not found this task MUST return `errdefs.ErrNotFound`.
 	GetExec(eid string) (shimExec, error)
+	// GetExecs returns all execs in the task.
+	//
+	// If an exec fails to load, this will return an error.
+	ListExecs() ([]shimExec, error)
 	// KillExec sends `signal` to the exec that matches `eid`. If `all==true`
 	// `eid` MUST be empty and this task will send `signal` to all exec's in the
 	// task and lastly send `signal` to the init exec.
@@ -105,6 +109,7 @@ func verifyTaskUpdateResourcesType(data interface{}) error {
 	switch data.(type) {
 	case *specs.WindowsResources:
 	case *specs.LinuxResources:
+	case *ctrdtaskapi.PolicyFragment:
 	default:
 		return errNotSupportedResourcesRequest
 	}
@@ -117,7 +122,6 @@ func isStatsNotFound(err error) bool {
 	return errdefs.IsNotFound(err) ||
 		hcs.IsNotExist(err) ||
 		hcs.IsOperationInvalidState(err) ||
-		gcs.IsNotExist(err) ||
 		hcs.IsAccessIsDenied(err) ||
 		hcs.IsErrorInvalidHandle(err)
 }

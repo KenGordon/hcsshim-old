@@ -18,7 +18,7 @@ import (
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/runtime"
 	"github.com/containerd/containerd/runtime/v2/task"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
@@ -39,6 +39,10 @@ type shimPod interface {
 	//
 	// If `tid` is not found, this pod MUST return `errdefs.ErrNotFound`.
 	GetTask(tid string) (shimTask, error)
+	// GetTasks returns every task in the pod.
+	//
+	// If a shim cannot be loaded, this will return an error.
+	ListTasks() ([]shimTask, error)
 	// KillTask sends `signal` to task that matches `tid`.
 	//
 	// If `tid` is not found, this pod MUST return `errdefs.ErrNotFound`.
@@ -97,6 +101,7 @@ func createPod(ctx context.Context, events publisher, req *task.CreateTaskReques
 	p := pod{
 		events: events,
 		id:     req.ID,
+		spec:   s,
 	}
 
 	var parent *uvm.UtilityVM
@@ -143,12 +148,6 @@ func createPod(ctx context.Context, events publisher, req *task.CreateTaskReques
 			return nil, err
 		}
 
-		if lopts != nil {
-			err := parent.SetSecurityPolicy(ctx, lopts.SecurityPolicy)
-			if err != nil {
-				return nil, errors.Wrap(err, "unable to set security policy")
-			}
-		}
 	} else if oci.IsJobContainer(s) {
 		// If we're making a job container fake a task (i.e reuse the wcowPodSandbox logic)
 		p.sandboxTask = newWcowPodSandboxTask(ctx, events, req.ID, req.Bundle, parent, "")
@@ -280,6 +279,9 @@ type pod struct {
 	// It MUST be treated as read only in the lifetime of the pod.
 	jobContainer bool
 
+	// spec is the OCI runtime specification for the pod sandbox container.
+	spec *specs.Spec
+
 	workloadTasks sync.Map
 }
 
@@ -320,6 +322,15 @@ func (p *pod) CreateTask(ctx context.Context, req *task.CreateTaskRequest, s *sp
 		if !oci.IsJobContainer(s) {
 			return nil, errors.New("cannot create a normal process isolated container if the pod sandbox is a job container")
 		}
+		// Pass through some annotations from the pod spec that if specified will need to be made available
+		// to every container as well. Kubernetes only passes annotations to RunPodSandbox so there needs to be
+		// a way for individual containers to get access to these.
+		oci.SandboxAnnotationsPassThrough(
+			p.spec.Annotations,
+			s.Annotations,
+			annotations.HostProcessInheritUser,
+			annotations.HostProcessRootfsLocation,
+		)
 	}
 
 	ct, sid, err := oci.GetSandboxTypeAndID(s.Annotations)
@@ -371,6 +382,25 @@ func (p *pod) GetTask(tid string) (shimTask, error) {
 		return nil, errors.Wrapf(errdefs.ErrNotFound, "task with id: '%s' not found", tid)
 	}
 	return raw.(shimTask), nil
+}
+
+func (p *pod) ListTasks() (_ []shimTask, err error) {
+	tasks := []shimTask{p.sandboxTask}
+	p.workloadTasks.Range(func(key, value interface{}) bool {
+		wt, loaded := value.(shimTask)
+		if !loaded {
+			err = fmt.Errorf("failed to load tasks %s", key)
+			return false
+		}
+		tasks = append(tasks, wt)
+		// Iterate all. Returning false stops the iteration. See:
+		// https://pkg.go.dev/sync#Map.Range
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tasks, nil
 }
 
 func (p *pod) KillTask(ctx context.Context, tid, eid string, signal uint32, all bool) error {

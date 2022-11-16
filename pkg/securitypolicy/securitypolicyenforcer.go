@@ -4,66 +4,198 @@
 package securitypolicy
 
 import (
-	"errors"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 
 	specInternal "github.com/Microsoft/hcsshim/internal/guest/spec"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
-	"github.com/Microsoft/hcsshim/internal/hooks"
-	"github.com/Microsoft/hcsshim/pkg/annotations"
+	"github.com/pkg/errors"
 )
+
+type createEnforcerFunc func(base64EncodedPolicy string, criMounts, criPrivilegedMounts []oci.Mount) (SecurityPolicyEnforcer, error)
+
+type EnvList []string
+
+const (
+	openDoorEnforcer = "open_door"
+	standardEnforcer = "standard"
+)
+
+var (
+	registeredEnforcers = map[string]createEnforcerFunc{}
+	defaultEnforcer     = standardEnforcer
+)
+
+func init() {
+	registeredEnforcers[openDoorEnforcer] = createOpenDoorEnforcer
+	registeredEnforcers[standardEnforcer] = createStandardEnforcer
+}
 
 type SecurityPolicyEnforcer interface {
 	EnforceDeviceMountPolicy(target string, deviceHash string) (err error)
 	EnforceDeviceUnmountPolicy(unmountTarget string) (err error)
-	EnforceOverlayMountPolicy(containerID string, layerPaths []string) (err error)
-	EnforceCreateContainerPolicy(containerID string, argList []string, envList []string, workingDir string) (err error)
-	EnforceWaitMountPointsPolicy(containerID string, spec *oci.Spec) error
-	EnforceMountPolicy(sandboxID, containerID string, spec *oci.Spec) error
+	EnforceOverlayMountPolicy(containerID string, layerPaths []string, target string) (err error)
+	EnforceOverlayUnmountPolicy(target string) (err error)
+	EnforceCreateContainerPolicy(sandboxID string, containerID string,
+		argList []string, envList []string, workingDir string, mounts []oci.Mount) (toKeep EnvList, err error)
 	ExtendDefaultMounts([]oci.Mount) error
 	EncodedSecurityPolicy() string
+	EnforceExecInContainerPolicy(containerID string, argList []string, envList []string, workingDir string) (EnvList, error)
+	EnforceExecExternalProcessPolicy(argList []string, envList []string, workingDir string) (EnvList, error)
+	EnforceShutdownContainerPolicy(containerID string) error
+	EnforceSignalContainerProcessPolicy(containerID string, signal syscall.Signal, isInitProcess bool, startupArgList []string) error
+	EnforcePlan9MountPolicy(target string) (err error)
+	EnforcePlan9UnmountPolicy(target string) (err error)
+	EnforceGetPropertiesPolicy() error
+	EnforceDumpStacksPolicy() error
+	EnforceRuntimeLoggingPolicy() (err error)
+	LoadFragment(issuer string, feed string, code string) error
+	EnforceScratchMountPolicy(scratchPath string, encrypted bool) (err error)
+	EnforceScratchUnmountPolicy(scratchPath string) (err error)
 }
 
-func NewSecurityPolicyEnforcer(state SecurityPolicyState, eOpts ...standardEnforcerOpt) (SecurityPolicyEnforcer, error) {
-	if state.SecurityPolicy.AllowAll {
-		if state.SecurityPolicy.Containers.Length > 0 || len(state.SecurityPolicy.Containers.Elements) > 0 {
-			return nil, ErrInvalidAllowAllPolicy
+type stringSet map[string]struct{}
+
+func (s stringSet) add(item string) {
+	s[item] = struct{}{}
+}
+
+func (s stringSet) contains(item string) bool {
+	_, contains := s[item]
+	return contains
+}
+
+func newSecurityPolicyFromBase64JSON(base64EncodedPolicy string) (*SecurityPolicy, error) {
+	// base64 decode the incoming policy string
+	// its base64 encoded because it is coming from an annotation
+	// annotations are a map of string to string
+	// we want to store a complex json object so.... base64 it is
+	jsonPolicy, err := base64.StdEncoding.DecodeString(base64EncodedPolicy)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to decode policy from Base64 format")
+	}
+
+	// json unmarshall the decoded to a SecurityPolicy
+	securityPolicy := new(SecurityPolicy)
+	err = json.Unmarshal(jsonPolicy, securityPolicy)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to unmarshal JSON policy")
+	}
+
+	return securityPolicy, nil
+}
+
+// createAllowAllEnforcer creates and returns OpenDoorSecurityPolicyEnforcer instance.
+// Both AllowAll and Containers cannot be set at the same time.
+func createOpenDoorEnforcer(base64EncodedPolicy string, _, _ []oci.Mount) (SecurityPolicyEnforcer, error) {
+	// This covers the case when an "open_door" enforcer was requested, but no
+	// actual security policy was passed. This can happen e.g. when a container
+	// scratch is created for the first time.
+	if base64EncodedPolicy == "" {
+		return &OpenDoorSecurityPolicyEnforcer{}, nil
+	}
+
+	securityPolicy, err := newSecurityPolicyFromBase64JSON(base64EncodedPolicy)
+	if err != nil {
+		return nil, err
+	}
+
+	policyContainers := securityPolicy.Containers
+	if !securityPolicy.AllowAll || policyContainers.Length > 0 || len(policyContainers.Elements) > 0 {
+		return nil, ErrInvalidOpenDoorPolicy
+	}
+	return &OpenDoorSecurityPolicyEnforcer{
+		encodedSecurityPolicy: base64EncodedPolicy,
+	}, nil
+}
+
+func (c Containers) toInternal() ([]*securityPolicyContainer, error) {
+	containerMapLength := len(c.Elements)
+	internal := make([]*securityPolicyContainer, containerMapLength)
+
+	for i := 0; i < containerMapLength; i++ {
+		index := strconv.Itoa(i)
+		cConf, ok := c.Elements[index]
+		if !ok {
+			return nil, fmt.Errorf("container constraint with index %q not found", index)
 		}
-		return &OpenDoorSecurityPolicyEnforcer{
-			encodedSecurityPolicy: state.EncodedSecurityPolicy.SecurityPolicy,
-		}, nil
-	} else {
-		containers, err := state.SecurityPolicy.Containers.toInternal()
+		cInternal, err := cConf.toInternal()
 		if err != nil {
 			return nil, err
 		}
-		enforcer := NewStandardSecurityPolicyEnforcer(containers, state.EncodedSecurityPolicy.SecurityPolicy)
-		for _, o := range eOpts {
-			if err := o(enforcer); err != nil {
-				return nil, err
-			}
+		internal[i] = cInternal
+	}
+
+	return internal, nil
+}
+
+// createStandardEnforcer creates and returns StandardSecurityPolicyEnforcer instance.
+// Make sure that the input JSON policy can be converted to internal representation
+// and that `criMounts` and `criPrivilegedMounts` can be injected before successful return.
+func createStandardEnforcer(
+	base64EncodedPolicy string,
+	criMounts,
+	criPrivilegedMounts []oci.Mount,
+) (SecurityPolicyEnforcer, error) {
+	securityPolicy, err := newSecurityPolicyFromBase64JSON(base64EncodedPolicy)
+	if err != nil {
+		return nil, err
+	}
+
+	if securityPolicy.AllowAll {
+		return createOpenDoorEnforcer(base64EncodedPolicy, criMounts, criPrivilegedMounts)
+	}
+
+	containers, err := securityPolicy.Containers.toInternal()
+	if err != nil {
+		return nil, err
+	}
+
+	enforcer := NewStandardSecurityPolicyEnforcer(containers, base64EncodedPolicy)
+
+	if err := enforcer.ExtendDefaultMounts(criMounts); err != nil {
+		return nil, err
+	}
+
+	addPrivilegedMountsWrapper := WithPrivilegedMounts(criPrivilegedMounts)
+	if err := addPrivilegedMountsWrapper(enforcer); err != nil {
+		return nil, err
+	}
+	return enforcer, nil
+}
+
+// CreateSecurityPolicyEnforcer returns an appropriate enforcer for input parameters.
+// When `enforcer` isn't return either an AllowAll or default enforcer.
+// Returns an error if the requested `enforcer` implementation isn't registered.
+func CreateSecurityPolicyEnforcer(
+	enforcer string,
+	base64EncodedPolicy string,
+	criMounts,
+	criPrivilegedMounts []oci.Mount,
+) (SecurityPolicyEnforcer, error) {
+	if enforcer == "" {
+		enforcer = defaultEnforcer
+		if base64EncodedPolicy == "" {
+			enforcer = openDoorEnforcer
 		}
-		return enforcer, nil
+	}
+	if createEnforcer, ok := registeredEnforcers[enforcer]; !ok {
+		return nil, fmt.Errorf("unknown enforcer: %q", enforcer)
+	} else {
+		return createEnforcer(base64EncodedPolicy, criMounts, criPrivilegedMounts)
 	}
 }
 
-type mountInternal struct {
-	Source      string
-	Destination string
-	Type        string
-	Options     []string
-}
-
 // newMountConstraint creates an internal mount constraint object from given
-// source, destination, type and options
+// source, destination, type and options.
 func newMountConstraint(src, dst string, mType string, mOpts []string) mountInternal {
 	return mountInternal{
 		Source:      src,
@@ -95,28 +227,6 @@ func WithPrivilegedMounts(mounts []oci.Mount) standardEnforcerOpt {
 		}
 		return nil
 	}
-}
-
-// Internal version of Container
-type securityPolicyContainer struct {
-	// The command that we will allow the container to execute
-	Command []string
-	// The rules for determining if a given environment variable is allowed
-	EnvRules []EnvRuleConfig
-	// An ordered list of dm-verity root hashes for each layer that makes up
-	// "a container". Containers are constructed as an overlay file system. The
-	// order that the layers are overlayed is important and needs to be enforced
-	// as part of policy.
-	Layers []string
-	// WorkingDir is a path to container's working directory, which all the processes
-	// will default to.
-	WorkingDir string
-	// Unordered list of mounts which are expected to be present when the container
-	// starts
-	WaitMountPoints []string
-	// A list of constraints for determining if a given mount is allowed.
-	Mounts        []mountInternal
-	AllowElevated bool
 }
 
 // StandardSecurityPolicyEnforcer implements SecurityPolicyEnforcer interface
@@ -189,172 +299,6 @@ func NewStandardSecurityPolicyEnforcer(
 	}
 }
 
-func (c Containers) toInternal() ([]*securityPolicyContainer, error) {
-	containerMapLength := len(c.Elements)
-	if c.Length != containerMapLength {
-		err := fmt.Errorf(
-			"container numbers don't match in policy. expected: %d, actual: %d",
-			c.Length,
-			containerMapLength,
-		)
-		return nil, err
-	}
-
-	internal := make([]*securityPolicyContainer, containerMapLength)
-
-	for i := 0; i < containerMapLength; i++ {
-		index := strconv.Itoa(i)
-		cConf, ok := c.Elements[index]
-		if !ok {
-			return nil, fmt.Errorf("container constraint with index %q not found", index)
-		}
-		cInternal, err := cConf.toInternal()
-		if err != nil {
-			return nil, err
-		}
-		// save off new container
-		internal[i] = &cInternal
-	}
-
-	return internal, nil
-}
-
-func (c Container) toInternal() (securityPolicyContainer, error) {
-	command, err := c.Command.toInternal()
-	if err != nil {
-		return securityPolicyContainer{}, err
-	}
-
-	envRules, err := c.EnvRules.toInternal()
-	if err != nil {
-		return securityPolicyContainer{}, err
-	}
-
-	layers, err := c.Layers.toInternal()
-	if err != nil {
-		return securityPolicyContainer{}, err
-	}
-
-	waitMounts, err := c.WaitMountPoints.toInternal()
-	if err != nil {
-		return securityPolicyContainer{}, err
-	}
-
-	mounts, err := c.Mounts.toInternal()
-	if err != nil {
-		return securityPolicyContainer{}, err
-	}
-	return securityPolicyContainer{
-		Command:  command,
-		EnvRules: envRules,
-		Layers:   layers,
-		// No need to have toInternal(), because WorkingDir is a string both
-		// internally and in the policy.
-		WorkingDir:      c.WorkingDir,
-		WaitMountPoints: waitMounts,
-		Mounts:          mounts,
-		AllowElevated:   c.AllowElevated,
-	}, nil
-}
-
-func (c CommandArgs) toInternal() ([]string, error) {
-	if c.Length != len(c.Elements) {
-		return nil, fmt.Errorf("command argument numbers don't match in policy. expected: %d, actual: %d", c.Length, len(c.Elements))
-	}
-
-	return stringMapToStringArray(c.Elements)
-}
-
-func (e EnvRules) toInternal() ([]EnvRuleConfig, error) {
-	envRulesMapLength := len(e.Elements)
-	if e.Length != envRulesMapLength {
-		return nil, fmt.Errorf("env rule numbers don't match in policy. expected: %d, actual: %d", e.Length, envRulesMapLength)
-	}
-
-	envRules := make([]EnvRuleConfig, envRulesMapLength)
-	for i := 0; i < envRulesMapLength; i++ {
-		eIndex := strconv.Itoa(i)
-		elem, ok := e.Elements[eIndex]
-		if !ok {
-			return nil, fmt.Errorf("env rule with index %q doesn't exist", eIndex)
-		}
-		rule := EnvRuleConfig{
-			Strategy: elem.Strategy,
-			Rule:     elem.Rule,
-		}
-		envRules[i] = rule
-	}
-
-	return envRules, nil
-}
-
-func (l Layers) toInternal() ([]string, error) {
-	if l.Length != len(l.Elements) {
-		return nil, fmt.Errorf("layer numbers don't match in policy. expected: %d, actual: %d", l.Length, len(l.Elements))
-	}
-
-	return stringMapToStringArray(l.Elements)
-}
-
-func (wm WaitMountPoints) toInternal() ([]string, error) {
-	if wm.Length != len(wm.Elements) {
-		return nil, fmt.Errorf("expectedMounts numbers don't match in policy. expected: %d, actual: %d", wm.Length, len(wm.Elements))
-	}
-
-	return stringMapToStringArray(wm.Elements)
-}
-
-func (o Options) toInternal() ([]string, error) {
-	optLength := len(o.Elements)
-	if o.Length != optLength {
-		return nil, fmt.Errorf("mount option numbers don't match in policy. expected: %d, actual: %d", o.Length, optLength)
-	}
-	return stringMapToStringArray(o.Elements)
-}
-
-func (m Mounts) toInternal() ([]mountInternal, error) {
-	mountLength := len(m.Elements)
-	if m.Length != mountLength {
-		return nil, fmt.Errorf("mount constraint numbers don't match in policy. expected: %d, actual: %d", m.Length, mountLength)
-	}
-
-	mountConstraints := make([]mountInternal, mountLength)
-	for i := 0; i < mountLength; i++ {
-		mIndex := strconv.Itoa(i)
-		mount, ok := m.Elements[mIndex]
-		if !ok {
-			return nil, fmt.Errorf("mount constraint with index %q not found", mIndex)
-		}
-		opts, err := mount.Options.toInternal()
-		if err != nil {
-			return nil, err
-		}
-		mountConstraints[i] = mountInternal{
-			Source:      mount.Source,
-			Destination: mount.Destination,
-			Type:        mount.Type,
-			Options:     opts,
-		}
-	}
-	return mountConstraints, nil
-}
-
-func stringMapToStringArray(m map[string]string) ([]string, error) {
-	mapSize := len(m)
-	out := make([]string, mapSize)
-
-	for i := 0; i < mapSize; i++ {
-		index := strconv.Itoa(i)
-		value, ok := m[index]
-		if !ok {
-			return nil, fmt.Errorf("element with index %q not found", index)
-		}
-		out[i] = value
-	}
-
-	return out, nil
-}
-
 // EnforceDeviceMountPolicy for StandardSecurityPolicyEnforcer validates that
 // the target block device's root hash matches any container in SecurityPolicy.
 // Block device targets with invalid root hashes are rejected.
@@ -380,6 +324,14 @@ func (pe *StandardSecurityPolicyEnforcer) EnforceDeviceMountPolicy(target string
 	for _, container := range pe.Containers {
 		for _, layer := range container.Layers {
 			if deviceHash == layer {
+				if existingHash := pe.Devices[target]; existingHash != "" {
+					return fmt.Errorf(
+						"conflicting device hashes for target %s: old=%s, new=%s",
+						target,
+						existingHash,
+						deviceHash,
+					)
+				}
 				pe.Devices[target] = deviceHash
 				return nil
 			}
@@ -420,7 +372,7 @@ func (pe *StandardSecurityPolicyEnforcer) EnforceDeviceUnmountPolicy(unmountTarg
 // "run command" which come with a container ID, we can find the corresponding
 // container index and use that to look up the command in the appropriate
 // security policy container instance.
-func (pe *StandardSecurityPolicyEnforcer) EnforceOverlayMountPolicy(containerID string, layerPaths []string) (err error) {
+func (pe *StandardSecurityPolicyEnforcer) EnforceOverlayMountPolicy(containerID string, layerPaths []string, target string) (err error) {
 	pe.mutex.Lock()
 	defer pe.mutex.Unlock()
 
@@ -456,12 +408,11 @@ func (pe *StandardSecurityPolicyEnforcer) EnforceOverlayMountPolicy(containerID 
 
 	for _, i := range matchedContainers {
 		existing := pe.ContainerIndexToContainerIds[i]
-		if len(existing) < len(matchedContainers) {
-			pe.expandMatchesForContainerIndex(i, containerID)
-		} else {
-			errmsg := fmt.Sprintf("layerPaths '%v' already used in maximum number of container overlays", layerPaths)
+		if len(existing) >= len(matchedContainers) {
+			errmsg := fmt.Sprintf("layerPaths '%v' already used in maximum number of container overlays. This is likely because the security policy allows the container to be run only once.", layerPaths)
 			return errors.New(errmsg)
 		}
+		pe.expandMatchesForContainerIndex(i, containerID)
 	}
 
 	return nil
@@ -475,39 +426,123 @@ func (pe *StandardSecurityPolicyEnforcer) EnforceOverlayMountPolicy(containerID 
 //
 // Devices and ContainerIndexToContainerIds are used to build up an
 // understanding of the containers running with a UVM as they come up and map
-// them back to a container definition from the user supplied SecurityPolicy
+// them back to a container definition from the user supplied SecurityPolicy.
 func (pe *StandardSecurityPolicyEnforcer) EnforceCreateContainerPolicy(
+	sandboxID string,
 	containerID string,
 	argList []string,
 	envList []string,
 	workingDir string,
-) (err error) {
+	mounts []oci.Mount,
+) (toKeep EnvList, err error) {
 	pe.mutex.Lock()
 	defer pe.mutex.Unlock()
 
 	if len(pe.Containers) < 1 {
-		return errors.New("policy doesn't allow mounting containers")
+		return nil, errors.New("policy doesn't allow mounting containers")
 	}
 
 	if _, e := pe.startedContainers[containerID]; e {
-		return errors.New("container has already been started")
+		return nil, errors.New("container has already been started")
 	}
 
 	if err = pe.enforceCommandPolicy(containerID, argList); err != nil {
-		return err
+		return nil, err
 	}
 
 	if err = pe.enforceEnvironmentVariablePolicy(containerID, envList); err != nil {
-		return err
+		return nil, err
 	}
 
 	if err = pe.enforceWorkingDirPolicy(containerID, workingDir); err != nil {
-		return err
+		return nil, err
+	}
+
+	if err = pe.enforceMountPolicy(sandboxID, containerID, mounts); err != nil {
+		return nil, err
 	}
 
 	// record that we've allowed this container to start
 	pe.startedContainers[containerID] = struct{}{}
 
+	return envList, nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforceExecInContainerPolicy(_ string, _ []string, envList []string, _ string) (EnvList, error) {
+	return envList, nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforceExecExternalProcessPolicy(_ []string, envList []string, _ string) (EnvList, error) {
+	return envList, nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforceShutdownContainerPolicy(_ string) error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforceSignalContainerProcessPolicy(_ string, _ syscall.Signal, _ bool, _ []string) error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforcePlan9MountPolicy(_ string) error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforcePlan9UnmountPolicy(_ string) error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforceOverlayUnmountPolicy(string) error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforceGetPropertiesPolicy() error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforceDumpStacksPolicy() error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) EnforceRuntimeLoggingPolicy() error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (*StandardSecurityPolicyEnforcer) LoadFragment(_ string, _ string, _ string) error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (StandardSecurityPolicyEnforcer) EnforceScratchMountPolicy(string, bool) error {
+	return nil
+}
+
+// Stub. We are deprecating the standard enforcer. Newly added enforcement
+// points are simply allowed.
+func (StandardSecurityPolicyEnforcer) EnforceScratchUnmountPolicy(string) error {
 	return nil
 }
 
@@ -626,15 +661,14 @@ func equalForOverlay(a1 []string, a2 []string) bool {
 	// We've stored the layers from bottom to top they are in layerPaths as
 	// top to bottom (the order a string gets concatenated for the unix mount
 	// command). W do our check with that in mind.
-	if len(a1) == len(a2) {
-		topIndex := len(a2) - 1
-		for i, v := range a1 {
-			if v != a2[topIndex-i] {
-				return false
-			}
-		}
-	} else {
+	if len(a1) != len(a2) {
 		return false
+	}
+	topIndex := len(a2) - 1
+	for i, v := range a1 {
+		if v != a2[topIndex-i] {
+			return false
+		}
 	}
 	return true
 }
@@ -678,19 +712,16 @@ func (pe *StandardSecurityPolicyEnforcer) ExtendDefaultMounts(defaultMounts []oc
 	return nil
 }
 
-// EnforceMountPolicy for StandardSecurityPolicyEnforcer validates various
+// enforceMountPolicy for StandardSecurityPolicyEnforcer validates various
 // default mounts injected into container spec by GCS or containerD. As part of
 // the enforcement, the method also narrows down possible container IDs with
 // the same overlay.
-func (pe *StandardSecurityPolicyEnforcer) EnforceMountPolicy(sandboxID, containerID string, spec *oci.Spec) (err error) {
-	pe.mutex.Lock()
-	defer pe.mutex.Unlock()
-
+func (pe *StandardSecurityPolicyEnforcer) enforceMountPolicy(sandboxID, containerID string, mounts []oci.Mount) (err error) {
 	possibleIndices := pe.possibleIndicesForID(containerID)
 
-	for _, specMnt := range spec.Mounts {
+	for _, mount := range mounts {
 		// first check against default mounts
-		if err := pe.enforceDefaultMounts(specMnt); err == nil {
+		if err := pe.enforceDefaultMounts(mount); err == nil {
 			continue
 		}
 
@@ -699,7 +730,7 @@ func (pe *StandardSecurityPolicyEnforcer) EnforceMountPolicy(sandboxID, containe
 		// out which container this mount spec corresponds to.
 		for _, pIndex := range possibleIndices {
 			cont := pe.Containers[pIndex]
-			if err = cont.matchMount(sandboxID, specMnt); err == nil {
+			if err = cont.matchMount(sandboxID, mount); err == nil {
 				mountOk = true
 			} else {
 				pe.narrowMatchesForContainerIndex(pIndex, containerID)
@@ -707,10 +738,11 @@ func (pe *StandardSecurityPolicyEnforcer) EnforceMountPolicy(sandboxID, containe
 		}
 
 		if !mountOk {
-			retErr := fmt.Errorf("mount %+v is not allowed by mount constraints", specMnt)
+			retErr := fmt.Errorf("mount %+v is not allowed by mount constraints", mount)
 			return retErr
 		}
 	}
+
 	return nil
 }
 
@@ -777,92 +809,6 @@ func stringSlicesEqual(slice1, slice2 []string) bool {
 	return true
 }
 
-// EnforceWaitMountPointsPolicy for StandardSecurityPolicyEnforcer injects a
-// hooks.CreateRuntime hook into container spec and the hook ensures that
-// the expected mounts appear prior container start. At the moment enforcement
-// is expected to take place inside LCOW UVM.
-//
-// Expected mount is provided as a path under a sandbox mount path inside
-// container, e.g., sandbox mount is at path "/path/in/container" and wait path
-// is "/path/in/container/wait/path", which corresponds to
-// "/run/gcs/c/<podID>/sandboxMounts/path/on/the/host/wait/path"
-//
-// Iterates through container mounts to identify the correct sandbox
-// mount where the wait path is nested under. The mount spec will
-// be something like:
-// {
-//    "source": "/run/gcs/c/<podID>/sandboxMounts/path/on/host",
-//    "destination": "/path/in/container"
-// }
-// The wait path will be "/path/in/container/wait/path". To find the corresponding
-// sandbox mount do a prefix match on wait path against all container mounts
-// Destination and resolve the full path inside UVM. For example above it becomes
-// "/run/gcs/c/<podID>/sandboxMounts/path/on/host/wait/path"
-func (pe *StandardSecurityPolicyEnforcer) EnforceWaitMountPointsPolicy(containerID string, spec *oci.Spec) error {
-	pe.mutex.Lock()
-	defer pe.mutex.Unlock()
-
-	if len(pe.Containers) < 1 {
-		return errors.New("policy doesn't allow mounting containers")
-	}
-
-	sandboxID := spec.Annotations[annotations.KubernetesSandboxID]
-	if sandboxID == "" {
-		return errors.New("no sandbox ID present in spec annotations")
-	}
-
-	var wMounts []string
-	pIndices := pe.possibleIndicesForID(containerID)
-	if len(pIndices) == 0 {
-		return errors.New("no valid container indices found")
-	}
-
-	// Unlike environment variable and command line enforcement, there isn't anything
-	// to validate here, since we're essentially just injecting hooks when necessary
-	// for all containers.
-	matchFound := false
-	for _, index := range pIndices {
-		if !matchFound {
-			matchFound = true
-			wMounts = pe.Containers[index].WaitMountPoints
-		} else {
-			pe.narrowMatchesForContainerIndex(index, containerID)
-		}
-	}
-
-	if len(wMounts) == 0 {
-		return nil
-	}
-
-	var wPaths []string
-	for _, mount := range wMounts {
-		var wp string
-		for _, m := range spec.Mounts {
-			// prefix matching to find correct sandbox mount
-			if strings.HasPrefix(mount, m.Destination) {
-				wp = filepath.Join(m.Source, strings.TrimPrefix(mount, m.Destination))
-				break
-			}
-		}
-		if wp == "" {
-			return fmt.Errorf("invalid mount path: %q", mount)
-		}
-		wPaths = append(wPaths, filepath.Clean(wp))
-	}
-
-	pathsArg := strings.Join(wPaths, ",")
-	waitPathsBinary := "/bin/wait-paths"
-	args := []string{
-		waitPathsBinary,
-		"--paths",
-		pathsArg,
-		"--timeout",
-		"60",
-	}
-	hook := hooks.NewOCIHook(waitPathsBinary, args, os.Environ())
-	return hooks.AddOCIHook(spec, hooks.CreateRuntime, hook)
-}
-
 func (pe *StandardSecurityPolicyEnforcer) EncodedSecurityPolicy() string {
 	return pe.encodedSecurityPolicy
 }
@@ -881,19 +827,51 @@ func (OpenDoorSecurityPolicyEnforcer) EnforceDeviceUnmountPolicy(_ string) error
 	return nil
 }
 
-func (OpenDoorSecurityPolicyEnforcer) EnforceOverlayMountPolicy(_ string, _ []string) error {
+func (OpenDoorSecurityPolicyEnforcer) EnforceOverlayMountPolicy(_ string, _ []string, _ string) error {
 	return nil
 }
 
-func (OpenDoorSecurityPolicyEnforcer) EnforceCreateContainerPolicy(_ string, _ []string, _ []string, _ string) error {
+func (OpenDoorSecurityPolicyEnforcer) EnforceOverlayUnmountPolicy(string) error {
 	return nil
 }
 
-func (OpenDoorSecurityPolicyEnforcer) EnforceMountPolicy(_, _ string, _ *oci.Spec) error {
+func (OpenDoorSecurityPolicyEnforcer) EnforceCreateContainerPolicy(_, _ string, _ []string, envList []string, _ string, _ []oci.Mount) (EnvList, error) {
+	return envList, nil
+}
+
+func (OpenDoorSecurityPolicyEnforcer) EnforceExecInContainerPolicy(_ string, _ []string, envList []string, _ string) (EnvList, error) {
+	return envList, nil
+}
+
+func (OpenDoorSecurityPolicyEnforcer) EnforceExecExternalProcessPolicy(_ []string, envList []string, _ string) (EnvList, error) {
+	return envList, nil
+}
+
+func (*OpenDoorSecurityPolicyEnforcer) EnforceShutdownContainerPolicy(_ string) error {
 	return nil
 }
 
-func (OpenDoorSecurityPolicyEnforcer) EnforceWaitMountPointsPolicy(_ string, _ *oci.Spec) error {
+func (*OpenDoorSecurityPolicyEnforcer) EnforceSignalContainerProcessPolicy(_ string, _ syscall.Signal, _ bool, _ []string) error {
+	return nil
+}
+
+func (*OpenDoorSecurityPolicyEnforcer) EnforcePlan9MountPolicy(_ string) error {
+	return nil
+}
+
+func (*OpenDoorSecurityPolicyEnforcer) EnforcePlan9UnmountPolicy(_ string) error {
+	return nil
+}
+
+func (OpenDoorSecurityPolicyEnforcer) EnforceGetPropertiesPolicy() error {
+	return nil
+}
+
+func (OpenDoorSecurityPolicyEnforcer) EnforceDumpStacksPolicy() error {
+	return nil
+}
+
+func (OpenDoorSecurityPolicyEnforcer) LoadFragment(_ string, _ string, _ string) error {
 	return nil
 }
 
@@ -901,12 +879,24 @@ func (OpenDoorSecurityPolicyEnforcer) ExtendDefaultMounts(_ []oci.Mount) error {
 	return nil
 }
 
+func (OpenDoorSecurityPolicyEnforcer) EnforceRuntimeLoggingPolicy() error {
+	return nil
+}
+
 func (oe *OpenDoorSecurityPolicyEnforcer) EncodedSecurityPolicy() string {
 	return oe.encodedSecurityPolicy
 }
 
+func (OpenDoorSecurityPolicyEnforcer) EnforceScratchMountPolicy(string, bool) error {
+	return nil
+}
+
+func (OpenDoorSecurityPolicyEnforcer) EnforceScratchUnmountPolicy(string) error {
+	return nil
+}
+
 type ClosedDoorSecurityPolicyEnforcer struct {
-	encodedSecurityPolicy string
+	encodedSecurityPolicy string //nolint:unused
 }
 
 var _ SecurityPolicyEnforcer = (*ClosedDoorSecurityPolicyEnforcer)(nil)
@@ -919,26 +909,70 @@ func (ClosedDoorSecurityPolicyEnforcer) EnforceDeviceUnmountPolicy(_ string) err
 	return errors.New("unmounting is denied by policy")
 }
 
-func (ClosedDoorSecurityPolicyEnforcer) EnforceOverlayMountPolicy(_ string, _ []string) error {
+func (ClosedDoorSecurityPolicyEnforcer) EnforceOverlayMountPolicy(_ string, _ []string, _ string) error {
 	return errors.New("creating an overlay fs is denied by policy")
 }
 
-func (ClosedDoorSecurityPolicyEnforcer) EnforceCreateContainerPolicy(_ string, _ []string, _ []string, _ string) error {
-	return errors.New("running commands is denied by policy")
+func (ClosedDoorSecurityPolicyEnforcer) EnforceOverlayUnmountPolicy(string) error {
+	return errors.New("removing an overlay fs is denied by policy")
 }
 
-func (ClosedDoorSecurityPolicyEnforcer) EnforceWaitMountPointsPolicy(_ string, _ *oci.Spec) error {
-	return errors.New("enforcing wait mount points is denied by policy")
+func (ClosedDoorSecurityPolicyEnforcer) EnforceCreateContainerPolicy(_, _ string, _ []string, _ []string, _ string, _ []oci.Mount) (EnvList, error) {
+	return nil, errors.New("running commands is denied by policy")
 }
 
-func (ClosedDoorSecurityPolicyEnforcer) EnforceMountPolicy(_, _ string, _ *oci.Spec) error {
-	return errors.New("container mounts are denied by policy")
+func (ClosedDoorSecurityPolicyEnforcer) EnforceExecInContainerPolicy(_ string, _ []string, _ []string, _ string) (EnvList, error) {
+	return nil, errors.New("starting additional processes in a container is denied by policy")
+}
+
+func (ClosedDoorSecurityPolicyEnforcer) EnforceExecExternalProcessPolicy(_ []string, _ []string, _ string) (EnvList, error) {
+	return nil, errors.New("starting additional processes in uvm is denied by policy")
+}
+
+func (*ClosedDoorSecurityPolicyEnforcer) EnforceShutdownContainerPolicy(_ string) error {
+	return errors.New("shutting down containers is denied by policy")
+}
+
+func (*ClosedDoorSecurityPolicyEnforcer) EnforceSignalContainerProcessPolicy(_ string, _ syscall.Signal, _ bool, _ []string) error {
+	return errors.New("signalling container processes is denied by policy")
+}
+
+func (*ClosedDoorSecurityPolicyEnforcer) EnforcePlan9MountPolicy(_ string) error {
+	return errors.New("mounting is denied by policy")
+}
+
+func (*ClosedDoorSecurityPolicyEnforcer) EnforcePlan9UnmountPolicy(_ string) error {
+	return errors.New("unmounting is denied by policy")
+}
+
+func (ClosedDoorSecurityPolicyEnforcer) EnforceGetPropertiesPolicy() error {
+	return errors.New("getting container properties is denied by policy")
+}
+
+func (ClosedDoorSecurityPolicyEnforcer) EnforceDumpStacksPolicy() error {
+	return errors.New("getting stack dumps is denied by policy")
+}
+
+func (ClosedDoorSecurityPolicyEnforcer) LoadFragment(_ string, _ string, _ string) error {
+	return errors.New("loading fragments is denied by policy")
 }
 
 func (ClosedDoorSecurityPolicyEnforcer) ExtendDefaultMounts(_ []oci.Mount) error {
 	return nil
 }
 
+func (ClosedDoorSecurityPolicyEnforcer) EnforceRuntimeLoggingPolicy() error {
+	return errors.New("runtime logging is denied by policy")
+}
+
 func (ClosedDoorSecurityPolicyEnforcer) EncodedSecurityPolicy() string {
 	return ""
+}
+
+func (ClosedDoorSecurityPolicyEnforcer) EnforceScratchMountPolicy(string, bool) error {
+	return errors.New("mounting scratch is denied by the policy")
+}
+
+func (ClosedDoorSecurityPolicyEnforcer) EnforceScratchUnmountPolicy(string) error {
+	return errors.New("unmounting scratch is denied by the policy")
 }

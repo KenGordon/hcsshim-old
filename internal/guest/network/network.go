@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +26,7 @@ var (
 	pciFindDeviceFullPath             = pci.FindDeviceFullPath
 	storageWaitForFileMatchingPattern = storage.WaitForFileMatchingPattern
 	vmbusWaitForDevicePath            = vmbus.WaitForDevicePath
-	ioutilReadDir                     = ioutil.ReadDir
+	ioReadDir                         = os.ReadDir
 )
 
 // maxDNSSearches is limited to 6 in `man 5 resolv.conf`
@@ -123,9 +122,10 @@ func InstanceIDToName(ctx context.Context, id string, vpciAssigned bool) (_ stri
 	vmBusID := strings.ToLower(id)
 	span.AddAttributes(trace.StringAttribute("adapterInstanceID", vmBusID))
 
-	netDevicePath := ""
+	var netDevicePath string
 	if vpciAssigned {
-		pciDevicePath, err := pciFindDeviceFullPath(ctx, vmBusID)
+		var pciDevicePath string
+		pciDevicePath, err = pciFindDeviceFullPath(ctx, vmBusID)
 		if err != nil {
 			return "", err
 		}
@@ -139,9 +139,9 @@ func InstanceIDToName(ctx context.Context, id string, vpciAssigned bool) (_ stri
 		return "", errors.Wrapf(err, "failed to find adapter %v sysfs path", vmBusID)
 	}
 
-	var deviceDirs []os.FileInfo
+	var deviceDirs []os.DirEntry
 	for {
-		deviceDirs, err = ioutilReadDir(netDevicePath)
+		deviceDirs, err = ioReadDir(netDevicePath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				select {

@@ -3,21 +3,23 @@
 package internal
 
 import (
-	"io/ioutil"
+	"io"
 	"testing"
 
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/schemaversion"
 	"github.com/Microsoft/hcsshim/osversion"
-	_ "github.com/Microsoft/hcsshim/test/functional/manifest"
 	"github.com/sirupsen/logrus"
+
+	_ "github.com/Microsoft/hcsshim/test/internal/manifest"
 )
 
 func init() {
-	logrus.SetOutput(ioutil.Discard)
+	logrus.SetOutput(io.Discard)
 }
 
 func TestDetermineSchemaVersion(t *testing.T) {
+	t.Helper()
 	osv := osversion.Get()
 
 	if osv.Build >= osversion.RS5 {
@@ -40,7 +42,6 @@ func TestDetermineSchemaVersion(t *testing.T) {
 		if err := schemaversion.IsSupported(schemaversion.SchemaV10()); err != nil {
 			t.Fatalf("v1 expected to be supported")
 		}
-
 	} else {
 		if sv := schemaversion.DetermineSchemaVersion(nil); !schemaversion.IsV10(sv) {
 			t.Fatalf("expected v1")

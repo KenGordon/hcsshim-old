@@ -5,7 +5,6 @@ package runc
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -102,16 +101,12 @@ func (c *container) Delete() error {
 		runcErr := parseRuncError(string(out))
 		return errors.Wrapf(runcErr, "runc delete failed with %v: %s", err, string(out))
 	}
-	if err := c.r.cleanupContainer(c.id); err != nil {
-		return err
-	}
-
-	return nil
+	return c.r.cleanupContainer(c.id)
 }
 
 // Pause suspends all processes running in the container.
 func (c *container) Pause() error {
-	cmd := runcCommandLog("pause", c.id)
+	cmd := runcCommand("pause", c.id)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		runcErr := parseRuncError(string(out))
@@ -154,7 +149,7 @@ func (c *container) GetState() (*runtime.ContainerState, error) {
 // deleted are still considered to exist.
 func (c *container) Exists() (bool, error) {
 	// use global path because container may not exist
-	cmd := runcCommandLog("state", c.id)
+	cmd := runcCommand("state", c.id)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		runcErr := parseRuncError(string(out))
@@ -192,7 +187,7 @@ func (c *container) GetRunningProcesses() ([]runtime.ContainerProcessState, erro
 
 	// For each process state directory which corresponds to a running pid, set
 	// that the process was created by the Runtime.
-	processDirs, err := ioutil.ReadDir(filepath.Join(containerFilesDir, c.id))
+	processDirs, err := os.ReadDir(filepath.Join(containerFilesDir, c.id))
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to read the contents of container directory %s", filepath.Join(containerFilesDir, c.id))
 	}
@@ -239,7 +234,7 @@ func (c *container) GetAllProcesses() ([]runtime.ContainerProcessState, error) {
 		pidMap[pid] = &runtime.ContainerProcessState{Pid: pid, Command: command, CreatedByRuntime: false, IsZombie: false}
 	}
 
-	processDirs, err := ioutil.ReadDir(filepath.Join(containerFilesDir, c.id))
+	processDirs, err := os.ReadDir(filepath.Join(containerFilesDir, c.id))
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to read the contents of container directory %s", filepath.Join(containerFilesDir, c.id))
 	}
@@ -301,7 +296,7 @@ func (c *container) Wait() (int, error) {
 			// finish "soon" after Wait() returns since HCS expects the stdio
 			// connections to close before container shutdown can complete.
 			entity.WithField(logfields.ProcessID, process.Pid).Debug("waiting on container exec process")
-			c.r.waitOnProcess(process.Pid)
+			_, _ = c.r.waitOnProcess(process.Pid)
 		}
 	}
 	exitCode, err := c.init.Wait()
@@ -315,7 +310,7 @@ func (c *container) Wait() (int, error) {
 // runExecCommand sets up the arguments for calling runc exec.
 func (c *container) runExecCommand(processDef *oci.Process, stdioSet *stdio.ConnectionSet) (p runtime.Process, err error) {
 	// Create a temporary random directory to store the process's files.
-	tempProcessDir, err := ioutil.TempDir(containerFilesDir, c.id)
+	tempProcessDir, err := os.MkdirTemp(containerFilesDir, c.id)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +334,11 @@ func (c *container) runExecCommand(processDef *oci.Process, stdioSet *stdio.Conn
 // and ExecProcess. For V2 container creation stdioSet will be nil, in this case
 // it is expected that the caller starts the relay previous to calling Start on
 // the container.
-func (c *container) startProcess(tempProcessDir string, hasTerminal bool, stdioSet *stdio.ConnectionSet, initialArgs ...string) (p *process, err error) {
+func (c *container) startProcess(
+	tempProcessDir string,
+	hasTerminal bool,
+	stdioSet *stdio.ConnectionSet, initialArgs ...string,
+) (p *process, err error) {
 	args := initialArgs
 
 	if err := setSubreaper(1); err != nil {
@@ -400,7 +399,7 @@ func (c *container) startProcess(tempProcessDir string, hasTerminal bool, stdioS
 		var master *os.File
 		master, err = c.r.getMasterFromSocket(sockListener)
 		if err != nil {
-			cmd.Process.Kill()
+			_ = cmd.Process.Kill()
 			return nil, errors.Wrapf(err, "failed to get pty master for process in container %s", c.id)
 		}
 		// Keep master open for the relay unless there is an error.

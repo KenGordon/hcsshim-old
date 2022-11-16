@@ -2,10 +2,8 @@ package main
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 
 	"github.com/BurntSushi/toml"
@@ -15,8 +13,11 @@ import (
 )
 
 var (
-	configFile = flag.String("c", "", "config")
-	outputJSON = flag.Bool("j", false, "json")
+	configFile        = flag.String("c", "", "config path")
+	outputType        = flag.String("t", "", "[rego|json|fragment]")
+	fragmentNamespace = flag.String("n", "", "fragment namespace")
+	fragmentSVN       = flag.String("v", "", "fragment svn")
+	outputRaw         = flag.Bool("r", false, "whether to print the raw output")
 )
 
 func main() {
@@ -27,7 +28,7 @@ func main() {
 	}
 
 	err := func() (err error) {
-		configData, err := ioutil.ReadFile(*configFile)
+		configData, err := os.ReadFile(*configFile)
 		if err != nil {
 			return err
 		}
@@ -39,26 +40,43 @@ func main() {
 			return err
 		}
 
-		policy, err := func() (*securitypolicy.SecurityPolicy, error) {
-			if config.AllowAll {
-				return securitypolicy.NewOpenDoorPolicy(), nil
-			} else {
-				return createPolicyFromConfig(config)
-			}
-		}()
-
+		defaultContainers := helpers.DefaultContainerConfigs()
+		config.Containers = append(config.Containers, defaultContainers...)
+		policyContainers, err := helpers.PolicyContainersFromConfigs(config.Containers)
 		if err != nil {
 			return err
 		}
 
-		j, err := json.Marshal(policy)
+		var policyCode string
+		if *outputType == "fragment" {
+			policyCode, err = securitypolicy.MarshalFragment(
+				*fragmentNamespace,
+				*fragmentSVN,
+				policyContainers,
+				config.ExternalProcesses,
+				config.Fragments)
+		} else {
+			policyCode, err = securitypolicy.MarshalPolicy(
+				*outputType,
+				config.AllowAll,
+				policyContainers,
+				config.ExternalProcesses,
+				config.Fragments,
+				config.AllowPropertiesAccess,
+				config.AllowDumpStacks,
+				config.AllowRuntimeLogging,
+				config.AllowEnvironmentVariableDropping,
+				config.AllowUnencryptedScratch,
+			)
+		}
 		if err != nil {
 			return err
 		}
-		if *outputJSON {
-			fmt.Printf("%s\n", j)
+
+		if *outputRaw {
+			fmt.Printf("%s\n", policyCode)
 		}
-		b := base64.StdEncoding.EncodeToString(j)
+		b := base64.StdEncoding.EncodeToString([]byte(policyCode))
 		fmt.Printf("%s\n", b)
 
 		return nil
@@ -68,16 +86,4 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-}
-
-func createPolicyFromConfig(config *securitypolicy.PolicyConfig) (*securitypolicy.SecurityPolicy, error) {
-	// Add default containers to the policy config to get the root hash
-	// and any environment variable rules we might need
-	defaultContainers := helpers.DefaultContainerConfigs()
-	config.Containers = append(config.Containers, defaultContainers...)
-	policyContainers, err := helpers.PolicyContainersFromConfigs(config.Containers)
-	if err != nil {
-		return nil, err
-	}
-	return securitypolicy.NewSecurityPolicy(false, policyContainers), nil
 }

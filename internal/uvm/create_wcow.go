@@ -21,6 +21,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/processorinfo"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/schemaversion"
+	"github.com/Microsoft/hcsshim/internal/security"
 	"github.com/Microsoft/hcsshim/internal/uvmfolder"
 	"github.com/Microsoft/hcsshim/internal/wclayer"
 	"github.com/Microsoft/hcsshim/internal/wcow"
@@ -222,6 +223,23 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uv
 		}
 	}
 
+	// Set boot options
+	if opts.DumpDirectoryPath != "" {
+		if info, err := os.Stat(opts.DumpDirectoryPath); err != nil {
+			return nil, fmt.Errorf("failed to stat dump directory %s: %w", opts.DumpDirectoryPath, err)
+		} else if !info.IsDir() {
+			return nil, fmt.Errorf("dump directory path %s isn't a directory", opts.DumpDirectoryPath)
+		}
+		if err := security.GrantVmGroupAccessWithMask(opts.DumpDirectoryPath, security.AccessMaskAll); err != nil {
+			return nil, fmt.Errorf("failed to add SDL to dump directory: %w", err)
+		}
+		debugOpts := &hcsschema.DebugOptions{
+			BugcheckSavedStateFileName:            filepath.Join(opts.DumpDirectoryPath, fmt.Sprintf("%s-savedstate.vmrs", uvm.id)),
+			BugcheckNoCrashdumpSavedStateFileName: filepath.Join(opts.DumpDirectoryPath, fmt.Sprintf("%s-savedstate_nocrashdump.vmrs", uvm.id)),
+		}
+		doc.VirtualMachine.DebugOptions = debugOpts
+	}
+
 	return doc, nil
 }
 
@@ -231,7 +249,6 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uv
 //
 // WCOW Notes:
 //   - The scratch is always attached to SCSI 0:0
-//
 func CreateWCOW(ctx context.Context, opts *OptionsWCOW) (_ *UtilityVM, err error) {
 	ctx, span := oc.StartSpan(ctx, "uvm::CreateWCOW")
 	defer span.End()

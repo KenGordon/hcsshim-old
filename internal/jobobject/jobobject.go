@@ -72,6 +72,9 @@ type Options struct {
 	// `Silo` specifies to promote the job to a silo. This additionally sets the flag
 	// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE as it is required for the upgrade to complete.
 	Silo bool
+	// `IOTracking` enables tracking I/O statistics on the job object. More specifically this
+	// calls SetInformationJobObject with the JobObjectIoAttribution class.
+	EnableIOTracking bool
 }
 
 // Create creates a job object.
@@ -138,6 +141,12 @@ func Create(ctx context.Context, options *Options) (_ *JobObject, err error) {
 		job.mq = mq
 	}
 
+	if options.EnableIOTracking {
+		if err := enableIOTracking(jobHandle); err != nil {
+			return nil, err
+		}
+	}
+
 	if options.Silo {
 		// This is a required setting for upgrading to a silo.
 		if err := job.SetTerminateOnLastHandleClose(); err != nil {
@@ -179,7 +188,7 @@ func Open(ctx context.Context, options *Options) (_ *JobObject, err error) {
 			return nil, winapi.RtlNtStatusToDosError(status)
 		}
 	} else {
-		jobHandle, err = winapi.OpenJobObject(winapi.JOB_OBJECT_ALL_ACCESS, false, unicodeJobName.Buffer)
+		jobHandle, err = winapi.OpenJobObject(winapi.JOB_OBJECT_ALL_ACCESS, 0, unicodeJobName.Buffer)
 		if err != nil {
 			return nil, err
 		}
@@ -433,7 +442,9 @@ func (job *JobObject) QueryProcessorStats() (*winapi.JOBOBJECT_BASIC_ACCOUNTING_
 	return &info, nil
 }
 
-// QueryStorageStats gets the storage (I/O) stats for the job object.
+// QueryStorageStats gets the storage (I/O) stats for the job object. This call will error
+// if either `EnableIOTracking` wasn't set to true on creation of the job, or SetIOTracking()
+// hasn't been called since creation of the job.
 func (job *JobObject) QueryStorageStats() (*winapi.JOBOBJECT_IO_ATTRIBUTION_INFORMATION, error) {
 	job.handleLock.RLock()
 	defer job.handleLock.RUnlock()
@@ -460,7 +471,7 @@ func (job *JobObject) QueryStorageStats() (*winapi.JOBOBJECT_IO_ATTRIBUTION_INFO
 // ApplyFileBinding makes a file binding using the Bind Filter from target to root. If the job has
 // not been upgraded to a silo this call will fail. The binding is only applied and visible for processes
 // running in the job, any processes on the host or in another job will not be able to see the binding.
-func (job *JobObject) ApplyFileBinding(root, target string, merged bool) error {
+func (job *JobObject) ApplyFileBinding(root, target string, readOnly bool) error {
 	job.handleLock.RLock()
 	defer job.handleLock.RUnlock()
 
@@ -490,8 +501,8 @@ func (job *JobObject) ApplyFileBinding(root, target string, merged bool) error {
 	}
 
 	flags := winapi.BINDFLT_FLAG_USE_CURRENT_SILO_MAPPING
-	if merged {
-		flags |= winapi.BINDFLT_FLAG_MERGED_BIND_MAPPING
+	if readOnly {
+		flags |= winapi.BINDFLT_FLAG_READ_ONLY_MAPPING
 	}
 
 	if err := winapi.BfSetupFilter(
@@ -508,7 +519,7 @@ func (job *JobObject) ApplyFileBinding(root, target string, merged bool) error {
 }
 
 // isJobSilo is a helper to determine if a job object that was opened is a silo. This should ONLY be called
-// from `Open` and any callers in this package afterwards should use `job.isSilo()``
+// from `Open` and any callers in this package afterwards should use `job.isSilo()`
 func isJobSilo(h windows.Handle) bool {
 	// None of the information from the structure that this info class expects will be used, this is just used as
 	// the call will fail if the job hasn't been upgraded to a silo so we can use this to tell when we open a job
@@ -627,4 +638,32 @@ func (job *JobObject) QueryPrivateWorkingSet() (uint64, error) {
 	}
 
 	return jobWorkingSetSize, nil
+}
+
+// SetIOTracking enables IO tracking for processes in the job object.
+// This enables use of the QueryStorageStats method.
+func (job *JobObject) SetIOTracking() error {
+	job.handleLock.RLock()
+	defer job.handleLock.RUnlock()
+
+	if job.handle == 0 {
+		return ErrAlreadyClosed
+	}
+
+	return enableIOTracking(job.handle)
+}
+
+func enableIOTracking(job windows.Handle) error {
+	info := winapi.JOBOBJECT_IO_ATTRIBUTION_INFORMATION{
+		ControlFlags: winapi.JOBOBJECT_IO_ATTRIBUTION_CONTROL_ENABLE,
+	}
+	if _, err := windows.SetInformationJobObject(
+		job,
+		winapi.JobObjectIoAttribution,
+		uintptr(unsafe.Pointer(&info)),
+		uint32(unsafe.Sizeof(info)),
+	); err != nil {
+		return fmt.Errorf("failed to enable IO tracking on job object: %w", err)
+	}
+	return nil
 }

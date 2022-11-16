@@ -37,7 +37,6 @@ func CreateTestNetwork() (*hcsshim.HNSNetwork, error) {
 }
 
 func TestEndpoint(t *testing.T) {
-
 	network, err := CreateTestNetwork()
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +89,7 @@ func TestEndpointStatsAll(t *testing.T) {
 		Name: NatTestEndpointName,
 	}
 
-	Endpoint, err = network.CreateEndpoint(Endpoint)
+	_, err = network.CreateEndpoint(Endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}

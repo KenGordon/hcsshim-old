@@ -156,13 +156,14 @@ func MountLCOWLayers(ctx context.Context, containerID string, layerFolders []str
 // MountWCOWLayers is a helper for clients to hide all the complexity of layer mounting for WCOW.
 // Layer folder are in order: base, [rolayer1..rolayern,] scratch
 //
-// v1/v2: Argon WCOW: Returns the mount path on the host as a volume GUID.
-// v1:    Xenon WCOW: Done internally in HCS, so no point calling doing anything here.
-// v2:    Xenon WCOW: Returns a CombinedLayersV2 structure where ContainerRootPath is a folder
-//                    inside the utility VM which is a GUID mapping of the scratch folder. Each
-//                    of the layers are the VSMB locations where the read-only layers are mounted.
-// Job container:     Returns the mount path on the host as a volume guid, with the volume mounted on
-// 					  the host at `volumeMountPath`.
+//	v1/v2: Argon WCOW: Returns the mount path on the host as a volume GUID.
+//	v1:    Xenon WCOW: Done internally in HCS, so no point calling doing anything here.
+//	v2:    Xenon WCOW: Returns a CombinedLayersV2 structure where ContainerRootPath is a folder
+//	inside the utility VM which is a GUID mapping of the scratch folder. Each of the layers are
+//	the VSMB locations where the read-only layers are mounted.
+//
+//	Job container: Returns the mount path on the host as a volume guid, with the volume mounted on
+//	the host at `volumeMountPath`.
 func MountWCOWLayers(ctx context.Context, containerID string, layerFolders []string, guestRoot, volumeMountPath string, vm *uvm.UtilityVM) (_ string, err error) {
 	if vm == nil {
 		if len(layerFolders) < 2 {
@@ -235,7 +236,7 @@ func MountWCOWLayers(ctx context.Context, containerID string, layerFolders []str
 
 		// Mount the volume to a directory on the host if requested. This is the case for job containers.
 		if volumeMountPath != "" {
-			if err := mountSandboxVolume(ctx, volumeMountPath, mountPath); err != nil {
+			if err := MountSandboxVolume(ctx, volumeMountPath, mountPath); err != nil {
 				return "", err
 			}
 		}
@@ -404,7 +405,7 @@ func UnmountContainerLayers(ctx context.Context, layerFolders []string, containe
 		// Remove the mount point if there is one. This is the fallback case for job containers
 		// if no bind mount support is available.
 		if volumeMountPath != "" {
-			if err := removeSandboxMountPoint(ctx, volumeMountPath); err != nil {
+			if err := RemoveSandboxMountPoint(ctx, volumeMountPath); err != nil {
 				return err
 			}
 		}
@@ -530,7 +531,7 @@ func getScratchVHDPath(layerFolders []string) (string, error) {
 }
 
 // Mount the sandbox vhd to a user friendly path.
-func mountSandboxVolume(ctx context.Context, hostPath, volumeName string) (err error) {
+func MountSandboxVolume(ctx context.Context, hostPath, volumeName string) (err error) {
 	log.G(ctx).WithFields(logrus.Fields{
 		"hostpath":   hostPath,
 		"volumeName": volumeName,
@@ -560,7 +561,7 @@ func mountSandboxVolume(ctx context.Context, hostPath, volumeName string) (err e
 }
 
 // Remove volume mount point. And remove folder afterwards.
-func removeSandboxMountPoint(ctx context.Context, hostPath string) error {
+func RemoveSandboxMountPoint(ctx context.Context, hostPath string) error {
 	log.G(ctx).WithFields(logrus.Fields{
 		"hostpath": hostPath,
 	}).Debug("removing volume mount point for container")

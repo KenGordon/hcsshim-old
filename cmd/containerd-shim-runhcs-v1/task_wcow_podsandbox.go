@@ -111,6 +111,10 @@ func (wpst *wcowPodSandboxTask) GetExec(eid string) (shimExec, error) {
 	return nil, errors.Wrapf(errdefs.ErrNotFound, "exec: '%s' in task: '%s' not found", eid, wpst.id)
 }
 
+func (wpst *wcowPodSandboxTask) ListExecs() ([]shimExec, error) {
+	return []shimExec{wpst.init}, nil
+}
+
 func (wpst *wcowPodSandboxTask) KillExec(ctx context.Context, eid string, signal uint32, all bool) error {
 	e, err := wpst.GetExec(eid)
 	if err != nil {
@@ -283,7 +287,7 @@ func (wpst *wcowPodSandboxTask) Update(ctx context.Context, req *task.UpdateTask
 		return err
 	}
 
-	return wpst.host.UpdateConstraints(ctx, resources, req.Annotations)
+	return wpst.host.Update(ctx, resources, req.Annotations)
 }
 
 func (wpst *wcowPodSandboxTask) Share(ctx context.Context, req *shimdiag.ShareRequest) error {

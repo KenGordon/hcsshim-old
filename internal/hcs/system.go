@@ -91,7 +91,8 @@ func CreateComputeSystem(ctx context.Context, id string, hcsDocumentInterface in
 		}
 	}
 
-	events, err := processAsyncHcsResult(ctx, createError, resultJSON, computeSystem.callbackNumber, hcsNotificationSystemCreateCompleted, &timeout.SystemCreate)
+	events, err := processAsyncHcsResult(ctx, createError, resultJSON, computeSystem.callbackNumber,
+		hcsNotificationSystemCreateCompleted, &timeout.SystemCreate)
 	if err != nil {
 		if err == ErrTimeout {
 			// Terminate the compute system if it still exists. We're okay to
@@ -205,7 +206,8 @@ func (computeSystem *System) Start(ctx context.Context) (err error) {
 	}
 
 	resultJSON, err := vmcompute.HcsStartComputeSystem(ctx, computeSystem.handle, "")
-	events, err := processAsyncHcsResult(ctx, err, resultJSON, computeSystem.callbackNumber, hcsNotificationSystemStartCompleted, &timeout.SystemStart)
+	events, err := processAsyncHcsResult(ctx, err, resultJSON, computeSystem.callbackNumber,
+		hcsNotificationSystemStartCompleted, &timeout.SystemStart)
 	if err != nil {
 		return makeSystemError(computeSystem, operation, err, events)
 	}
@@ -316,6 +318,10 @@ func (computeSystem *System) Properties(ctx context.Context, types ...schema1.Pr
 
 	operation := "hcs::System::Properties"
 
+	if computeSystem.handle == 0 {
+		return nil, makeSystemError(computeSystem, operation, ErrAlreadyClosed, nil)
+	}
+
 	queryBytes, err := json.Marshal(schema1.PropertyQuery{PropertyTypes: types})
 	if err != nil {
 		return nil, makeSystemError(computeSystem, operation, err, nil)
@@ -343,7 +349,11 @@ func (computeSystem *System) Properties(ctx context.Context, types ...schema1.Pr
 // failed to be queried they will be tallied up and returned in as the first return value. Failures on
 // query are NOT considered errors; the only failure case for this method is if the containers job object
 // cannot be opened.
-func (computeSystem *System) queryInProc(ctx context.Context, props *hcsschema.Properties, types []hcsschema.PropertyType) ([]hcsschema.PropertyType, error) {
+func (computeSystem *System) queryInProc(
+	ctx context.Context,
+	props *hcsschema.Properties,
+	types []hcsschema.PropertyType,
+) ([]hcsschema.PropertyType, error) {
 	// In the future we can make use of some new functionality in the HCS that allows you
 	// to pass a job object for HCS to use for the container. Currently, the only way we'll
 	// be able to open the job/silo is if we're running as SYSTEM.
@@ -409,7 +419,7 @@ func (computeSystem *System) statisticsInProc(job *jobobject.JobObject) (*hcssch
 	// as well which isn't great and is wasted work to fetch.
 	//
 	// HCS only let's you grab statistics in an all or nothing fashion, so we can't just grab the private
-	// working set ourselves and ask for everything else seperately. The optimization we can make here is
+	// working set ourselves and ask for everything else separately. The optimization we can make here is
 	// to open the silo ourselves and do the same queries for the rest of the info, as well as calculating
 	// the private working set in a more efficient manner by:
 	//
@@ -448,6 +458,10 @@ func (computeSystem *System) statisticsInProc(job *jobobject.JobObject) (*hcssch
 // hcsPropertiesV2Query is a helper to make a HcsGetComputeSystemProperties call using the V2 schema property types.
 func (computeSystem *System) hcsPropertiesV2Query(ctx context.Context, types []hcsschema.PropertyType) (*hcsschema.Properties, error) {
 	operation := "hcs::System::PropertiesV2"
+
+	if computeSystem.handle == 0 {
+		return nil, makeSystemError(computeSystem, operation, ErrAlreadyClosed, nil)
+	}
 
 	queryBytes, err := json.Marshal(hcsschema.PropertyQuery{PropertyTypes: types})
 	if err != nil {
@@ -497,7 +511,7 @@ func (computeSystem *System) PropertiesV2(ctx context.Context, types ...hcsschem
 	if err == nil && len(fallbackTypes) == 0 {
 		return properties, nil
 	} else if err != nil {
-		logEntry.WithError(fmt.Errorf("failed to query compute system properties in-proc: %w", err))
+		logEntry = logEntry.WithError(fmt.Errorf("failed to query compute system properties in-proc: %w", err))
 		fallbackTypes = types
 	}
 
@@ -544,7 +558,8 @@ func (computeSystem *System) Pause(ctx context.Context) (err error) {
 	}
 
 	resultJSON, err := vmcompute.HcsPauseComputeSystem(ctx, computeSystem.handle, "")
-	events, err := processAsyncHcsResult(ctx, err, resultJSON, computeSystem.callbackNumber, hcsNotificationSystemPauseCompleted, &timeout.SystemPause)
+	events, err := processAsyncHcsResult(ctx, err, resultJSON, computeSystem.callbackNumber,
+		hcsNotificationSystemPauseCompleted, &timeout.SystemPause)
 	if err != nil {
 		return makeSystemError(computeSystem, operation, err, events)
 	}
@@ -571,7 +586,8 @@ func (computeSystem *System) Resume(ctx context.Context) (err error) {
 	}
 
 	resultJSON, err := vmcompute.HcsResumeComputeSystem(ctx, computeSystem.handle, "")
-	events, err := processAsyncHcsResult(ctx, err, resultJSON, computeSystem.callbackNumber, hcsNotificationSystemResumeCompleted, &timeout.SystemResume)
+	events, err := processAsyncHcsResult(ctx, err, resultJSON, computeSystem.callbackNumber,
+		hcsNotificationSystemResumeCompleted, &timeout.SystemResume)
 	if err != nil {
 		return makeSystemError(computeSystem, operation, err, events)
 	}
@@ -603,7 +619,8 @@ func (computeSystem *System) Save(ctx context.Context, options interface{}) (err
 	}
 
 	result, err := vmcompute.HcsSaveComputeSystem(ctx, computeSystem.handle, string(saveOptions))
-	events, err := processAsyncHcsResult(ctx, err, result, computeSystem.callbackNumber, hcsNotificationSystemSaveCompleted, &timeout.SystemSave)
+	events, err := processAsyncHcsResult(ctx, err, result, computeSystem.callbackNumber,
+		hcsNotificationSystemSaveCompleted, &timeout.SystemSave)
 	if err != nil {
 		return makeSystemError(computeSystem, operation, err, events)
 	}
@@ -742,7 +759,8 @@ func (computeSystem *System) registerCallback(ctx context.Context) error {
 	callbackMap[callbackNumber] = callbackContext
 	callbackMapLock.Unlock()
 
-	callbackHandle, err := vmcompute.HcsRegisterComputeSystemCallback(ctx, computeSystem.handle, notificationWatcherCallback, callbackNumber)
+	callbackHandle, err := vmcompute.HcsRegisterComputeSystemCallback(ctx, computeSystem.handle,
+		notificationWatcherCallback, callbackNumber)
 	if err != nil {
 		return err
 	}

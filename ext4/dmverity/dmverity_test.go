@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"strings"
@@ -14,7 +13,8 @@ import (
 )
 
 func tempFileWithContentLength(t *testing.T, length int) *os.File {
-	tmpFile, err := ioutil.TempFile("", "")
+	t.Helper()
+	tmpFile, err := os.CreateTemp("", "")
 	if err != nil {
 		t.Fatalf("failed to create temp file")
 	}

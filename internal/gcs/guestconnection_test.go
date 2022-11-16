@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"strings"
 	"testing"
@@ -37,6 +36,7 @@ func dialPort(port uint32) (net.Conn, error) {
 }
 
 func simpleGcs(t *testing.T, rwc io.ReadWriteCloser) {
+	t.Helper()
 	defer rwc.Close()
 	err := simpleGcsLoop(t, rwc)
 	if err != nil {
@@ -45,6 +45,7 @@ func simpleGcs(t *testing.T, rwc io.ReadWriteCloser) {
 }
 
 func simpleGcsLoop(t *testing.T, rw io.ReadWriter) error {
+	t.Helper()
 	for {
 		id, typ, b, err := readMessage(rw)
 		if err != nil {
@@ -143,6 +144,7 @@ func simpleGcsLoop(t *testing.T, rw io.ReadWriter) error {
 }
 
 func connectGcs(ctx context.Context, t *testing.T) *GuestConnection {
+	t.Helper()
 	s, c := pipeConn()
 	if ctx != context.Background() && ctx != context.TODO() {
 		go func() {
@@ -233,7 +235,7 @@ func TestGcsCreateProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ioutil.ReadAll(stdout)
+	b, err := io.ReadAll(stdout)
 	if err != nil {
 		t.Fatal(err)
 	}

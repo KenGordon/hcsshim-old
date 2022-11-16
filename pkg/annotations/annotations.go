@@ -234,6 +234,10 @@ const (
 	// SecurityPolicy is used to specify a security policy for opengcs to enforce
 	SecurityPolicy = "io.microsoft.virtualmachine.lcow.securitypolicy"
 
+	// SecurityPolicyEnforcer is used to specify which enforcer to initialize (open-door, standard or rego).
+	// This allows for better fallback mechanics.
+	SecurityPolicyEnforcer = "io.microsoft.virtualmachine.lcow.enforcer"
+
 	// ContainerProcessDumpLocation specifies a path inside of containers to save process dumps to. As
 	// the scratch space for a container is generally cleaned up after exit, this is best set to a volume mount of
 	// some kind (vhd, bind mount, fileshare mount etc.)
@@ -267,8 +271,12 @@ const (
 	// GuestStateFile specifies the path of the vmgs file to use if required. Only applies in SNP mode.
 	GuestStateFile = "io.microsoft.virtualmachine.lcow.gueststatefile"
 
-	// SecurityPolicyEnv specifies if SECURITY_POLICY variable should be injected for a container.
-	SecurityPolicyEnv = "io.microsoft.virtualmachine.lcow.securitypolicy.env"
+	// UVMSecurityPolicyEnv specifies if UVM_SECURITY_POLICY and
+	// UVM_REFERENCE_INFO variables should be injected for a container.
+	UVMSecurityPolicyEnv = "io.microsoft.virtualmachine.lcow.securitypolicy.env"
+
+	// UVMReferenceInfoFile specifies the filename of a signed UVM reference file to be passed to UVM.
+	UVMReferenceInfoFile = "io.microsoft.virtualmachine.lcow.uvm-reference-info-file"
 
 	// DisableLCOWTimeSyncService is used to disable the chronyd time
 	// synchronization service inside the LCOW UVM.
@@ -286,6 +294,10 @@ const (
 	// file share mounts, for hostile multi-tenant environments. See `AnnotationExpansions`
 	// for more information
 	DisableUnsafeOperations = "io.microsoft.disable-unsafe-operations"
+
+	// DumpDirectoryPath provides a path to the directory in which dumps for a UVM will be collected in
+	// case the UVM crashes.
+	DumpDirectoryPath = "io.microsoft.virtualmachine.dump-directory-path"
 )
 
 // AnnotationExpansions maps annotations that will be expanded into an array of

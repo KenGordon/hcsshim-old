@@ -8,12 +8,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/Microsoft/hcsshim/internal/guestpath"
 	"github.com/pkg/errors"
 )
 
-var ErrInvalidAllowAllPolicy = errors.New("allow_all cannot be set to 'true' when Containers are non-empty")
+var ErrInvalidOpenDoorPolicy = errors.New("allow_all cannot be set to 'true' when Containers are non-empty")
 
 type EnvVarRule string
 
@@ -24,8 +25,31 @@ const (
 
 // PolicyConfig contains toml or JSON config for security policy.
 type PolicyConfig struct {
-	AllowAll   bool              `json:"allow_all" toml:"allow_all"`
-	Containers []ContainerConfig `json:"containers" toml:"container"`
+	AllowAll                         bool                    `json:"allow_all" toml:"allow_all"`
+	Containers                       []ContainerConfig       `json:"containers" toml:"container"`
+	ExternalProcesses                []ExternalProcessConfig `json:"external_processes" toml:"external_process"`
+	Fragments                        []FragmentConfig        `json:"fragments" toml:"fragment"`
+	AllowPropertiesAccess            bool                    `json:"allow_properties_access" toml:"allow_properties_access"`
+	AllowDumpStacks                  bool                    `json:"allow_dump_stacks" toml:"allow_dump_stacks"`
+	AllowRuntimeLogging              bool                    `json:"allow_runtime_logging" toml:"allow_runtime_logging"`
+	AllowEnvironmentVariableDropping bool                    `json:"allow_environment_variable_dropping" toml:"allow_environment_variable_dropping"`
+	// AllowUnencryptedScratch is a global policy configuration that allows
+	// all containers within a pod to be run without scratch encryption.
+	AllowUnencryptedScratch bool `json:"allow_unencrypted_scratch" toml:"allow_unencrypted_scratch"`
+}
+
+// ExternalProcessConfig contains toml or JSON config for running external processes in the UVM.
+type ExternalProcessConfig struct {
+	Command    []string `json:"command" toml:"command"`
+	WorkingDir string   `json:"working_dir" toml:"working_dir"`
+}
+
+// FragmentConfig contains toml or JSON config for including elements from fragments.
+type FragmentConfig struct {
+	Issuer     string   `json:"issuer" toml:"issuer"`
+	Feed       string   `json:"feed" toml:"feed"`
+	MinimumSVN string   `json:"minimum_svn" toml:"minimum_svn"`
+	Includes   []string `json:"includes" toml:"include"`
 }
 
 // AuthConfig contains toml or JSON config for registry authentication.
@@ -39,19 +63,21 @@ type AuthConfig struct {
 type EnvRuleConfig struct {
 	Strategy EnvVarRule `json:"strategy" toml:"strategy"`
 	Rule     string     `json:"rule" toml:"rule"`
+	Required bool       `json:"required" toml:"required"`
 }
 
 // ContainerConfig contains toml or JSON config for container described
 // in security policy.
 type ContainerConfig struct {
-	ImageName       string          `json:"image_name" toml:"image_name"`
-	Command         []string        `json:"command" toml:"command"`
-	Auth            AuthConfig      `json:"auth" toml:"auth"`
-	EnvRules        []EnvRuleConfig `json:"env_rules" toml:"env_rule"`
-	WorkingDir      string          `json:"working_dir" toml:"working_dir"`
-	WaitMountPoints []string        `json:"wait_mount_points" toml:"wait_mount_points"`
-	Mounts          []MountConfig   `json:"mounts" toml:"mount"`
-	AllowElevated   bool            `json:"allow_elevated" toml:"allow_elevated"`
+	ImageName     string              `json:"image_name" toml:"image_name"`
+	Command       []string            `json:"command" toml:"command"`
+	Auth          AuthConfig          `json:"auth" toml:"auth"`
+	EnvRules      []EnvRuleConfig     `json:"env_rules" toml:"env_rule"`
+	WorkingDir    string              `json:"working_dir" toml:"working_dir"`
+	Mounts        []MountConfig       `json:"mounts" toml:"mount"`
+	AllowElevated bool                `json:"allow_elevated" toml:"allow_elevated"`
+	ExecProcesses []ExecProcessConfig `json:"exec_processes" toml:"exec_process"`
+	Signals       []syscall.Signal    `json:"signals" toml:"signals"`
 }
 
 // MountConfig contains toml or JSON config for mount security policy
@@ -62,14 +88,22 @@ type MountConfig struct {
 	Readonly      bool   `json:"readonly" toml:"readonly"`
 }
 
+// ExecProcessConfig contains toml or JSON config for exec process security
+// policy constraint description
+type ExecProcessConfig struct {
+	Command []string         `json:"command" toml:"command"`
+	Signals []syscall.Signal `json:"signals" toml:"signals"`
+}
+
 // NewEnvVarRules creates slice of EnvRuleConfig's from environment variables
 // strings slice.
-func NewEnvVarRules(envVars []string) []EnvRuleConfig {
+func NewEnvVarRules(envVars []string, required bool) []EnvRuleConfig {
 	var rules []EnvRuleConfig
 	for _, env := range envVars {
 		r := EnvRuleConfig{
 			Strategy: EnvVarRuleString,
 			Rule:     env,
+			Required: required,
 		}
 		rules = append(rules, r)
 	}
@@ -96,53 +130,11 @@ func NewSecurityPolicyDigest(base64policy string) ([]byte, error) {
 	return digestBytes, nil
 }
 
-// SecurityPolicyState is a structure that holds user supplied policy to enforce
-// we keep both the encoded representation and the unmarshalled representation
-// because different components need to have access to either of these
-type SecurityPolicyState struct {
-	EncodedSecurityPolicy EncodedSecurityPolicy `json:"EncodedSecurityPolicy,omitempty"`
-	SecurityPolicy        `json:"SecurityPolicy,omitempty"`
-}
-
 // EncodedSecurityPolicy is a JSON representation of SecurityPolicy that has
 // been base64 encoded for storage in an annotation embedded within another
 // JSON configuration
 type EncodedSecurityPolicy struct {
 	SecurityPolicy string `json:"SecurityPolicy,omitempty"`
-}
-
-// NewSecurityPolicyState constructs SecurityPolicyState from base64Policy
-// string. It first decodes base64 policy and returns the security policy
-// struct and encoded security policy for given policy. The security policy
-// is transmitted as json in an annotation, so we first have to remove the
-// base64 encoding that allows the JSON based policy to be passed as a string.
-// From there, we decode the JSON and set up our security policy struct
-func NewSecurityPolicyState(base64Policy string) (*SecurityPolicyState, error) {
-	// construct an encoded security policy that holds the base64 representation
-	encodedSecurityPolicy := EncodedSecurityPolicy{
-		SecurityPolicy: base64Policy,
-	}
-
-	// base64 decode the incoming policy string
-	// its base64 encoded because it is coming from an annotation
-	// annotations are a map of string to string
-	// we want to store a complex json object so.... base64 it is
-	jsonPolicy, err := base64.StdEncoding.DecodeString(base64Policy)
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to decode policy from Base64 format")
-	}
-
-	// json unmarshall the decoded to a SecurityPolicy
-	securityPolicy := SecurityPolicy{}
-	err = json.Unmarshal(jsonPolicy, &securityPolicy)
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to unmarshal JSON policy")
-	}
-
-	return &SecurityPolicyState{
-		SecurityPolicy:        securityPolicy,
-		EncodedSecurityPolicy: encodedSecurityPolicy,
-	}, nil
 }
 
 type SecurityPolicy struct {
@@ -172,13 +164,14 @@ type Containers struct {
 }
 
 type Container struct {
-	Command         CommandArgs     `json:"command"`
-	EnvRules        EnvRules        `json:"env_rules"`
-	Layers          Layers          `json:"layers"`
-	WorkingDir      string          `json:"working_dir"`
-	WaitMountPoints WaitMountPoints `json:"wait_mount_points"`
-	Mounts          Mounts          `json:"mounts"`
-	AllowElevated   bool            `json:"allow_elevated"`
+	Command       CommandArgs         `json:"command"`
+	EnvRules      EnvRules            `json:"env_rules"`
+	Layers        Layers              `json:"layers"`
+	WorkingDir    string              `json:"working_dir"`
+	Mounts        Mounts              `json:"mounts"`
+	AllowElevated bool                `json:"allow_elevated"`
+	ExecProcesses []ExecProcessConfig `json:"-"`
+	Signals       []syscall.Signal    `json:"-"`
 }
 
 // StringArrayMap wraps an array of strings as a string map.
@@ -190,8 +183,6 @@ type StringArrayMap struct {
 type Layers StringArrayMap
 
 type CommandArgs StringArrayMap
-
-type WaitMountPoints StringArrayMap
 
 type Options StringArrayMap
 
@@ -218,9 +209,10 @@ func CreateContainerPolicy(
 	command, layers []string,
 	envRules []EnvRuleConfig,
 	workingDir string,
-	eMounts []string,
 	mounts []MountConfig,
 	allowElevated bool,
+	execProcesses []ExecProcessConfig,
+	signals []syscall.Signal,
 ) (*Container, error) {
 	if err := validateEnvRules(envRules); err != nil {
 		return nil, err
@@ -229,13 +221,14 @@ func CreateContainerPolicy(
 		return nil, err
 	}
 	return &Container{
-		Command:         newCommandArgs(command),
-		Layers:          newLayers(layers),
-		EnvRules:        newEnvRules(envRules),
-		WorkingDir:      workingDir,
-		WaitMountPoints: newWaitMountPoints(eMounts),
-		Mounts:          newMountConstraints(mounts),
-		AllowElevated:   allowElevated,
+		Command:       newCommandArgs(command),
+		Layers:        newLayers(layers),
+		EnvRules:      newEnvRules(envRules),
+		WorkingDir:    workingDir,
+		Mounts:        newMountConstraints(mounts),
+		AllowElevated: allowElevated,
+		ExecProcesses: execProcesses,
+		Signals:       signals,
 	}, nil
 }
 
@@ -304,16 +297,6 @@ func newLayers(ls []string) Layers {
 	}
 }
 
-func newWaitMountPoints(em []string) WaitMountPoints {
-	mounts := map[string]string{}
-	for i, m := range em {
-		mounts[strconv.Itoa(i)] = m
-	}
-	return WaitMountPoints{
-		Elements: mounts,
-	}
-}
-
 func newMountOptions(opts []string) Options {
 	mountOpts := map[string]string{}
 	for i, o := range opts {
@@ -327,10 +310,10 @@ func newMountOptions(opts []string) Options {
 // newOptionsFromConfig applies the same logic as CRI plugin to generate
 // mount options given readonly and propagation config.
 // TODO: (anmaxvl) update when support for other mount types is added,
-//   e.g., vhd:// or evd://
+// e.g., vhd:// or evd://
 // TODO: (anmaxvl) Do we need to set/validate Linux rootfs propagation?
-//   In case we do, update securityPolicyContainer and Container structs
-//   as well as mount enforcement logic.
+// In case we do, update securityPolicyContainer and Container structs
+// as well as mount enforcement logic.
 func newOptionsFromConfig(mCfg *MountConfig) []string {
 	mountOpts := []string{"rbind"}
 
@@ -380,67 +363,4 @@ func newMountConstraints(mountConfigs []MountConfig) Mounts {
 	return Mounts{
 		Elements: mounts,
 	}
-}
-
-// Custom JSON marshalling to add `length` field that matches the number of
-// elements present in the `elements` field.
-
-func (c Containers) MarshalJSON() ([]byte, error) {
-	type Alias Containers
-	return json.Marshal(&struct {
-		Length int `json:"length"`
-		*Alias
-	}{
-		Length: len(c.Elements),
-		Alias:  (*Alias)(&c),
-	})
-}
-
-func (e EnvRules) MarshalJSON() ([]byte, error) {
-	type Alias EnvRules
-	return json.Marshal(&struct {
-		Length int `json:"length"`
-		*Alias
-	}{
-		Length: len(e.Elements),
-		Alias:  (*Alias)(&e),
-	})
-}
-
-func (s StringArrayMap) MarshalJSON() ([]byte, error) {
-	type Alias StringArrayMap
-	return json.Marshal(&struct {
-		Length int `json:"length"`
-		*Alias
-	}{
-		Length: len(s.Elements),
-		Alias:  (*Alias)(&s),
-	})
-}
-
-func (c CommandArgs) MarshalJSON() ([]byte, error) {
-	return json.Marshal(StringArrayMap(c))
-}
-
-func (l Layers) MarshalJSON() ([]byte, error) {
-	return json.Marshal(StringArrayMap(l))
-}
-
-func (o Options) MarshalJSON() ([]byte, error) {
-	return json.Marshal(StringArrayMap(o))
-}
-
-func (wm WaitMountPoints) MarshalJSON() ([]byte, error) {
-	return json.Marshal(StringArrayMap(wm))
-}
-
-func (m Mounts) MarshalJSON() ([]byte, error) {
-	type Alias Mounts
-	return json.Marshal(&struct {
-		Length int `json:"length"`
-		*Alias
-	}{
-		Length: len(m.Elements),
-		Alias:  (*Alias)(&m),
-	})
 }

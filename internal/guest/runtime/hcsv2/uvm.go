@@ -8,14 +8,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/Microsoft/hcsshim/internal/debug"
 	"github.com/Microsoft/hcsshim/internal/guest/gcserr"
 	"github.com/Microsoft/hcsshim/internal/guest/policy"
 	"github.com/Microsoft/hcsshim/internal/guest/prot"
@@ -29,6 +32,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guest/storage/pmem"
 	"github.com/Microsoft/hcsshim/internal/guest/storage/scsi"
 	"github.com/Microsoft/hcsshim/internal/guest/transport"
+	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oci"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
@@ -36,6 +40,8 @@ import (
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
 	"github.com/mattn/go-shellwords"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 // UVMContainerID is the ContainerID that will be sent on any prot.MessageBase
@@ -59,48 +65,66 @@ type Host struct {
 	policyMutex               sync.Mutex
 	securityPolicyEnforcer    securitypolicy.SecurityPolicyEnforcer
 	securityPolicyEnforcerSet bool
+	uvmReferenceInfo          string
+
+	// logging target
+	logWriter io.Writer
+	// hostMounts keeps the state of currently mounted devices and file systems,
+	// which is used for GCS hardening.
+	hostMounts *hostMounts
 }
 
-func NewHost(rtime runtime.Runtime, vsock transport.Transport) *Host {
+func NewHost(rtime runtime.Runtime, vsock transport.Transport, initialEnforcer securitypolicy.SecurityPolicyEnforcer, logWriter io.Writer) *Host {
 	return &Host{
 		containers:                make(map[string]*Container),
 		externalProcesses:         make(map[int]*externalProcess),
 		rtime:                     rtime,
 		vsock:                     vsock,
 		securityPolicyEnforcerSet: false,
-		securityPolicyEnforcer:    &securitypolicy.ClosedDoorSecurityPolicyEnforcer{},
+		securityPolicyEnforcer:    initialEnforcer,
+		logWriter:                 logWriter,
+		hostMounts:                newHostMounts(),
 	}
 }
 
-// SetSecurityPolicy takes a base64 encoded security policy
-// and sets up our internal data structures we use to store
-// said policy.
-// The security policy is transmitted as json in an annotation,
-// so we first have to remove the base64 encoding that allows
-// the JSON based policy to be passed as a string. From there,
-// we decode the JSON and setup our security policy state
-func (h *Host) SetSecurityPolicy(base64Policy string) error {
+// SetConfidentialUVMOptions takes guestresource.LCOWConfidentialOptions
+// to set up our internal data structures we use to store and enforce
+// security policy. The options can contain security policy enforcer type,
+// encoded security policy and signed UVM reference information The security
+// policy and uvm reference information can be further presented to workload
+// containers for validation and attestation purposes.
+func (h *Host) SetConfidentialUVMOptions(ctx context.Context, r *guestresource.LCOWConfidentialOptions) error {
 	h.policyMutex.Lock()
 	defer h.policyMutex.Unlock()
 	if h.securityPolicyEnforcerSet {
 		return errors.New("security policy has already been set")
 	}
 
-	// construct security policy state
-	securityPolicyState, err := securitypolicy.NewSecurityPolicyState(base64Policy)
-	if err != nil {
-		return err
-	}
-
-	p, err := securitypolicy.NewSecurityPolicyEnforcer(
-		*securityPolicyState,
-		securitypolicy.WithPrivilegedMounts(policy.DefaultCRIPrivilegedMounts()),
+	// Initialize security policy enforcer for a given enforcer type and
+	// encoded security policy.
+	p, err := securitypolicy.CreateSecurityPolicyEnforcer(
+		r.EnforcerType,
+		r.EncodedSecurityPolicy,
+		policy.DefaultCRIMounts(),
+		policy.DefaultCRIPrivilegedMounts(),
 	)
 	if err != nil {
 		return err
 	}
 
-	hostData, err := securitypolicy.NewSecurityPolicyDigest(base64Policy)
+	// This is one of two points at which we might change our logging.
+	// At this time, we now have a policy and can determine what the policy
+	// author put as policy around runtime logging.
+	// The other point is on startup where we take a flag to set the default
+	// policy enforcer to use before a policy arrives. After that flag is set,
+	// we use the enforcer in question to set up logging as well.
+	if err = p.EnforceRuntimeLoggingPolicy(); err == nil {
+		logrus.SetOutput(h.logWriter)
+	} else {
+		logrus.SetOutput(io.Discard)
+	}
+
+	hostData, err := securitypolicy.NewSecurityPolicyDigest(r.EncodedSecurityPolicy)
 	if err != nil {
 		return err
 	}
@@ -109,13 +133,19 @@ func (h *Host) SetSecurityPolicy(base64Policy string) error {
 		return err
 	}
 
-	if err := p.ExtendDefaultMounts(policy.DefaultCRIMounts()); err != nil {
-		return err
-	}
-
 	h.securityPolicyEnforcer = p
 	h.securityPolicyEnforcerSet = true
+	h.uvmReferenceInfo = r.EncodedUVMReference
 
+	return nil
+}
+
+// InjectFragment extends current security policy with additional constraints
+// from the incoming fragment.
+//
+// TODO (maksiman): add fragment validation and injection logic
+func (*Host) InjectFragment(ctx context.Context, fragment *guestresource.LCOWSecurityPolicyFragment) (err error) {
+	log.G(ctx).WithField("fragment", fragment).Debug("fragment received in guest")
 	return nil
 }
 
@@ -139,7 +169,7 @@ func (h *Host) RemoveContainer(id string) {
 	// delete the network namespace for standalone and sandbox containers
 	criType, isCRI := c.spec.Annotations[annotations.KubernetesContainerType]
 	if !isCRI || criType == "sandbox" {
-		RemoveNetworkNamespace(context.Background(), id)
+		_ = RemoveNetworkNamespace(context.Background(), id)
 	}
 
 	delete(h.containers, id)
@@ -149,15 +179,15 @@ func (h *Host) GetCreatedContainer(id string) (*Container, error) {
 	h.containersMutex.Lock()
 	defer h.containersMutex.Unlock()
 
-	if c, ok := h.containers[id]; !ok {
+	c, ok := h.containers[id]
+	if !ok {
 		return nil, gcserr.NewHresultError(gcserr.HrVmcomputeSystemNotFound)
-	} else {
-		if c.getStatus() != containerCreated {
-			return nil, fmt.Errorf("container is not in state \"created\": %w",
-				gcserr.NewHresultError(gcserr.HrVmcomputeInvalidState))
-		}
-		return c, nil
 	}
+	if c.getStatus() != containerCreated {
+		return nil, fmt.Errorf("container is not in state \"created\": %w",
+			gcserr.NewHresultError(gcserr.HrVmcomputeInvalidState))
+	}
+	return c, nil
 }
 
 func (h *Host) AddContainer(id string, c *Container) error {
@@ -216,15 +246,12 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		}
 	}()
 
-	err = h.securityPolicyEnforcer.EnforceCreateContainerPolicy(
-		id,
-		settings.OCISpecification.Process.Args,
-		settings.OCISpecification.Process.Env,
-		settings.OCISpecification.Process.Cwd,
-	)
-	if err != nil {
-		return nil, errors.Wrapf(err, "container creation denied due to policy")
-	}
+	// Normally we would be doing policy checking here at the start of our
+	// "policy gated function". However, we can't for create container as we
+	// need a properly correct sandboxID which might be changed by the code
+	// below that determines the sandboxID. This is a bit of future proofing
+	// as currently for our single use case, the sandboxID is the same as the
+	// container id
 
 	var namespaceID string
 	// for sandbox container sandboxID is same as container id
@@ -288,24 +315,36 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		}()
 	}
 
-	if err := h.securityPolicyEnforcer.EnforceMountPolicy(sandboxID, id, settings.OCISpecification); err != nil {
-		return nil, err
-	}
-	// Export security policy as one of the process's environment variables so that application and sidecar
-	// containers can have access to it. The security policy is required by containers which need to extract
-	// init-time claims found in the security policy.
-	//
-	// We append the variable after the security policy enforcing logic completes to bypass it; the
-	// security policy variable cannot be included in the security policy as its value is not available
-	// security policy construction time.
-	if oci.ParseAnnotationsBool(ctx, settings.OCISpecification.Annotations, annotations.SecurityPolicyEnv, false) {
-		secPolicyEnv := fmt.Sprintf("SECURITY_POLICY=%s", h.securityPolicyEnforcer.EncodedSecurityPolicy())
-		settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, secPolicyEnv)
+	envToKeep, err := h.securityPolicyEnforcer.EnforceCreateContainerPolicy(
+		sandboxID,
+		id,
+		settings.OCISpecification.Process.Args,
+		settings.OCISpecification.Process.Env,
+		settings.OCISpecification.Process.Cwd,
+		settings.OCISpecification.Mounts,
+	)
+	if err != nil {
+		return nil, errors.Wrapf(err, "container creation denied due to policy")
 	}
 
-	// Sandbox mount paths need to be resolved in the spec before expected mounts policy can be enforced.
-	if err = h.securityPolicyEnforcer.EnforceWaitMountPointsPolicy(id, settings.OCISpecification); err != nil {
-		return nil, errors.Wrapf(err, "container creation denied due to policy")
+	if envToKeep != nil {
+		settings.OCISpecification.Process.Env = []string(envToKeep)
+	}
+
+	// Export security policy and signed UVM reference info as one of the
+	// process's environment variables so that application and sidecar
+	// containers can have access to it. The security policy is required
+	// by containers which need to extract init-time claims found in the
+	// security policy.
+	//
+	// We append the variable after the security policy enforcing logic
+	// completes to bypass it; the security policy variable cannot be included
+	// in the security policy as its value is not available security policy
+	// construction time.
+	if oci.ParseAnnotationsBool(ctx, settings.OCISpecification.Annotations, annotations.UVMSecurityPolicyEnv, false) {
+		secPolicyEnv := fmt.Sprintf("UVM_SECURITY_POLICY=%s", h.securityPolicyEnforcer.EncodedSecurityPolicy())
+		uvmReferenceInfo := fmt.Sprintf("UVM_REFERENCE_INFO=%s", h.uvmReferenceInfo)
+		settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, secPolicyEnv, uvmReferenceInfo)
 	}
 
 	// Create the BundlePath
@@ -359,16 +398,56 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 	return c, nil
 }
 
-func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *guestrequest.ModificationRequest) error {
+func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *guestrequest.ModificationRequest) (err error) {
 	switch req.ResourceType {
 	case guestresource.ResourceTypeMappedVirtualDisk:
-		return modifyMappedVirtualDisk(ctx, req.RequestType, req.Settings.(*guestresource.LCOWMappedVirtualDisk), h.securityPolicyEnforcer)
+		mvd := req.Settings.(*guestresource.LCOWMappedVirtualDisk)
+		// find the actual controller number on the bus and update the incoming request.
+		cNum, err := scsi.ActualControllerNumber(ctx, mvd.Controller)
+		if err != nil {
+			return err
+		}
+		mvd.Controller = cNum
+		// first we try to update the internal state for read-write attachments.
+		if !mvd.ReadOnly {
+			localCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+			defer cancel()
+			source, err := scsi.ControllerLunToName(localCtx, mvd.Controller, mvd.Lun)
+			if err != nil {
+				return err
+			}
+			if req.RequestType == guestrequest.RequestTypeAdd {
+				if err := h.hostMounts.AddRWDevice(mvd.MountPath, source, mvd.Encrypted); err != nil {
+					return err
+				}
+				defer func() {
+					if err != nil {
+						_ = h.hostMounts.RemoveRWDevice(mvd.MountPath, source)
+					}
+				}()
+			} else if req.RequestType == guestrequest.RequestTypeRemove {
+				if err := h.hostMounts.RemoveRWDevice(mvd.MountPath, source); err != nil {
+					return err
+				}
+				defer func() {
+					if err != nil {
+						_ = h.hostMounts.AddRWDevice(mvd.MountPath, source, mvd.Encrypted)
+					}
+				}()
+			}
+		}
+		return modifyMappedVirtualDisk(ctx, req.RequestType, mvd, h.securityPolicyEnforcer)
 	case guestresource.ResourceTypeMappedDirectory:
-		return modifyMappedDirectory(ctx, h.vsock, req.RequestType, req.Settings.(*guestresource.LCOWMappedDirectory))
+		return modifyMappedDirectory(ctx, h.vsock, req.RequestType, req.Settings.(*guestresource.LCOWMappedDirectory), h.securityPolicyEnforcer)
 	case guestresource.ResourceTypeVPMemDevice:
 		return modifyMappedVPMemDevice(ctx, req.RequestType, req.Settings.(*guestresource.LCOWMappedVPMemDevice), h.securityPolicyEnforcer)
 	case guestresource.ResourceTypeCombinedLayers:
-		return modifyCombinedLayers(ctx, req.RequestType, req.Settings.(*guestresource.LCOWCombinedLayers), h.securityPolicyEnforcer)
+		cl := req.Settings.(*guestresource.LCOWCombinedLayers)
+		// when cl.ScratchPath == "", we mount overlay as read-only, in which case
+		// we don't really care about scratch encryption, since the host already
+		// knows about the layers and the overlayfs.
+		encryptedScratch := cl.ScratchPath != "" && h.hostMounts.IsEncrypted(cl.ScratchPath)
+		return modifyCombinedLayers(ctx, req.RequestType, req.Settings.(*guestresource.LCOWCombinedLayers), encryptedScratch, h.securityPolicyEnforcer)
 	case guestresource.ResourceTypeNetwork:
 		return modifyNetwork(ctx, req.RequestType, req.Settings.(*guestresource.LCOWNetworkAdapter))
 	case guestresource.ResourceTypeVPCIDevice:
@@ -380,14 +459,19 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 		}
 		return c.modifyContainerConstraints(ctx, req.RequestType, req.Settings.(*guestresource.LCOWContainerConstraints))
 	case guestresource.ResourceTypeSecurityPolicy:
-		policy, ok := req.Settings.(*securitypolicy.EncodedSecurityPolicy)
+		r, ok := req.Settings.(*guestresource.LCOWConfidentialOptions)
 		if !ok {
-			return errors.New("the request's settings are not of type EncodedSecurityPolicy")
+			return errors.New("the request's settings are not of type LCOWConfidentialOptions")
 		}
-
-		return h.SetSecurityPolicy(policy.SecurityPolicy)
+		return h.SetConfidentialUVMOptions(ctx, r)
+	case guestresource.ResourceTypePolicyFragment:
+		r, ok := req.Settings.(*guestresource.LCOWSecurityPolicyFragment)
+		if !ok {
+			return errors.New("the request settings are not of type LCOWSecurityPolicyFragment")
+		}
+		return h.InjectFragment(ctx, r)
 	default:
-		return errors.Errorf("the ResourceType \"%s\" is not supported for UVM", req.ResourceType)
+		return errors.Errorf("the ResourceType %q is not supported for UVM", req.ResourceType)
 	}
 }
 
@@ -414,12 +498,166 @@ func (h *Host) ModifySettings(ctx context.Context, containerID string, req *gues
 
 // Shutdown terminates this UVM. This is a destructive call and will destroy all
 // state that has not been cleaned before calling this function.
-func (h *Host) Shutdown() {
-	syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
+func (*Host) Shutdown() {
+	_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
+}
+
+// Called to shutdown a container
+func (h *Host) ShutdownContainer(ctx context.Context, containerID string, graceful bool) error {
+	c, err := h.GetCreatedContainer(containerID)
+	if err != nil {
+		return err
+	}
+
+	err = h.securityPolicyEnforcer.EnforceShutdownContainerPolicy(containerID)
+	if err != nil {
+		return err
+	}
+
+	signal := unix.SIGTERM
+	if !graceful {
+		signal = unix.SIGKILL
+	}
+
+	return c.Kill(ctx, signal)
+}
+
+func (h *Host) SignalContainerProcess(ctx context.Context, containerID string, processID uint32, signal syscall.Signal) error {
+	c, err := h.GetCreatedContainer(containerID)
+	if err != nil {
+		return err
+	}
+
+	p, err := c.GetProcess(processID)
+	if err != nil {
+		return err
+	}
+
+	signalingInitProcess := (processID == c.initProcess.pid)
+
+	// Don't allow signalProcessV2 to route around container shutdown policy
+	// Sending SIGTERM or SIGKILL to a containers init process will shut down
+	// the container.
+	if signalingInitProcess {
+		if (signal == unix.SIGTERM) || (signal == unix.SIGKILL) {
+			graceful := (signal == unix.SIGTERM)
+			return h.ShutdownContainer(ctx, containerID, graceful)
+		}
+	}
+
+	startupArgList := p.(*containerProcess).spec.Args
+	err = h.securityPolicyEnforcer.EnforceSignalContainerProcessPolicy(containerID, signal, signalingInitProcess, startupArgList)
+	if err != nil {
+		return err
+	}
+
+	return p.Kill(ctx, signal)
+}
+
+func (h *Host) ExecProcess(ctx context.Context, containerID string, params prot.ProcessParameters, conSettings stdio.ConnectionSettings) (_ int, err error) {
+	var pid int
+	var c *Container
+	var envToKeep securitypolicy.EnvList
+	if params.IsExternal || containerID == UVMContainerID {
+		envToKeep, err = h.securityPolicyEnforcer.EnforceExecExternalProcessPolicy(
+			params.CommandArgs,
+			processParamEnvToOCIEnv(params.Environment),
+			params.WorkingDirectory,
+		)
+		if err != nil {
+			return pid, errors.Wrapf(err, "exec is denied due to policy")
+		}
+
+		if envToKeep != nil {
+			params.Environment = processOCIEnvToParam(envToKeep)
+		}
+
+		pid, err = h.runExternalProcess(ctx, params, conSettings)
+	} else if c, err = h.GetCreatedContainer(containerID); err == nil {
+		// We found a V2 container. Treat this as a V2 process.
+		if params.OCIProcess == nil {
+			// We've already done policy enforcement for creating a container so
+			// there's no policy enforcement to do for starting
+			pid, err = c.Start(ctx, conSettings)
+		} else {
+			// Windows uses a different field for command, there's no enforcement
+			// around this yet for Windows so this is Linux specific at the moment.
+			envToKeep, err = h.securityPolicyEnforcer.EnforceExecInContainerPolicy(containerID, params.OCIProcess.Args, params.OCIProcess.Env, params.OCIProcess.Cwd)
+			if err != nil {
+				return pid, errors.Wrapf(err, "exec in container denied due to policy")
+			}
+
+			if envToKeep != nil {
+				params.OCIProcess.Env = envToKeep
+			}
+
+			pid, err = c.ExecProcess(ctx, params.OCIProcess, conSettings)
+		}
+	}
+
+	return pid, err
+}
+
+func (h *Host) GetExternalProcess(pid int) (Process, error) {
+	h.externalProcessesMutex.Lock()
+	defer h.externalProcessesMutex.Unlock()
+
+	p, ok := h.externalProcesses[pid]
+	if !ok {
+		return nil, gcserr.NewHresultError(gcserr.HrErrNotFound)
+	}
+	return p, nil
+}
+
+func (h *Host) GetProperties(ctx context.Context, containerID string, query prot.PropertyQuery) (*prot.PropertiesV2, error) {
+	err := h.securityPolicyEnforcer.EnforceGetPropertiesPolicy()
+	if err != nil {
+		return nil, errors.Wrapf(err, "get properties denied due to policy")
+	}
+
+	c, err := h.GetCreatedContainer(containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	properties := &prot.PropertiesV2{}
+	for _, requestedProperty := range query.PropertyTypes {
+		if requestedProperty == prot.PtProcessList {
+			pids, err := c.GetAllProcessPids(ctx)
+			if err != nil {
+				return nil, err
+			}
+			properties.ProcessList = make([]prot.ProcessDetails, len(pids))
+			for i, pid := range pids {
+				properties.ProcessList[i].ProcessID = uint32(pid)
+			}
+		} else if requestedProperty == prot.PtStatistics {
+			cgroupMetrics, err := c.GetStats(ctx)
+			if err != nil {
+				return nil, err
+			}
+			properties.Metrics = cgroupMetrics
+		}
+	}
+
+	return properties, nil
+}
+
+func (h *Host) GetStacks() (string, error) {
+	err := h.securityPolicyEnforcer.EnforceDumpStacksPolicy()
+	if err != nil {
+		return "", errors.Wrapf(err, "dump stacks denied due to policy")
+	}
+
+	return debug.DumpStacks(), nil
 }
 
 // RunExternalProcess runs a process in the utility VM.
-func (h *Host) RunExternalProcess(ctx context.Context, params prot.ProcessParameters, conSettings stdio.ConnectionSettings) (_ int, err error) {
+func (h *Host) runExternalProcess(
+	ctx context.Context,
+	params prot.ProcessParameters,
+	conSettings stdio.ConnectionSettings,
+) (_ int, err error) {
 	var stdioSet *stdio.ConnectionSet
 	stdioSet, err = stdio.Connect(h.vsock, conSettings)
 	if err != nil {
@@ -507,33 +745,47 @@ func (h *Host) RunExternalProcess(ctx context.Context, params prot.ProcessParame
 	return p.Pid(), nil
 }
 
-func (h *Host) GetExternalProcess(pid int) (Process, error) {
-	h.externalProcessesMutex.Lock()
-	defer h.externalProcessesMutex.Unlock()
-
-	p, ok := h.externalProcesses[pid]
-	if !ok {
-		return nil, gcserr.NewHresultError(gcserr.HrErrNotFound)
-	}
-	return p, nil
-}
-
 func newInvalidRequestTypeError(rt guestrequest.RequestType) error {
 	return errors.Errorf("the RequestType %q is not supported", rt)
 }
 
-func modifyMappedVirtualDisk(ctx context.Context, rt guestrequest.RequestType, mvd *guestresource.LCOWMappedVirtualDisk, securityPolicy securitypolicy.SecurityPolicyEnforcer) (err error) {
+func modifyMappedVirtualDisk(
+	ctx context.Context,
+	rt guestrequest.RequestType,
+	mvd *guestresource.LCOWMappedVirtualDisk,
+	securityPolicy securitypolicy.SecurityPolicyEnforcer,
+) (err error) {
 	switch rt {
 	case guestrequest.RequestTypeAdd:
 		mountCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 		defer cancel()
 		if mvd.MountPath != "" {
-			return scsi.Mount(mountCtx, mvd.Controller, mvd.Lun, mvd.MountPath, mvd.ReadOnly, mvd.Encrypted, mvd.Options, mvd.VerityInfo, securityPolicy)
+			if mvd.ReadOnly {
+				// containers only have read-only layers so only enforce for them
+				var deviceHash string
+				if mvd.VerityInfo != nil {
+					deviceHash = mvd.VerityInfo.RootDigest
+				}
+
+				err = securityPolicy.EnforceDeviceMountPolicy(mvd.MountPath, deviceHash)
+				if err != nil {
+					return errors.Wrapf(err, "mounting scsi device controller %d lun %d onto %s denied by policy", mvd.Controller, mvd.Lun, mvd.MountPath)
+				}
+			}
+
+			return scsi.Mount(mountCtx, mvd.Controller, mvd.Lun, mvd.MountPath,
+				mvd.ReadOnly, mvd.Encrypted, mvd.Options, mvd.VerityInfo)
 		}
 		return nil
 	case guestrequest.RequestTypeRemove:
 		if mvd.MountPath != "" {
-			if err := scsi.Unmount(ctx, mvd.Controller, mvd.Lun, mvd.MountPath, mvd.Encrypted, mvd.VerityInfo, securityPolicy); err != nil {
+			if mvd.ReadOnly {
+				if err := securityPolicy.EnforceDeviceUnmountPolicy(mvd.MountPath); err != nil {
+					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
+				}
+			}
+
+			if err := scsi.Unmount(ctx, mvd.Controller, mvd.Lun, mvd.MountPath, mvd.Encrypted, mvd.VerityInfo); err != nil {
 				return err
 			}
 		}
@@ -543,23 +795,56 @@ func modifyMappedVirtualDisk(ctx context.Context, rt guestrequest.RequestType, m
 	}
 }
 
-func modifyMappedDirectory(ctx context.Context, vsock transport.Transport, rt guestrequest.RequestType, md *guestresource.LCOWMappedDirectory) (err error) {
+func modifyMappedDirectory(
+	ctx context.Context,
+	vsock transport.Transport,
+	rt guestrequest.RequestType,
+	md *guestresource.LCOWMappedDirectory,
+	securityPolicy securitypolicy.SecurityPolicyEnforcer,
+) (err error) {
 	switch rt {
 	case guestrequest.RequestTypeAdd:
+		err = securityPolicy.EnforcePlan9MountPolicy(md.MountPath)
+		if err != nil {
+			return errors.Wrapf(err, "mounting plan9 device at %s denied by policy", md.MountPath)
+		}
+
 		return plan9.Mount(ctx, vsock, md.MountPath, md.ShareName, uint32(md.Port), md.ReadOnly)
 	case guestrequest.RequestTypeRemove:
+		err = securityPolicy.EnforcePlan9UnmountPolicy(md.MountPath)
+		if err != nil {
+			return errors.Wrapf(err, "unmounting plan9 device at %s denied by policy", md.MountPath)
+		}
+
 		return storage.UnmountPath(ctx, md.MountPath, true)
 	default:
 		return newInvalidRequestTypeError(rt)
 	}
 }
 
-func modifyMappedVPMemDevice(ctx context.Context, rt guestrequest.RequestType, vpd *guestresource.LCOWMappedVPMemDevice, securityPolicy securitypolicy.SecurityPolicyEnforcer) (err error) {
+func modifyMappedVPMemDevice(ctx context.Context,
+	rt guestrequest.RequestType,
+	vpd *guestresource.LCOWMappedVPMemDevice,
+	securityPolicy securitypolicy.SecurityPolicyEnforcer,
+) (err error) {
 	switch rt {
 	case guestrequest.RequestTypeAdd:
-		return pmem.Mount(ctx, vpd.DeviceNumber, vpd.MountPath, vpd.MappingInfo, vpd.VerityInfo, securityPolicy)
+		var deviceHash string
+		if vpd.VerityInfo != nil {
+			deviceHash = vpd.VerityInfo.RootDigest
+		}
+		err = securityPolicy.EnforceDeviceMountPolicy(vpd.MountPath, deviceHash)
+		if err != nil {
+			return errors.Wrapf(err, "mounting pmem device %d onto %s denied by policy", vpd.DeviceNumber, vpd.MountPath)
+		}
+
+		return pmem.Mount(ctx, vpd.DeviceNumber, vpd.MountPath, vpd.MappingInfo, vpd.VerityInfo)
 	case guestrequest.RequestTypeRemove:
-		return pmem.Unmount(ctx, vpd.DeviceNumber, vpd.MountPath, vpd.MappingInfo, vpd.VerityInfo, securityPolicy)
+		if err := securityPolicy.EnforceDeviceUnmountPolicy(vpd.MountPath); err != nil {
+			return errors.Wrapf(err, "unmounting pmem device from %s denied by policy", vpd.MountPath)
+		}
+
+		return pmem.Unmount(ctx, vpd.DeviceNumber, vpd.MountPath, vpd.MappingInfo, vpd.VerityInfo)
 	default:
 		return newInvalidRequestTypeError(rt)
 	}
@@ -574,7 +859,13 @@ func modifyMappedVPCIDevice(ctx context.Context, rt guestrequest.RequestType, vp
 	}
 }
 
-func modifyCombinedLayers(ctx context.Context, rt guestrequest.RequestType, cl *guestresource.LCOWCombinedLayers, securityPolicy securitypolicy.SecurityPolicyEnforcer) (err error) {
+func modifyCombinedLayers(
+	ctx context.Context,
+	rt guestrequest.RequestType,
+	cl *guestresource.LCOWCombinedLayers,
+	scratchEncrypted bool,
+	securityPolicy securitypolicy.SecurityPolicyEnforcer,
+) (err error) {
 	switch rt {
 	case guestrequest.RequestTypeAdd:
 		layerPaths := make([]string, len(cl.Layers))
@@ -591,10 +882,22 @@ func modifyCombinedLayers(ctx context.Context, rt guestrequest.RequestType, cl *
 		} else {
 			upperdirPath = filepath.Join(cl.ScratchPath, "upper")
 			workdirPath = filepath.Join(cl.ScratchPath, "work")
+
+			if err := securityPolicy.EnforceScratchMountPolicy(cl.ScratchPath, scratchEncrypted); err != nil {
+				return fmt.Errorf("scratch mounting denied by policy: %w", err)
+			}
 		}
 
-		return overlay.MountLayer(ctx, layerPaths, upperdirPath, workdirPath, cl.ContainerRootPath, readonly, cl.ContainerID, securityPolicy)
+		if err := securityPolicy.EnforceOverlayMountPolicy(cl.ContainerID, layerPaths, cl.ContainerRootPath); err != nil {
+			return fmt.Errorf("overlay creation denied by policy: %w", err)
+		}
+
+		return overlay.MountLayer(ctx, layerPaths, upperdirPath, workdirPath, cl.ContainerRootPath, readonly)
 	case guestrequest.RequestTypeRemove:
+		if err := securityPolicy.EnforceOverlayUnmountPolicy(cl.ContainerRootPath); err != nil {
+			return errors.Wrap(err, "overlay removal denied by policy")
+		}
+
 		return storage.UnmountPath(ctx, cl.ContainerRootPath, true)
 	default:
 		return newInvalidRequestTypeError(rt)
@@ -645,4 +948,15 @@ func processParamEnvToOCIEnv(environment map[string]string) []string {
 		environmentList = append(environmentList, fmt.Sprintf("%s=%s", k, v))
 	}
 	return environmentList
+}
+
+// processOCIEnvToParam is the inverse of processParamEnvToOCIEnv
+func processOCIEnvToParam(envs []string) map[string]string {
+	paramEnv := make(map[string]string, len(envs))
+	for _, env := range envs {
+		parts := strings.SplitN(env, "=", 2)
+		paramEnv[parts[0]] = parts[1]
+	}
+
+	return paramEnv
 }

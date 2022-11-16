@@ -7,18 +7,18 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
-	"os"
-	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sys/windows"
 
 	"github.com/Microsoft/hcsshim/internal/gcs"
+	"github.com/Microsoft/hcsshim/internal/hcs"
 	"github.com/Microsoft/hcsshim/internal/hcs/schema1"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/log"
@@ -48,7 +48,7 @@ type gcsLogEntry struct {
 }
 
 // FUTURE-jstarks: Change the GCS log format to include type information
-//                 (e.g. by using a different encoding such as protobuf).
+// (e.g. by using a different encoding such as protobuf).
 func (e *gcsLogEntry) UnmarshalJSON(b []byte) error {
 	// Default the log level to info.
 	e.Level = logrus.InfoLevel
@@ -76,12 +76,7 @@ func (e *gcsLogEntry) UnmarshalJSON(b []byte) error {
 }
 
 func isDisconnectError(err error) bool {
-	if o, ok := err.(*net.OpError); ok {
-		if s, ok := o.Err.(*os.SyscallError); ok {
-			return s.Err == syscall.WSAECONNABORTED || s.Err == syscall.WSAECONNRESET
-		}
-	}
-	return false
+	return hcs.IsAny(err, windows.WSAECONNABORTED, windows.WSAECONNRESET)
 }
 
 func parseLogrus(vmid string) func(r io.Reader) {
@@ -98,13 +93,13 @@ func parseLogrus(vmid string) func(r io.Reader) {
 			if err != nil {
 				// Something went wrong. Read the rest of the data as a single
 				// string and log it at once -- it's probably a GCS panic stack.
-				if err != io.EOF && !isDisconnectError(err) {
+				if !errors.Is(err, io.EOF) && !isDisconnectError(err) {
 					logrus.WithFields(logrus.Fields{
 						logfields.UVMID: vmid,
 						logrus.ErrorKey: err,
 					}).Error("gcs log read")
 				}
-				rest, _ := ioutil.ReadAll(io.MultiReader(j.Buffered(), r))
+				rest, _ := io.ReadAll(io.MultiReader(j.Buffered(), r))
 				rest = bytes.TrimSpace(rest)
 				if len(rest) != 0 {
 					logrus.WithFields(logrus.Fields{
@@ -154,12 +149,18 @@ func (uvm *UtilityVM) configureHvSocketForGCS(ctx context.Context) (err error) {
 
 // Start synchronously starts the utility VM.
 func (uvm *UtilityVM) Start(ctx context.Context) (err error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	// save parent context, without timeout to use in terminate
+	pCtx := ctx
+	ctx, cancel := context.WithTimeout(pCtx, 2*time.Minute)
 	g, gctx := errgroup.WithContext(ctx)
 	defer func() {
 		_ = g.Wait()
 	}()
 	defer cancel()
+
+	// create exitCh ahead of time to prevent race conditions between writing
+	// initalizing the channel and waiting on it during acceptAndClose
+	uvm.exitCh = make(chan struct{})
 
 	// Prepare to provide entropy to the init process in the background. This
 	// must be done in a goroutine since, when using the internal bridge, the
@@ -203,13 +204,14 @@ func (uvm *UtilityVM) Start(ctx context.Context) (err error) {
 	}
 	defer func() {
 		if err != nil {
-			_ = uvm.hcsSystem.Terminate(ctx)
+			// use parent context, to prevent 2 minute timout (set above) from overridding terminate operation's
+			// timeout and erroring out prematurely
+			_ = uvm.hcsSystem.Terminate(pCtx)
 			_ = uvm.hcsSystem.Wait()
 		}
 	}()
 
 	// Start waiting on the utility VM.
-	uvm.exitCh = make(chan struct{})
 	go func() {
 		err := uvm.hcsSystem.Wait()
 		if err == nil {
@@ -277,6 +279,16 @@ func (uvm *UtilityVM) Start(ctx context.Context) (err error) {
 		}
 		uvm.guestCaps = properties.GuestConnectionInfo.GuestDefinedCapabilities
 		uvm.protocol = properties.GuestConnectionInfo.ProtocolVersion
+	}
+
+	if uvm.confidentialUVMOptions != nil && uvm.OS() == "linux" {
+		if err := uvm.SetConfidentialUVMOptions(ctx,
+			WithSecurityPolicy(uvm.confidentialUVMOptions.SecurityPolicy),
+			WithSecurityPolicyEnforcer(uvm.confidentialUVMOptions.SecurityPolicyEnforcer),
+			WithUVMReferenceInfo(defaultLCOWOSBootFilesPath(), uvm.confidentialUVMOptions.UVMReferenceInfoFile),
+		); err != nil {
+			return err
+		}
 	}
 
 	return nil

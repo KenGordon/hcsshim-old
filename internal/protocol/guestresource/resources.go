@@ -14,6 +14,7 @@ import (
 
 const (
 	// These are constants for v2 schema modify guest requests.
+
 	// ResourceTypeMappedDirectory is the modify resource type for mapped
 	// directories
 	ResourceTypeMappedDirectory guestrequest.ResourceType = "MappedDirectory"
@@ -38,6 +39,8 @@ const (
 	// ResourceTypeSecurityPolicy is the modify resource type for updating the security
 	// policy
 	ResourceTypeSecurityPolicy guestrequest.ResourceType = "SecurityPolicy"
+	// ResourceTypePolicyFragment is the modify resource type for injecting policy fragments.
+	ResourceTypePolicyFragment guestrequest.ResourceType = "SecurityPolicyFragment"
 )
 
 // This class is used by a modify request to add or remove a combined layers
@@ -129,17 +132,20 @@ type LCOWMappedVPCIDevice struct {
 // LCOWNetworkAdapter represents a network interface and its associated
 // configuration in a namespace.
 type LCOWNetworkAdapter struct {
-	NamespaceID     string `json:",omitempty"`
-	ID              string `json:",omitempty"`
-	MacAddress      string `json:",omitempty"`
-	IPAddress       string `json:",omitempty"`
-	PrefixLength    uint8  `json:",omitempty"`
-	GatewayAddress  string `json:",omitempty"`
-	DNSSuffix       string `json:",omitempty"`
-	DNSServerList   string `json:",omitempty"`
-	EnableLowMetric bool   `json:",omitempty"`
-	EncapOverhead   uint16 `json:",omitempty"`
-	VPCIAssigned    bool   `json:",omitempty"`
+	NamespaceID        string `json:",omitempty"`
+	ID                 string `json:",omitempty"`
+	MacAddress         string `json:",omitempty"`
+	IPAddress          string `json:",omitempty"`
+	PrefixLength       uint8  `json:",omitempty"`
+	GatewayAddress     string `json:",omitempty"`
+	IPv6Address        string `json:",omitempty"`
+	IPv6PrefixLength   uint8  `json:",omitempty"`
+	IPv6GatewayAddress string `json:",omitempty"`
+	DNSSuffix          string `json:",omitempty"`
+	DNSServerList      string `json:",omitempty"`
+	EnableLowMetric    bool   `json:",omitempty"`
+	EncapOverhead      uint16 `json:",omitempty"`
+	VPCIAssigned       bool   `json:",omitempty"`
 }
 
 type LCOWContainerConstraints struct {
@@ -157,4 +163,16 @@ type SignalProcessOptionsLCOW struct {
 // process.
 type SignalProcessOptionsWCOW struct {
 	Signal guestrequest.SignalValueWCOW `json:",omitempty"`
+}
+
+// LCOWConfidentialOptions is used to set various confidential container specific
+// options.
+type LCOWConfidentialOptions struct {
+	EnforcerType          string `json:"EnforcerType,omitempty"`
+	EncodedSecurityPolicy string `json:"EncodedSecurityPolicy,omitempty"`
+	EncodedUVMReference   string `json:"EncodedUVMReference,omitempty"`
+}
+
+type LCOWSecurityPolicyFragment struct {
+	Fragment string `json:"Fragment,omitempty"`
 }

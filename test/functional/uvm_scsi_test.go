@@ -1,4 +1,5 @@
-//go:build functional || uvmscsi
+//go:build windows && (functional || uvmscsi)
+// +build windows
 // +build functional uvmscsi
 
 package functional
@@ -18,33 +19,42 @@ import (
 	"github.com/Microsoft/hcsshim/internal/lcow"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/osversion"
-	testutilities "github.com/Microsoft/hcsshim/test/functional/utilities"
+	testutilities "github.com/Microsoft/hcsshim/test/internal"
+	"github.com/Microsoft/hcsshim/test/internal/require"
+	tuvm "github.com/Microsoft/hcsshim/test/internal/uvm"
 	"github.com/sirupsen/logrus"
 )
 
 // TestSCSIAddRemovev2LCOW validates adding and removing SCSI disks
 // from a utility VM in both attach-only and with a container path.
 func TestSCSIAddRemoveLCOW(t *testing.T) {
-	testutilities.RequiresBuild(t, osversion.RS5)
-	u := testutilities.CreateLCOWUVM(context.Background(), t, t.Name())
+	t.Skip("not yet updated")
+
+	require.Build(t, osversion.RS5)
+	requireFeatures(t, featureLCOW, featureSCSI)
+
+	u := tuvm.CreateAndStartLCOWFromOpts(context.Background(), t, defaultLCOWOptions(t))
 	defer u.Close()
 
 	testSCSIAddRemoveMultiple(t, u, `/run/gcs/c/0/scsi`, "linux", []string{})
-
 }
 
 // TestSCSIAddRemoveWCOW validates adding and removing SCSI disks
 // from a utility VM in both attach-only and with a container path.
 func TestSCSIAddRemoveWCOW(t *testing.T) {
-	testutilities.RequiresBuild(t, osversion.RS5)
+	t.Skip("not yet updated")
+
+	require.Build(t, osversion.RS5)
+	requireFeatures(t, featureWCOW, featureSCSI)
+
 	// TODO make the image configurable to the build we're testing on
-	u, layers, uvmScratchDir := testutilities.CreateWCOWUVM(context.Background(), t, t.Name(), "mcr.microsoft.com/windows/nanoserver:1903")
-	defer os.RemoveAll(uvmScratchDir)
+	u, layers, _ := tuvm.CreateWCOWUVM(context.Background(), t, t.Name(), "mcr.microsoft.com/windows/nanoserver:1903")
 	defer u.Close()
 
 	testSCSIAddRemoveSingle(t, u, `c:\`, "windows", layers)
 }
 
+//nolint:unused // unused since tests are skipped
 func testAddSCSI(u *uvm.UtilityVM, disks []string, pathPrefix string, usePath bool, reAdd bool) error {
 	for i := range disks {
 		uvmPath := ""
@@ -63,6 +73,7 @@ func testAddSCSI(u *uvm.UtilityVM, disks []string, pathPrefix string, usePath bo
 	return nil
 }
 
+//nolint:unused // unused since tests are skipped
 func testRemoveAllSCSI(u *uvm.UtilityVM, disks []string) error {
 	for i := range disks {
 		if err := u.RemoveSCSI(context.Background(), disks[i]); err != nil {
@@ -74,7 +85,10 @@ func testRemoveAllSCSI(u *uvm.UtilityVM, disks []string) error {
 
 // TODO this test is only needed until WCOW supports adding the same scsi device to
 // multiple containers
+//
+//nolint:unused // unused since tests are skipped
 func testSCSIAddRemoveSingle(t *testing.T, u *uvm.UtilityVM, pathPrefix string, operatingSystem string, wcowImageLayerFolders []string) {
+	t.Helper()
 	numDisks := 63 // Windows: 63 as the UVM scratch is at 0:0
 	if operatingSystem == "linux" {
 		numDisks++ //
@@ -89,7 +103,6 @@ func testSCSIAddRemoveSingle(t *testing.T, u *uvm.UtilityVM, pathPrefix string, 
 		} else {
 			tempDir = testutilities.CreateLCOWBlankRWLayer(context.Background(), t)
 		}
-		defer os.RemoveAll(tempDir)
 		disks[i] = filepath.Join(tempDir, `sandbox.vhdx`)
 	}
 
@@ -125,7 +138,9 @@ func testSCSIAddRemoveSingle(t *testing.T, u *uvm.UtilityVM, pathPrefix string, 
 	// TODO: Could extend to validate can't add a 64th disk (windows). 65th (linux).
 }
 
+//nolint:unused // unused since tests are skipped
 func testSCSIAddRemoveMultiple(t *testing.T, u *uvm.UtilityVM, pathPrefix string, operatingSystem string, wcowImageLayerFolders []string) {
+	t.Helper()
 	numDisks := 63 // Windows: 63 as the UVM scratch is at 0:0
 	if operatingSystem == "linux" {
 		numDisks++ //
@@ -140,7 +155,6 @@ func testSCSIAddRemoveMultiple(t *testing.T, u *uvm.UtilityVM, pathPrefix string
 		} else {
 			tempDir = testutilities.CreateLCOWBlankRWLayer(context.Background(), t)
 		}
-		defer os.RemoveAll(tempDir)
 		disks[i] = filepath.Join(tempDir, `sandbox.vhdx`)
 	}
 
@@ -214,8 +228,12 @@ func testSCSIAddRemoveMultiple(t *testing.T, u *uvm.UtilityVM, pathPrefix string
 }
 
 func TestParallelScsiOps(t *testing.T) {
-	testutilities.RequiresBuild(t, osversion.RS5)
-	u := testutilities.CreateLCOWUVM(context.Background(), t, t.Name())
+	t.Skip("not yet updated")
+
+	require.Build(t, osversion.RS5)
+	requireFeatures(t, featureLCOW, featureSCSI)
+
+	u := tuvm.CreateAndStartLCOWFromOpts(context.Background(), t, defaultLCOWOptions(t))
 	defer u.Close()
 
 	// Create a sandbox to use

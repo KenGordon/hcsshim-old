@@ -6,7 +6,6 @@ package cri_containerd
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,15 +15,17 @@ import (
 	"time"
 
 	"github.com/Microsoft/go-winio/vhd"
+	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+
 	"github.com/Microsoft/hcsshim/hcn"
 	"github.com/Microsoft/hcsshim/internal/winapi"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
-	testutilities "github.com/Microsoft/hcsshim/test/functional/utilities"
-	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+	"github.com/Microsoft/hcsshim/test/internal/require"
 )
 
 func getJobContainerPodRequestWCOW(t *testing.T) *runtime.RunPodSandboxRequest {
+	t.Helper()
 	p := getRunPodSandboxRequest(t, wcowProcessRuntimeHandler)
 	if p.Config.Windows == nil {
 		p.Config.Windows = &runtime.WindowsPodSandboxConfig{}
@@ -37,6 +38,7 @@ func getJobContainerPodRequestWCOW(t *testing.T) *runtime.RunPodSandboxRequest {
 }
 
 func getJobContainerRequestWCOW(t *testing.T, podID string, podConfig *runtime.PodSandboxConfig, image string, user string, mounts []*runtime.Mount) *runtime.CreateContainerRequest {
+	t.Helper()
 	inheritUser := "true"
 	if user != "" {
 		inheritUser = "false"
@@ -313,7 +315,7 @@ func Test_RunContainer_VHD_JobContainer_WCOW(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.CloseHandle(vhdHandle)
+	defer syscall.CloseHandle(vhdHandle) //nolint:errcheck
 
 	if err := vhd.AttachVirtualDisk(syscall.Handle(vhdHandle), vhd.AttachVirtualDiskFlagNone, &vhd.AttachVirtualDiskParameters{Version: 1}); err != nil {
 		t.Fatalf("failed to attach vhd at %q: %s", vhdPath, err)
@@ -418,12 +420,12 @@ func Test_RunContainer_HostVolumes_JobContainer_WCOW(t *testing.T) {
 
 func Test_RunContainer_JobContainer_VolumeMount(t *testing.T) {
 	client := newTestRuntimeClient(t)
-	testutilities.RequiresExactBuild(t, osversion.RS5)
+	require.ExactBuild(t, osversion.RS5)
 
 	dir := t.TempDir()
 
 	tmpfn := filepath.Join(dir, "tmpfile")
-	if err := ioutil.WriteFile(tmpfn, []byte("test"), 0777); err != nil {
+	if err := os.WriteFile(tmpfn, []byte("test"), 0777); err != nil {
 		t.Fatal(err)
 	}
 
@@ -601,11 +603,11 @@ func Test_RunContainer_JobContainer_Environment(t *testing.T) {
 
 func Test_RunContainer_WorkingDirectory_JobContainer_WCOW(t *testing.T) {
 	client := newTestRuntimeClient(t)
-	testutilities.RequiresExactBuild(t, osversion.RS5)
+	require.ExactBuild(t, osversion.RS5)
 
 	type config struct {
 		name             string
-		containerName    string
+		containerName    string //nolint:unused // may be used in future tests
 		workDir          string
 		requiredFeatures []string
 		sandboxImage     string
@@ -737,7 +739,7 @@ func Test_DoubleQuoting_JobContainer_WCOW(t *testing.T) {
 // Test that mounts show up at the expected destination if the host supports file binding.
 func Test_BindSupport_JobContainer_WCOW(t *testing.T) {
 	requireFeatures(t, featureWCOWProcess, featureHostProcess)
-	testutilities.RequiresBuild(t, osversion.V20H1)
+	require.Build(t, osversion.V20H1)
 
 	pullRequiredImages(t, []string{imageWindowsNanoserver})
 	client := newTestRuntimeClient(t)
@@ -793,7 +795,7 @@ func Test_BindSupport_JobContainer_WCOW(t *testing.T) {
 // Test that mounts are unique per container even if the same container path is used.
 func Test_BindSupport_MultipleContainers_JobContainer_WCOW(t *testing.T) {
 	requireFeatures(t, featureWCOWProcess, featureHostProcess)
-	testutilities.RequiresBuild(t, osversion.V20H1)
+	require.Build(t, osversion.V20H1)
 
 	pullRequiredImages(t, []string{imageWindowsNanoserver})
 	client := newTestRuntimeClient(t)

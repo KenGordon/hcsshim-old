@@ -15,7 +15,7 @@ import (
 	"github.com/containerd/containerd/runtime"
 	"github.com/containerd/containerd/runtime/v2/task"
 	"github.com/containerd/typeurl"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
@@ -117,7 +117,7 @@ func newHcsStandaloneTask(ctx context.Context, events publisher, req *task.Creat
 }
 
 // createContainer is a generic call to return either a process/hypervisor isolated container, or a job container
-//  based on what is set in the OCI spec.
+// based on what is set in the OCI spec.
 func createContainer(ctx context.Context, id, owner, netNS string, s *specs.Spec, parent *uvm.UtilityVM, shimOpts *runhcsopts.Options) (cow.Container, *resources.Resources, error) {
 	var (
 		err       error
@@ -519,6 +519,23 @@ func (ht *hcsTask) GetExec(eid string) (shimExec, error) {
 	return raw.(shimExec), nil
 }
 
+func (ht *hcsTask) ListExecs() (_ []shimExec, err error) {
+	var execs []shimExec
+	ht.execs.Range(func(key, value interface{}) bool {
+		wt, ok := value.(shimExec)
+		if !ok {
+			err = fmt.Errorf("failed to load exec %q", key)
+			return false
+		}
+		execs = append(execs, wt)
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	return execs, nil
+}
+
 func (ht *hcsTask) KillExec(ctx context.Context, eid string, signal uint32, all bool) error {
 	e, err := ht.GetExec(eid)
 	if err != nil {
@@ -788,7 +805,8 @@ func (ht *hcsTask) close(ctx context.Context) {
 						log.G(ctx).WithError(err).Error("failed to wait for container shutdown")
 					}
 				case <-t.C:
-					log.G(ctx).WithError(hcs.ErrTimeout).Error("failed to wait for container shutdown")
+					err = hcs.ErrTimeout
+					log.G(ctx).WithError(err).Error("failed to wait for container shutdown")
 				}
 			}
 
@@ -965,7 +983,7 @@ func (ht *hcsTask) Update(ctx context.Context, req *task.UpdateTaskRequest) erro
 	}
 
 	if ht.ownsHost && ht.host != nil {
-		return ht.host.UpdateConstraints(ctx, resources, req.Annotations)
+		return ht.host.Update(ctx, resources, req.Annotations)
 	}
 
 	return ht.updateTaskContainerResources(ctx, resources, req.Annotations)

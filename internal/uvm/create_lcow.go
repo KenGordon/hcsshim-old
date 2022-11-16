@@ -74,13 +74,28 @@ const (
 	// UncompressedKernelFile is the default file name for an uncompressed
 	// kernel used to boot LCOW with KernelDirect.
 	UncompressedKernelFile = "vmlinux"
-	// In the SNP case both the kernel (bzImage) and initrd are stored in a vmgs (VM Guest State) file
+	// GuestStateFile is the default file name for a vmgs (VM Guest State) file
+	// which combines kernel and initrd and is used to boot from in the SNP case.
 	GuestStateFile = "kernelinitrd.vmgs"
+	// UVMReferenceInfoFile is the default file name for a COSE_Sign1
+	// reference UVM info, which can be made available to workload containers
+	// and can be used for validation purposes.
+	UVMReferenceInfoFile = "reference_info.cose"
 )
+
+type ConfidentialOptions struct {
+	GuestStateFile         string // The vmgs file to load
+	UseGuestStateFile      bool   // Use a vmgs file that contains a kernel and initrd, required for SNP
+	SecurityPolicy         string // Optional security policy
+	SecurityPolicyEnabled  bool   // Set when there is a security policy to apply on actual SNP hardware, use this rathen than checking the string length
+	SecurityPolicyEnforcer string // Set which security policy enforcer to use (open door, standard or rego). This allows for better fallback mechanic.
+	UVMReferenceInfoFile   string // Filename under `BootFilesPath` for (potentially signed) UVM image reference information.
+}
 
 // OptionsLCOW are the set of options passed to CreateLCOW() to create a utility vm.
 type OptionsLCOW struct {
 	*Options
+	*ConfidentialOptions
 
 	BootFilesPath           string              // Folder in which kernel and root file system reside. Defaults to \Program Files\Linux Containers
 	KernelFile              string              // Filename under `BootFilesPath` for the kernel. Defaults to `kernel`
@@ -101,10 +116,6 @@ type OptionsLCOW struct {
 	EnableColdDiscardHint   bool                // Whether the HCS should use cold discard hints. Defaults to false
 	VPCIEnabled             bool                // Whether the kernel should enable pci
 	EnableScratchEncryption bool                // Whether the scratch should be encrypted
-	SecurityPolicy          string              // Optional security policy
-	SecurityPolicyEnabled   bool                // Set when there is a security policy to apply on actual SNP hardware, use this rathen than checking the string length
-	UseGuestStateFile       bool                // Use a vmgs file that contains a kernel and initrd, required for SNP
-	GuestStateFile          string              // The vmgs file to load
 	DisableTimeSyncService  bool                // Disables the time synchronization service
 }
 
@@ -151,10 +162,11 @@ func NewDefaultOptionsLCOW(id, owner string) *OptionsLCOW {
 		EnableColdDiscardHint:   false,
 		VPCIEnabled:             false,
 		EnableScratchEncryption: false,
-		SecurityPolicyEnabled:   false,
-		SecurityPolicy:          "",
-		GuestStateFile:          "",
 		DisableTimeSyncService:  false,
+		ConfidentialOptions: &ConfidentialOptions{
+			SecurityPolicyEnabled: false,
+			UVMReferenceInfoFile:  UVMReferenceInfoFile,
+		},
 	}
 
 	if _, err := os.Stat(filepath.Join(opts.BootFilesPath, VhdFile)); err == nil {
@@ -607,7 +619,6 @@ func makeLCOWDoc(ctx context.Context, opts *OptionsLCOW, uvm *UtilityVM) (_ *hcs
 				ReadOnly: true,
 			}
 			uvm.scsiLocations[0][0] = newSCSIMount(uvm, rootfsFullPath, "/", "VirtualDisk", "", 1, 0, 0, true, false)
-
 		}
 	}
 
@@ -743,6 +754,7 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 		vpmemMultiMapping:       !opts.VPMemNoMultiMapping,
 		encryptScratch:          opts.EnableScratchEncryption,
 		noWritableFileShares:    opts.NoWritableFileShares,
+		confidentialUVMOptions:  opts.ConfidentialOptions,
 	}
 
 	defer func() {
@@ -774,15 +786,12 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 		return nil, err
 	}
 
-	err = uvm.create(ctx, doc)
-
-	log.G(ctx).Tracef("create_lcow::CreateLCOW uvm.create result uvm: %v err %v", uvm, err)
-
-	if err != nil {
-		return nil, fmt.Errorf("error while creating the compute system: %s", err)
+	if err = uvm.create(ctx, doc); err != nil {
+		return nil, fmt.Errorf("error while creating the compute system: %w", err)
 	}
+	log.G(ctx).WithField("uvm", uvm).Trace("create_lcow::CreateLCOW uvm.create result")
 
-	// Cerate a socket to inject entropy during boot.
+	// Create a socket to inject entropy during boot.
 	uvm.entropyListener, err = uvm.listenVsock(entropyVsockPort)
 	if err != nil {
 		return nil, err

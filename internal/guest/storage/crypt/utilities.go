@@ -7,23 +7,11 @@ import (
 	"context"
 	"crypto/rand"
 	"io"
-	"io/ioutil"
 	"os"
-	"regexp"
 
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/pkg/errors"
 )
-
-func getUniqueName(path string) (name string, err error) {
-	// Make a Regex to say we only want letters and numbers
-	reg, err := regexp.Compile("[^a-zA-Z0-9]+")
-	if err != nil {
-		return "", err
-	}
-	// Replace all non-alphanumeric characters by dashes
-	return reg.ReplaceAllString(path, "-"), nil
-}
 
 // getBlockDeviceSize returns the size of the specified block device.
 func getBlockDeviceSize(ctx context.Context, path string) (int64, error) {
@@ -77,6 +65,8 @@ func createSparseEmptyFile(ctx context.Context, path string, size int64) (err er
 }
 
 // The following constants aren't defined in the io or os libraries.
+//
+//nolint:stylecheck // ST1003: ALL_CAPS
 const (
 	SEEK_DATA = 3
 	SEEK_HOLE = 4
@@ -128,6 +118,7 @@ func copyEmptySparseFilesystem(source string, destination string) error {
 		offset = chunkEnd
 
 		// Read contents of this data chunk
+		//nolint:staticcheck //TODO: SA1019: os.SEEK_SET has been deprecated since Go 1.7: Use io.SeekStart, io.SeekCurrent, and io.SeekEnd.
 		_, err = fin.Seek(chunkStart, os.SEEK_SET)
 		if err != nil {
 			return errors.Wrap(err, "failed to seek set in source file")
@@ -143,6 +134,7 @@ func copyEmptySparseFilesystem(source string, destination string) error {
 		}
 
 		// Write data to destination file
+		//nolint:staticcheck //TODO: SA1019: os.SEEK_SET has been deprecated since Go 1.7: Use io.SeekStart, io.SeekCurrent, and io.SeekEnd.
 		_, err = fout.Seek(chunkStart, os.SEEK_SET)
 		if err != nil {
 			return errors.Wrap(err, "failed to seek destination file")
@@ -165,7 +157,7 @@ func generateKeyFile(path string, size int64) error {
 		return errors.Wrap(err, "failed to generate key array")
 	}
 
-	if err := ioutil.WriteFile(path, keyArray[:], 0644); err != nil {
+	if err := os.WriteFile(path, keyArray[:], 0644); err != nil {
 		return errors.Wrap(err, "failed to save key to file")
 	}
 

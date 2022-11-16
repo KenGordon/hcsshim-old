@@ -6,7 +6,6 @@ package crypt
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,14 +23,10 @@ var (
 	_cryptsetupOpen            = cryptsetupOpen
 	_generateKeyFile           = generateKeyFile
 	_getBlockDeviceSize        = getBlockDeviceSize
-	_ioutilTempDir             = ioutil.TempDir
+	_osMkdirTemp               = os.MkdirTemp
 	_mkfsExt4Command           = mkfsExt4Command
 	_osRemoveAll               = os.RemoveAll
 )
-
-// String used to identify dm-crypt devices. The argument is a unique name based
-// on the original block device path.
-const cryptDeviceTemplate string = "dm-crypt-%s"
 
 // cryptsetupCommand runs cryptsetup with the provided arguments
 func cryptsetupCommand(args []string) error {
@@ -109,70 +104,64 @@ func mkfsExt4Command(args []string) error {
 //
 // In order to mount a block device as an encrypted device:
 //
-// 1. Generate a random key. It doesn't matter which key it is, the aim is to
-//    protect the contents of the scratch disk from the host OS. It can be
-//    deleted after mounting the encrypted device.
+//  1. Generate a random key. It doesn't matter which key it is, the aim is to
+//     protect the contents of the scratch disk from the host OS. It can be
+//     deleted after mounting the encrypted device.
 //
-// 2. The original block device has to be formatted with cryptsetup with the
-//    generated key. This results in that block device becoming an encrypted
-//    block device that can't be mounted directly.
+//  2. The original block device has to be formatted with cryptsetup with the
+//     generated key. This results in that block device becoming an encrypted
+//     block device that can't be mounted directly.
 //
-// 3. Open the block device with cryptsetup. It is needed to assign it a device
-//    name. We are using names that follow `cryptDeviceTemplate`, where "%s" is
-//    a unique name generated from the path of the original block device. In
-//    this case, it's just the path of the block device with all
-//    non-alphanumeric characters replaced by a '-'.
+//  3. Open the block device with cryptsetup. It is needed to assign it a device
+//     name. We are using names that follow `cryptDeviceTemplate`, where "%s" is
+//     a unique name generated from the path of the original block device. In
+//     this case, it's just the path of the block device with all
+//     non-alphanumeric characters replaced by a '-'.
 //
-//    The kernel exposes the unencrypted block device at the path
-//    /dev/mapper/`cryptDeviceTemplate`. This can be mounted directly, but it
-//    doesn't have any format yet.
+//     The kernel exposes the unencrypted block device at the path
+//     /dev/mapper/`cryptDeviceTemplate`. This can be mounted directly, but it
+//     doesn't have any format yet.
 //
-// 4. Format the unencrypted block device as ext4:
+//  4. Format the unencrypted block device as ext4:
 //
-//    A normal invocation of luksFormat wipes the target device. This takes
-//    a really long time, which isn't acceptable in our use-case. Passing the
-//    option --integrity-no-wipe prevents this from happening so that the
-//    command ends in an instant.
+//     A normal invocation of luksFormat wipes the target device. This takes
+//     a really long time, which isn't acceptable in our use-case. Passing the
+//     option --integrity-no-wipe prevents this from happening so that the
+//     command ends in an instant.
 //
-//    Because of using --integrity-no-wipe, the resulting device isn't wiped and
-//    all the integrity tags are incorrect. This means that any attempt to read
-//    from it will cause an I/O error, which programs aren't prepared to handle.
-//    For example, mkfs.ext4 tries to read blocks before writing to them, and
-//    there is no way around it. When it gets an I/O error, it just exits.
+//     Because of using --integrity-no-wipe, the resulting device isn't wiped and
+//     all the integrity tags are incorrect. This means that any attempt to read
+//     from it will cause an I/O error, which programs aren't prepared to handle.
+//     For example, mkfs.ext4 tries to read blocks before writing to them, and
+//     there is no way around it. When it gets an I/O error, it just exits.
 //
-//    The solution is to create a file with the same size as the resulting
-//    device, format it as ext4, then use dd to copy the format to the device
-//    (dd won't try to read anything).
+//     The solution is to create a file with the same size as the resulting
+//     device, format it as ext4, then use dd to copy the format to the device
+//     (dd won't try to read anything).
 //
-//    However, creating a file that is several GB in size isn't a good solution
-//    either because doing dd of the whole file would take as long as letting
-//    luksFormat wipe the disk.
+//     However, creating a file that is several GB in size isn't a good solution
+//     either because doing dd of the whole file would take as long as letting
+//     luksFormat wipe the disk.
 //
-//    The solution is to create a sparse file and format it. Then, it is
-//    possible to copy the format to the block device by doing a sparse copy
-//    (only copy the data parts of the file, not the holes). This makes
-//    formatting the device almost instantaneous.
+//     The solution is to create a sparse file and format it. Then, it is
+//     possible to copy the format to the block device by doing a sparse copy
+//     (only copy the data parts of the file, not the holes). This makes
+//     formatting the device almost instantaneous.
 //
-//    4.1. Get size of scratch disk.
+//     4.1. Get size of scratch disk.
 //
-//    4.2. Create sparse filesystem image with the same size as the scratch
-//         device. It can be removed afterwards.
+//     4.2. Create sparse filesystem image with the same size as the scratch
+//     device. It can be removed afterwards.
 //
-//    4.3. Format it as ext4. This way the file is only as big as the few blocks
-//         of the image that have the filesystem information, the ones modified
-//         by mkfs.ext4.
+//     4.3. Format it as ext4. This way the file is only as big as the few blocks
+//     of the image that have the filesystem information, the ones modified
+//     by mkfs.ext4.
 //
-//    4.4. Do a sparse copy of the filesystem into the unencrypted block device.
-//         This updates the integrity tags.
-func EncryptDevice(ctx context.Context, source string) (path string, err error) {
-
-	uniqueName, err := getUniqueName(source)
-	if err != nil {
-		return "", errors.Wrapf(err, "failed to generate unique name: %s", source)
-	}
-
+//     4.4. Do a sparse copy of the filesystem into the unencrypted block device.
+//     This updates the integrity tags.
+func EncryptDevice(ctx context.Context, source string, dmCryptName string) (path string, err error) {
 	// Create temporary directory to store the keyfile and EXT4 image
-	tempDir, err := _ioutilTempDir("", "dm-crypt")
+	tempDir, err := _osMkdirTemp("", "dm-crypt")
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to create temporary folder: %s", source)
 	}
@@ -188,18 +177,17 @@ func EncryptDevice(ctx context.Context, source string) (path string, err error) 
 	keyFilePath := filepath.Join(tempDir, "keyfile")
 
 	if err = _generateKeyFile(keyFilePath, 1024); err != nil {
-		return "", errors.Wrapf(err, "failed to generate keyfile: %s", keyFilePath)
+		return "", fmt.Errorf("failed to generate keyfile %q: %w", keyFilePath, err)
 	}
 
 	// 2. Format device
 	if err = _cryptsetupFormat(source, keyFilePath); err != nil {
-		return "", errors.Wrapf(err, "luksFormat failed: %s", source)
+		return "", fmt.Errorf("luksFormat failed: %s: %w", source, err)
 	}
 
 	// 3. Open device
-	deviceName := fmt.Sprintf(cryptDeviceTemplate, uniqueName)
-	if err := _cryptsetupOpen(source, deviceName, keyFilePath); err != nil {
-		return "", errors.Wrapf(err, "luksOpen failed: %s", source)
+	if err := _cryptsetupOpen(source, dmCryptName, keyFilePath); err != nil {
+		return "", fmt.Errorf("luksOpen failed: %s: %w", source, err)
 	}
 
 	defer func() {
@@ -210,12 +198,12 @@ func EncryptDevice(ctx context.Context, source string) (path string, err error) 
 		}
 	}()
 
-	deviceNamePath := "/dev/mapper/" + deviceName
+	deviceNamePath := "/dev/mapper/" + dmCryptName
 
 	// 4.1. Get actual size of the scratch device
 	deviceSize, err := _getBlockDeviceSize(ctx, deviceNamePath)
 	if err != nil {
-		return "", errors.Wrapf(err, "error getting size of: %s", deviceNamePath)
+		return "", fmt.Errorf("error getting size of: %s: %w", deviceNamePath, err)
 	}
 
 	if deviceSize == 0 {
@@ -226,33 +214,27 @@ func EncryptDevice(ctx context.Context, source string) (path string, err error) 
 	tempExt4File := filepath.Join(tempDir, "ext4.img")
 
 	if err = _createSparseEmptyFile(ctx, tempExt4File, deviceSize); err != nil {
-		return "", errors.Wrap(err, "failed to create sparse filesystem file")
+		return "", fmt.Errorf("failed to create sparse filesystem file: %w", err)
 	}
 
 	// 4.3. Format it as ext4
 	if err = _mkfsExt4Command([]string{tempExt4File}); err != nil {
-		return "", errors.Wrapf(err, "mkfs.ext4 failed to format: %s", tempExt4File)
+		return "", fmt.Errorf("mkfs.ext4 failed to format %s: %w", tempExt4File, err)
 	}
 
 	// 4.4. Sparse copy of the filesystem into the encrypted block device
 	if err = _copyEmptySparseFilesystem(tempExt4File, deviceNamePath); err != nil {
-		return "", errors.Wrap(err, "failed to do sparse copy")
+		return "", fmt.Errorf("failed to do sparse copy: %w", err)
 	}
 
 	return deviceNamePath, nil
 }
 
 // CleanupCryptDevice removes the dm-crypt device created by EncryptDevice
-func CleanupCryptDevice(source string) error {
-	uniqueName, err := getUniqueName(source)
-	if err != nil {
-		return errors.Wrapf(err, "failed to generate unique name: %s", source)
-	}
-
+func CleanupCryptDevice(dmCryptName string) error {
 	// Close dm-crypt device
-	deviceName := fmt.Sprintf(cryptDeviceTemplate, uniqueName)
-	if err := _cryptsetupClose(deviceName); err != nil {
-		return errors.Wrapf(err, "luksClose failed: %s", deviceName)
+	if err := _cryptsetupClose(dmCryptName); err != nil {
+		return fmt.Errorf("luksClose failed: %s: %w", dmCryptName, err)
 	}
 	return nil
 }

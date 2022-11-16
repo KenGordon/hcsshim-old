@@ -14,8 +14,7 @@ import (
 	"time"
 
 	"github.com/Microsoft/hcsshim/osversion"
-	_ "github.com/Microsoft/hcsshim/test/functional/manifest"
-	testutilities "github.com/Microsoft/hcsshim/test/functional/utilities"
+	testutilities "github.com/Microsoft/hcsshim/test/internal"
 	"github.com/containerd/containerd"
 	eventtypes "github.com/containerd/containerd/api/events"
 	eventsapi "github.com/containerd/containerd/api/services/events/v1"
@@ -25,6 +24,9 @@ import (
 	"github.com/gogo/protobuf/types"
 	"google.golang.org/grpc"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+
+	"github.com/Microsoft/hcsshim/test/internal/constants"
+	_ "github.com/Microsoft/hcsshim/test/internal/manifest"
 )
 
 const (
@@ -47,8 +49,8 @@ const (
 	testVMServiceBinary  = "C:\\Containerplat\\vmservice.exe"
 
 	lcowRuntimeHandler       = "runhcs-lcow"
-	imageLcowK8sPause        = "k8s.gcr.io/pause:3.1"
-	imageLcowAlpine          = "docker.io/library/alpine:latest"
+	imageLcowK8sPause        = "mcr.microsoft.com/oss/kubernetes/pause:3.1"
+	imageLcowAlpine          = "mcr.microsoft.com/mirror/docker/library/alpine:3.16"
 	imageLcowAlpineCoreDump  = "cplatpublic.azurecr.io/stackoverflow-alpine:latest"
 	imageLcowCosmos          = "cosmosarno/spark-master:2.4.1_2019-04-18_8e864ce"
 	imageLcowCustomUser      = "cplatpublic.azurecr.io/linux_custom_user:latest"
@@ -69,15 +71,17 @@ const (
 )
 
 // Image definitions
+//
+//nolint:deadcode,unused,varcheck // may be used in future tests
 var (
 	imageWindowsNanoserver      = getWindowsNanoserverImage(osversion.Build())
 	imageWindowsServercore      = getWindowsServerCoreImage(osversion.Build())
-	imageWindowsNanoserver17763 = getWindowsNanoserverImage(osversion.RS5)
-	imageWindowsNanoserver18362 = getWindowsNanoserverImage(osversion.V19H1)
-	imageWindowsNanoserver19041 = getWindowsNanoserverImage(osversion.V20H1)
-	imageWindowsServercore17763 = getWindowsServerCoreImage(osversion.RS5)
-	imageWindowsServercore18362 = getWindowsServerCoreImage(osversion.V19H1)
-	imageWindowsServercore19041 = getWindowsServerCoreImage(osversion.V20H1)
+	imageWindowsNanoserver17763 = constants.ImageWindowsNanoserver1809
+	imageWindowsNanoserver18362 = constants.ImageWindowsNanoserver1903
+	imageWindowsNanoserver19041 = constants.ImageWindowsNanoserver2004
+	imageWindowsServercore17763 = constants.ImageWindowsServercore1809
+	imageWindowsServercore18362 = constants.ImageWindowsServercore1903
+	imageWindowsServercore19041 = constants.ImageWindowsServercore2004
 )
 
 // Flags
@@ -101,6 +105,7 @@ const (
 	featureCRIUpdateContainer = "UpdateContainer"
 	featureTerminateOnRestart = "TerminateOnRestart"
 	featureLCOWIntegrity      = "LCOWIntegrity"
+	featureLCOWCrypt          = "LCOWCrypt"
 )
 
 var allFeatures = []string{
@@ -131,6 +136,7 @@ func TestMain(m *testing.M) {
 // was enabled, and skips the test if any are missing. If the flagFeatures set
 // is empty, the function returns (by default all features are enabled).
 func requireFeatures(t *testing.T, features ...string) {
+	t.Helper()
 	set := flagFeatures.ValueSet()
 	if len(set) == 0 {
 		return
@@ -146,6 +152,7 @@ func requireFeatures(t *testing.T, features ...string) {
 // binary.
 // Returns full binary path if it exists, otherwise, skips the test.
 func requireBinary(t *testing.T, binary string) string {
+	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Skipf("error locating executable: %s", err)
@@ -161,55 +168,19 @@ func requireBinary(t *testing.T, binary string) string {
 }
 
 func getWindowsNanoserverImage(build uint16) string {
-	switch build {
-	case osversion.RS5:
-		return "mcr.microsoft.com/windows/nanoserver:1809"
-	case osversion.V19H1:
-		return "mcr.microsoft.com/windows/nanoserver:1903"
-	case osversion.V19H2:
-		return "mcr.microsoft.com/windows/nanoserver:1909"
-	case osversion.V20H1:
-		return "mcr.microsoft.com/windows/nanoserver:2004"
-	case osversion.V20H2:
-		return "mcr.microsoft.com/windows/nanoserver:2009"
-	case osversion.V21H2Server:
-		return "mcr.microsoft.com/windows/nanoserver:ltsc2022"
-	default:
-		// Due to some efforts in improving down-level compatibility for Windows containers (see
-		// https://techcommunity.microsoft.com/t5/containers/windows-server-2022-and-beyond-for-containers/ba-p/2712487)
-		// the ltsc2022 image should continue to work on builds ws2022 and onwards. With this in mind,
-		// if there's no mapping for the host build, just use the Windows Server 2022 image.
-		if build > osversion.V21H2Server {
-			return "mcr.microsoft.com/windows/nanoserver:ltsc2022"
-		}
-		panic("unsupported build")
+	tag, err := constants.ImageFromBuild(build)
+	if err != nil {
+		panic(err)
 	}
+	return constants.NanoserverImage(tag)
 }
 
 func getWindowsServerCoreImage(build uint16) string {
-	switch build {
-	case osversion.RS5:
-		return "mcr.microsoft.com/windows/servercore:1809"
-	case osversion.V19H1:
-		return "mcr.microsoft.com/windows/servercore:1903"
-	case osversion.V19H2:
-		return "mcr.microsoft.com/windows/servercore:1909"
-	case osversion.V20H1:
-		return "mcr.microsoft.com/windows/servercore:2004"
-	case osversion.V20H2:
-		return "mcr.microsoft.com/windows/servercore:2009"
-	case osversion.V21H2Server:
-		return "mcr.microsoft.com/windows/servercore:ltsc2022"
-	default:
-		// Due to some efforts in improving down-level compatibility for Windows containers (see
-		// https://techcommunity.microsoft.com/t5/containers/windows-server-2022-and-beyond-for-containers/ba-p/2712487)
-		// the ltsc2022 image should continue to work on builds ws2022 and onwards. With this in mind,
-		// if there's no mapping for the host build, just use the Windows Server 2022 image.
-		if build > osversion.V21H2Server {
-			return "mcr.microsoft.com/windows/servercore:ltsc2022"
-		}
-		panic("unsupported build")
+	tag, err := constants.ImageFromBuild(build)
+	if err != nil {
+		panic(err)
 	}
+	return constants.ServercoreImage(tag)
 }
 
 func createGRPCConn(ctx context.Context) (*grpc.ClientConn, error) {
@@ -217,10 +188,12 @@ func createGRPCConn(ctx context.Context) (*grpc.ClientConn, error) {
 	if err != nil {
 		return nil, err
 	}
+	//nolint:staticcheck //TODO: SA1019: grpc.WithInsecure is deprecated: use WithTransportCredentials and insecure.NewCredentials()
 	return grpc.DialContext(ctx, addr, grpc.WithInsecure(), grpc.WithContextDialer(dialer))
 }
 
 func newTestRuntimeClient(t *testing.T) runtime.RuntimeServiceClient {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 	conn, err := createGRPCConn(ctx)
@@ -231,6 +204,7 @@ func newTestRuntimeClient(t *testing.T) runtime.RuntimeServiceClient {
 }
 
 func newTestEventService(t *testing.T) containerd.EventService {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 	conn, err := createGRPCConn(ctx)
@@ -241,6 +215,7 @@ func newTestEventService(t *testing.T) containerd.EventService {
 }
 
 func newTestImageClient(t *testing.T) runtime.ImageServiceClient {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 	conn, err := createGRPCConn(ctx)
@@ -289,6 +264,7 @@ func convertEvent(e *types.Any) (string, interface{}, error) {
 }
 
 func pullRequiredImages(t *testing.T, images []string, opts ...SandboxConfigOpt) {
+	t.Helper()
 	opts = append(opts, WithSandboxLabels(map[string]string{
 		"sandbox-platform": "windows/amd64", // Not required for Windows but makes the test safer depending on defaults in the config.
 	}))
@@ -296,6 +272,7 @@ func pullRequiredImages(t *testing.T, images []string, opts ...SandboxConfigOpt)
 }
 
 func pullRequiredLCOWImages(t *testing.T, images []string, opts ...SandboxConfigOpt) {
+	t.Helper()
 	opts = append(opts, WithSandboxLabels(map[string]string{
 		"sandbox-platform": "linux/amd64",
 	}))
@@ -303,6 +280,7 @@ func pullRequiredLCOWImages(t *testing.T, images []string, opts ...SandboxConfig
 }
 
 func pullRequiredImagesWithOptions(t *testing.T, images []string, opts ...SandboxConfigOpt) {
+	t.Helper()
 	if len(images) < 1 {
 		return
 	}
@@ -332,6 +310,7 @@ func pullRequiredImagesWithOptions(t *testing.T, images []string, opts ...Sandbo
 }
 
 func removeImages(t *testing.T, images []string) {
+	t.Helper()
 	if len(images) < 1 {
 		return
 	}

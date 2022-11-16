@@ -131,9 +131,6 @@ func CreateTestOverlayNetwork() (*HostComputeNetwork, error) {
 }
 
 func HcnCreateTestEndpoint(network *HostComputeNetwork) (*HostComputeEndpoint, error) {
-	if network == nil {
-
-	}
 	Endpoint := &HostComputeEndpoint{
 		Name: NatTestEndpointName,
 		SchemaVersion: SchemaVersion{
@@ -404,11 +401,9 @@ func HcnCreateTestL2BridgeNetwork() (*HostComputeNetwork, error) {
 	}
 
 	return network.Create()
-
 }
 
 func HcnCreateTierAcls() (*PolicyEndpointRequest, error) {
-
 	policy := make([]EndpointPolicy, 6)
 
 	tiers := make([]TierAclPolicySetting, 6)

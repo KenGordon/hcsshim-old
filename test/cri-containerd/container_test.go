@@ -23,6 +23,7 @@ import (
 )
 
 func runLogRotationContainer(t *testing.T, sandboxRequest *runtime.RunPodSandboxRequest, request *runtime.CreateContainerRequest, log string, logArchive string) {
+	t.Helper()
 	client := newTestRuntimeClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -60,6 +61,7 @@ func runLogRotationContainer(t *testing.T, sandboxRequest *runtime.RunPodSandbox
 }
 
 func runContainerLifetime(t *testing.T, client runtime.RuntimeServiceClient, ctx context.Context, containerID string) {
+	t.Helper()
 	defer removeContainer(t, client, ctx, containerID)
 	startContainer(t, client, ctx, containerID)
 	stopContainer(t, client, ctx, containerID)
@@ -68,7 +70,7 @@ func runContainerLifetime(t *testing.T, client runtime.RuntimeServiceClient, ctx
 func Test_RotateLogs_LCOW(t *testing.T) {
 	requireFeatures(t, featureLCOW)
 
-	image := "alpine:latest"
+	image := imageLcowAlpine
 	dir := t.TempDir()
 	log := filepath.Join(dir, "log.txt")
 	logArchive := filepath.Join(dir, "log-archive.txt")
@@ -236,8 +238,7 @@ func Test_RunContainer_ForksThenExits_ShowsAsExited_LCOW(t *testing.T) {
 	startContainer(t, client, ctx, containerID)
 	defer stopContainer(t, client, ctx, containerID)
 
-	// Give the container init time to exit.
-	time.Sleep(5 * time.Second)
+	requireContainerState(ctx, t, client, containerID, runtime.ContainerState_CONTAINER_EXITED)
 
 	// Validate that the container shows as exited. Once the container init
 	// dies, the forked background process should be killed off.
@@ -523,6 +524,7 @@ func Test_RunContainer_ShareScratch_LCOW(t *testing.T) {
 }
 
 func findOverlaySize(t *testing.T, ctx context.Context, client runtime.RuntimeServiceClient, cid string) []string {
+	t.Helper()
 	cmd := []string{"df"}
 	containerExecReq := &runtime.ExecSyncRequest{
 		ContainerId: cid,
@@ -740,14 +742,14 @@ func Test_CreateContainer_HugePageMount_LCOW(t *testing.T) {
 	request.PodSandboxId = podID
 	request.SandboxConfig = sandboxRequest.Config
 
-	containerId := createContainer(t, client, ctx, request)
-	defer removeContainer(t, client, ctx, containerId)
-	startContainer(t, client, ctx, containerId)
-	defer stopContainer(t, client, ctx, containerId)
+	containerID := createContainer(t, client, ctx, request)
+	defer removeContainer(t, client, ctx, containerID)
+	startContainer(t, client, ctx, containerID)
+	defer stopContainer(t, client, ctx, containerID)
 
 	execCommand := []string{"grep", "-i", "/mnt/hugepage2M", "/proc/mounts"}
 
-	output, errorMsg, exitCode := execContainer(t, client, ctx, containerId, execCommand)
+	output, errorMsg, exitCode := execContainer(t, client, ctx, containerID, execCommand)
 	if exitCode != 0 || len(errorMsg) > 0 {
 		t.Fatalf("failed to exec in hugepage container errorMsg: %s, exitcode: %v\n", errorMsg, exitCode)
 	}
