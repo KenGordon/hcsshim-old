@@ -6,9 +6,11 @@ package devicemapper
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.opencensus.io/trace"
+	"golang.org/x/sys/unix"
 
 	"github.com/Microsoft/hcsshim/ext4/dmverity"
 	"github.com/Microsoft/hcsshim/internal/oc"
@@ -32,12 +34,12 @@ func CreateZeroSectorLinearTarget(ctx context.Context, devPath, devName string, 
 		trace.Int64Attribute("sectorSize", size),
 		trace.StringAttribute("linearTable", fmt.Sprintf("%s: '%d %d %s'", devName, linearTarget.SectorStart, linearTarget.LengthInBlocks, linearTarget.Params)))
 
-	devMapperPath, err := CreateDevice(devName, CreateReadOnly, []Target{linearTarget})
+	mapperPath, err := createWithRetryOnErr(ctx, devName, []Target{linearTarget}, unix.ENOENT)
 	if err != nil {
-		return "", errors.Wrapf(err, "failed to create dm-linear target, device=%s, offset=%d", devPath, mappingInfo.DeviceOffsetInBytes)
+		return "", fmt.Errorf("failed to create dm-linear target for device %s and offset %d: %w", devPath,
+			mappingInfo.DeviceOffsetInBytes, err)
 	}
-
-	return devMapperPath, nil
+	return mapperPath, nil
 }
 
 // CreateVerityTarget creates a dm-verity target for a given device and returns created virtual block device path.
@@ -80,10 +82,28 @@ func CreateVerityTarget(ctx context.Context, devPath, devName string, verityInfo
 		trace.Int64Attribute("sectorSize", dmBlocks),
 		trace.StringAttribute("verityTable", verityTarget.Params))
 
-	mapperPath, err := CreateDevice(devName, CreateReadOnly, []Target{verityTarget})
+	mapperPath, err := createWithRetryOnErr(ctx, devName, []Target{verityTarget}, unix.ENOENT)
 	if err != nil {
-		return "", errors.Wrapf(err, "failed to create dm-verity target. device=%s", devPath)
+		return "", fmt.Errorf("failed to create dm-verity target for device %s: %w", devPath, err)
 	}
-
 	return mapperPath, nil
+}
+
+func createWithRetryOnErr(ctx context.Context, devName string, targets []Target, retryErr error) (string, error) {
+	for {
+		mapperPath, err := CreateDevice(devName, CreateReadOnly, targets)
+		if err != nil {
+			if errors.Is(err, retryErr) {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				default:
+					time.Sleep(50 * time.Millisecond)
+					continue
+				}
+			}
+			return "", err
+		}
+		return mapperPath, nil
+	}
 }

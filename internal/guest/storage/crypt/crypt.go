@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/pkg/errors"
@@ -181,8 +183,22 @@ func EncryptDevice(ctx context.Context, source string, dmCryptName string) (path
 	}
 
 	// 2. Format device
-	if err = _cryptsetupFormat(source, keyFilePath); err != nil {
-		return "", fmt.Errorf("luksFormat failed: %s: %w", source, err)
+	// Retry device formatting in case the source hasn't appeared on the file system yet.
+	for {
+		err = _cryptsetupFormat(source, keyFilePath)
+		if err != nil {
+			if strings.Contains(err.Error(), "no such device") {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				default:
+					time.Sleep(50 * time.Millisecond)
+					continue
+				}
+			}
+			return "", fmt.Errorf("luksFormat device %s failed: %w", source, err)
+		}
+		break
 	}
 
 	// 3. Open device
