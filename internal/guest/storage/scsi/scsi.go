@@ -280,7 +280,10 @@ func ControllerLunToName(ctx context.Context, controller, lun uint8) (_ string, 
 	// wait for device to appear at /dev/sd*
 	for {
 		_, err = os.Stat(devicePath)
-		if err != nil && !os.IsNotExist(err) {
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) {
 			return "", err
 		}
 		select {
@@ -288,9 +291,7 @@ func ControllerLunToName(ctx context.Context, controller, lun uint8) (_ string, 
 			return "", ctx.Err()
 		default:
 			time.Sleep(time.Millisecond * 10)
-			continue
 		}
-		break
 	}
 	log.G(ctx).WithField("devicePath", devicePath).Debug("found device path")
 	return devicePath, nil
