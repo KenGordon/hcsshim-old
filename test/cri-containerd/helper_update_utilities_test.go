@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 )
 
@@ -94,5 +95,25 @@ func checkWCOWResourceLimit(t *testing.T, ctx context.Context, runtimeHandler, s
 	}
 	if limitActual != expected {
 		t.Fatalf("expected to have a limit of %v, instead got %v", expected, limitActual)
+	}
+}
+
+func updateContainer(
+	tb testing.TB,
+	client runtime.RuntimeServiceClient,
+	ctx context.Context,
+	req *runtime.UpdateContainerResourcesRequest,
+) {
+	tb.Helper()
+	if _, err := client.UpdateContainerResources(ctx, req); err != nil {
+		tb.Fatalf("updating container resources for %s with %v", req.ContainerId, err)
+	}
+}
+
+func checkAnnotation(tb testing.TB, spec *specs.Spec, k, v string) {
+	tb.Helper()
+
+	if got := spec.Annotations[k]; got != v {
+		tb.Fatalf("annotation %q: got %q, wanted %q", k, got, v)
 	}
 }
