@@ -39,6 +39,9 @@ type System struct {
 	startTime      time.Time
 }
 
+var _ cow.Container = &System{}
+var _ cow.ProcessHost = &System{}
+
 func newSystem(id string) *System {
 	return &System{
 		id:        id,
@@ -201,6 +204,8 @@ func (computeSystem *System) Start(ctx context.Context) (err error) {
 	computeSystem.handleLock.RLock()
 	defer computeSystem.handleLock.RUnlock()
 
+	// prevent starting an exited system because waitblock we do not recreate waitBlock
+	// or rerun waitBackground, so we have no way to be notified of it closing again
 	if computeSystem.handle == 0 {
 		return makeSystemError(computeSystem, operation, ErrAlreadyClosed, nil)
 	}
@@ -227,7 +232,7 @@ func (computeSystem *System) Shutdown(ctx context.Context) error {
 
 	operation := "hcs::System::Shutdown"
 
-	if computeSystem.handle == 0 {
+	if computeSystem.handle == 0 || computeSystem.stopped() {
 		return nil
 	}
 
@@ -248,7 +253,7 @@ func (computeSystem *System) Terminate(ctx context.Context) error {
 
 	operation := "hcs::System::Terminate"
 
-	if computeSystem.handle == 0 {
+	if computeSystem.handle == 0 || computeSystem.stopped() {
 		return nil
 	}
 
@@ -291,24 +296,40 @@ func (computeSystem *System) waitBackground() {
 	oc.SetSpanStatus(span, err)
 }
 
+func (computeSystem *System) WaitChannel() <-chan struct{} {
+	return computeSystem.waitBlock
+}
+
+func (computeSystem *System) WaitError() error {
+	return computeSystem.waitError
+}
+
 // Wait synchronously waits for the compute system to shutdown or terminate. If
 // the compute system has already exited returns the previous error (if any).
 func (computeSystem *System) Wait() error {
-	<-computeSystem.waitBlock
-	return computeSystem.waitError
+	<-computeSystem.WaitChannel()
+	return computeSystem.WaitError()
+}
+
+// stopped returns true if the compute system stopped.
+func (computeSystem *System) stopped() bool {
+	select {
+	case <-computeSystem.waitBlock:
+		return true
+	default:
+	}
+	return false
 }
 
 // ExitError returns an error describing the reason the compute system terminated.
 func (computeSystem *System) ExitError() error {
-	select {
-	case <-computeSystem.waitBlock:
-		if computeSystem.waitError != nil {
-			return computeSystem.waitError
-		}
-		return computeSystem.exitError
-	default:
+	if !computeSystem.stopped() {
 		return errors.New("container not exited")
 	}
+	if computeSystem.waitError != nil {
+		return computeSystem.waitError
+	}
+	return computeSystem.exitError
 }
 
 // Properties returns the requested container properties targeting a V1 schema container.
@@ -543,7 +564,7 @@ func (computeSystem *System) PropertiesV2(ctx context.Context, types ...hcsschem
 func (computeSystem *System) Pause(ctx context.Context) (err error) {
 	operation := "hcs::System::Pause"
 
-	// hcsPauseComputeSystemContext is an async peration. Start the outer span
+	// hcsPauseComputeSystemContext is an async operation. Start the outer span
 	// here to measure the full pause time.
 	ctx, span := oc.StartSpan(ctx, operation)
 	defer span.End()

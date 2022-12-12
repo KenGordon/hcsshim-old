@@ -20,7 +20,7 @@ func ProcessAnnotations(ctx context.Context, s *specs.Spec) (err error) {
 	// Named `Process` and not `Expand` since this function may be expanded (pun intended) to
 	// deal with other annotation issues and validation.
 
-	// Rathen than give up part of the way through on error, this just emits a warning (similar
+	// Rather than give up part of the way through on error, this just emits a warning (similar
 	// to the `parseAnnotation*` functions) and continues through, so the spec is not left in a
 	// (partially) unusable form.
 	// If multiple different errors are to be raised, they should be combined or, if they
@@ -105,9 +105,9 @@ func parseAnnotationsUint32(ctx context.Context, a map[string]string, key string
 	return def
 }
 
-// parseAnnotationsUint64 searches `a` for `key` and if found verifies that the
+// ParseAnnotationsUint64 searches `a` for `key` and if found verifies that the
 // value is a 64 bit unsigned integer. If `key` is not found returns `def`.
-func parseAnnotationsUint64(ctx context.Context, a map[string]string, key string, def uint64) uint64 {
+func ParseAnnotationsUint64(ctx context.Context, a map[string]string, key string, def uint64) uint64 {
 	if v, ok := a[key]; ok {
 		countu, err := strconv.ParseUint(v, 10, 64)
 		if err == nil {
