@@ -13,10 +13,21 @@ var (
 	SizeOfHeaderInBytes  = binary.Size(Header{})
 	SizeOfPartitionEntry = binary.Size(PartitionEntry{})
 
-	HeaderSize = 92
+	MaxPartitions                     int    = 128
+	ReservedLBAsForParitionEntryArray uint64 = 32
+	FirstUsableLBA                    uint64 = 34 // first useable LBA must be >=34, 32 reserved blocks for partition entry array
+
+	HeaderSize                 uint32 = 92
+	HeaderRevision             uint32 = 0x00010000
+	HeaderSignature            uint64 = 0x5452415020494645 // ASCII string "EFI PART"
+	HeaderSizeOfPartitionEntry uint32 = 128
+
+	ProtectiveMBRSignature uint16 = 0xAA55
+	ProtectiveMBRTypeOS    uint8  = 0xEE
+
+	LinuxFilesystemDataGUID string = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 )
 
-// katiewasnothere: little endian
 // ProtectiveMBR is 512 bytes, which is == BlockSizeLogical
 type ProtectiveMBR struct {
 	BootCode               [440]byte       // 440 bytes
@@ -39,14 +50,14 @@ type PartitionMBR struct {
 // GPT info: GPT primary table must be in LBA 1 (aka the second logical block) and the
 // secondary (alternate) table must be in the last LBA of the disk
 type Header struct {
-	Signature                uint64    // 8 bytes
+	Signature                uint64    // 8 bytes, ASCII string "EFI PART"
 	Revision                 uint32    // 4 bytes, 0x00010000
 	HeaderSize               uint32    // 4 bytes, must be greater than or equal to 92 and must be less than or equal to the logical block size
 	HeaderCRC32              uint32    // 4 bytes, CRC32 checksum for the GPT header structure. Computed by setting this to zer0, and computing the 32 bit crc for headersize in bytes
 	ReservedMiddle           uint32    // 4 bytes, must be zzero
 	MyLBA                    uint64    // 8 bytes, The LBA that contains this data structure
 	AlternateLBA             uint64    // 8 bytes, LBA of the alternate GPT header
-	FirstUsableLBA           uint64    // 8 bytes, the first logical block that may be used by a GPT entry
+	FirstUsableLBA           uint64    // 8 bytes, the first logical block that may be used by a GPT entry, must be >=34
 	LastUsableLBA            uint64    // 8 bytes, the last usable logical block to be used by a GPT entry
 	DiskGUID                 guid.GUID // 16 bytes, used to uniquely identify the disk
 	PartitionEntryLBA        uint64    // 8 bytes, the starting LBA of the GPT Entries Array
@@ -84,14 +95,3 @@ type PartitionEntry struct {
 // | Partition n 					|
 // | Backup Partition Entry Array 	|
 // | Backup Partition Table HDR 	| - Last 1 block
-
-// TODO katiewasnothere:
-// need the ability to write a block
-// need the ability to write zeros
-
-// I don't know the starting or ending partition until after we've written it to disk
-// So maybe we can make a partition for each layer given and not write them until after
-// we've written the ext4s. So we'd need to seek into the disk based on the size of the
-// entry array that we think we're gonna make.
-
-// Do I really need the partition name?

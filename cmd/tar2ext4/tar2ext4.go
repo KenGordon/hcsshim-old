@@ -23,66 +23,6 @@ var (
 	read = flag.Bool("read", false, "if true, read from input file only")
 )
 
-/*func main() {
-	flag.Parse()
-	if flag.NArg() != 0 || len(*output) == 0 {
-		flag.Usage()
-		os.Exit(1)
-	}
-
-	err := func() (err error) {
-		inputs := []io.Reader{os.Stdin}
-		// in := os.Stdin // TODO katiewasnothere: fix this later
-		if *input != "" {
-			paths := strings.Split(*input, ",")
-			inputs = []io.Reader{}
-			for _, p := range paths {
-				in, err := os.Open(p)
-				if err != nil {
-					return err
-				}
-				inputs = append(inputs, in)
-			}
-
-		}
-		out, err := os.Create(*output)
-		if err != nil {
-			return err
-		}
-
-		var opts []tar2ext4.Option
-		if *overlay {
-			opts = append(opts, tar2ext4.ConvertWhiteout)
-		}
-		if *vhd {
-			opts = append(opts, tar2ext4.AppendVhdFooter)
-		}
-		if *inlineData {
-			opts = append(opts, tar2ext4.InlineData)
-		}
-		if len(inputs) == 1 {
-			err = tar2ext4.Convert(inputs[0], out, opts...)
-			if err != nil {
-				return err
-			}
-		} else {
-			err = tar2ext4.ConvertMultiple(inputs, out, opts...)
-			if err != nil {
-				return err
-			}
-		}
-
-		// Exhaust the tar stream.
-		// TODO katiewasnothere: do we need this?
-		// _, _ = io.Copy(ioutil.Discard, in)
-		return nil
-	}()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-}*/
-
 func main() {
 	app := cli.NewApp()
 	app.Name = "tar2ext4"

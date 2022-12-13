@@ -82,11 +82,7 @@ func ConvertTarToExt4GPT(r io.Reader, w io.ReadWriteSeeker, options ...Option) (
 	for _, opt := range options {
 		opt(&p)
 	}
-	// log.G(context.Background()).Infof("params: %v", p)
-
 	fs := compactext4.NewWriter(w, p.ext4opts...)
-	//log.G(context.Background()).Infof("start position: %v", fs.Position())
-
 	t := tar.NewReader(bufio.NewReader(r))
 	for {
 		hdr, err := t.Next()
@@ -187,7 +183,6 @@ func ConvertTarToExt4GPT(r io.Reader, w io.ReadWriteSeeker, options ...Option) (
 		}
 	}
 
-	// TODO katiewasnothere: can we close here? is this okay?
 	if err := fs.Close(); err != nil {
 		return 0, err
 	}
@@ -339,7 +334,6 @@ func findNextLogicalBlock(bytePosition uint64) uint64 {
 	return block + 1
 }
 
-// Katiewasnothere: Convert overloads the previous Convert by allowing multiple readers
 func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitionGUIDs []string, diskGUIDString string, options ...Option) error {
 	var p params
 	for _, opt := range options {
@@ -348,7 +342,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 	if len(partitionGUIDs) != len(multipleReaders) {
 		return fmt.Errorf("must supply a single guid for every input file")
 	}
-	if len(multipleReaders) > 128 {
+	if len(multipleReaders) > gpt.MaxPartitions {
 		return fmt.Errorf("readers exceeds max number of partitions for a GPT disk: %d", len(multipleReaders))
 	}
 	// calculate starting position
@@ -358,19 +352,17 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		totalGPTInfoSizeInBytes = sizeOfEntryArrayBytes + gpt.SizeOfHeaderInBytes
 		totaMetadataSizeInBytes = totalGPTInfoSizeInBytes + gpt.SizeOfPMBRInBytes
 	)
-	// first useable LBA must be >=34, 32 reserved blocks for partition entry array
 	firstUseableLBA := findNextLogicalBlock(uint64(totaMetadataSizeInBytes))
-	if firstUseableLBA < 34 {
-		firstUseableLBA = 34
+	if firstUseableLBA < gpt.FirstUsableLBA {
+		firstUseableLBA = gpt.FirstUsableLBA
 	}
 	firstUseableByte := firstUseableLBA * compactext4.BlockSizeLogical
 	if _, err := w.Seek(int64(firstUseableByte), io.SeekStart); err != nil {
 		return fmt.Errorf("failed to seek to the first useable LBA in disk with %v", err)
 	}
 
-	// katiewasnothere: partitions should be aligned to the physical block size
-	entries := make([]gpt.PartitionEntry, len(multipleReaders))              // 128
-	typeGuid, err := guid.FromString("0FC63DAF-8483-4772-8E79-3D69D8477DE4") // Linux filesystem data
+	entries := make([]gpt.PartitionEntry, len(multipleReaders))
+	typeGuid, err := guid.FromString(gpt.LinuxFilesystemDataGUID)
 	if err != nil {
 		return fmt.Errorf("failed to construct EFI system partition guid type with %v", typeGuid)
 	}
@@ -379,10 +371,6 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 
 	// write partitions out and create entries
 	for i, r := range multipleReaders {
-		/*entryGuid, err := guid.NewV4()
-		if err != nil {
-			return fmt.Errorf("failed to construct unique guid for partition entry")
-		}*/
 		entryGuid, err := guid.FromString(partitionGUIDs[i])
 		if err != nil {
 			return fmt.Errorf("error using supplied guid: %v", err)
@@ -398,7 +386,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		if err != nil {
 			return err
 		}
-		endingLBA = startLBA + uint64(currentByte/compactext4.BlockSizeLogical) // startLBA +  // firstUseableLBA + uint64(currentByte/compactext4.BlockSizeLogical)
+		endingLBA = startLBA + uint64(currentByte/compactext4.BlockSizeLogical)
 		entry := gpt.PartitionEntry{
 			PartitionTypeGUID:   typeGuid,
 			UniquePartitionGUID: entryGuid,
@@ -424,7 +412,6 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
 
-	// calculate where the alternate GPT header goes at end and write
 	//TODO katiewasnothere: there must be a min of 16384 bytes reserved for gpt partition entry array
 	for _, e := range entries {
 		if err := binary.Write(w, binary.LittleEndian, e); err != nil {
@@ -445,10 +432,6 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
 
-	/*diskGUID, err := guid.NewV4()
-	if err != nil {
-		return fmt.Errorf("failed to create unique disk guid with %v", err)
-	}*/
 	diskGUID, err := guid.FromString(diskGUIDString)
 	if err != nil {
 		return fmt.Errorf("error using supplied disk guid %v", err)
@@ -459,19 +442,19 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return err
 	}
 	altGPTHeader := gpt.Header{
-		Signature:                0x5452415020494645, // ASCII string "EFI PART"
-		Revision:                 0x00010000,
-		HeaderSize:               92, // size of this header
-		HeaderCRC32:              0,  // set to 0 then calculate crc32 checksum and replace
+		Signature:                gpt.HeaderSignature,
+		Revision:                 gpt.HeaderRevision,
+		HeaderSize:               gpt.HeaderSize,
+		HeaderCRC32:              0, // set to 0 then calculate crc32 checksum and replace
 		ReservedMiddle:           0,
 		MyLBA:                    alternateHeaderLBA, // LBA of this header
 		AlternateLBA:             1,
 		FirstUsableLBA:           firstUseableLBA,
 		LastUsableLBA:            lastUseableLBA,
 		DiskGUID:                 diskGUID,
-		PartitionEntryLBA:        altEntriesArrayStartLBA,      // right after this header
-		NumberOfPartitionEntries: uint32(len(multipleReaders)), // 128,                     //uint32(len(multipleReaders)),
-		SizeOfPartitionEntry:     128,                          // Must be set to a value of 128 x 2^n, where n is >= 0
+		PartitionEntryLBA:        altEntriesArrayStartLBA, // right after this header
+		NumberOfPartitionEntries: uint32(len(multipleReaders)),
+		SizeOfPartitionEntry:     gpt.HeaderSizeOfPartitionEntry,
 		PartitionEntryArrayCRC32: altEntriesCheckSum,
 		ReservedEnd:              [420]byte{},
 	}
@@ -490,21 +473,20 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 	if err != nil {
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
-	// Write protectiveMBR
 	pMBR := gpt.ProtectiveMBR{
 		BootCode:               [440]byte{}, // unused by UEFI systems
 		UniqueMBRDiskSignature: 0,           // set to 0
 		Unknown:                0,
 		PartitionRecord:        [4]gpt.PartitionMBR{},
-		Signature:              0xAA55, // according to spec
+		Signature:              gpt.ProtectiveMBRSignature, // according to spec
 	}
 	pMBR.PartitionRecord[0] = gpt.PartitionMBR{
 		BootIndicator: 0,
-		StartingCHS:   [3]byte{0x00, 0x02, 0x00},  // TODO katiewasnothere: not sure if this works? since we write out little endian
-		OSType:        0xEE,                       // GPT protective
-		EndingCHS:     [3]byte{0xff, 0xff, 0xff},  // katiewasnothere: use actual size
+		StartingCHS:   [3]byte{0x00, 0x02, 0x00},
+		OSType:        gpt.ProtectiveMBRTypeOS,    // GPT protective
+		EndingCHS:     [3]byte{0xff, 0xff, 0xff},  // TODO katiewasnothere: use actual size
 		StartingLBA:   1,                          // LBA of the GPT header
-		SizeInLBA:     uint32(alternateHeaderLBA), // Set to the size of the disk minus one. TODO katiewasnothere: set once we know later, NOT SURE IF THIS IS RIGHT, is this inclusive????
+		SizeInLBA:     uint32(alternateHeaderLBA), // Set to the size of the disk minus one
 	}
 
 	// write the protectiveMBR
@@ -535,9 +517,9 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 	}
 
 	hGPT := gpt.Header{
-		Signature:                0x5452415020494645, // ASCII string "EFI PART" // TODO katiewasnothere: not sure if this works? since we write out little endian
-		Revision:                 0x00010000,
-		HeaderSize:               uint32(gpt.HeaderSize),
+		Signature:                gpt.HeaderSignature,
+		Revision:                 gpt.HeaderRevision,
+		HeaderSize:               gpt.HeaderSize,
 		HeaderCRC32:              0, // set to 0 then calculate crc32 checksum and replace
 		ReservedMiddle:           0,
 		MyLBA:                    1, // LBA of this header
@@ -545,9 +527,9 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		FirstUsableLBA:           firstUseableLBA,
 		LastUsableLBA:            lastUseableLBA,
 		DiskGUID:                 diskGUID,
-		PartitionEntryLBA:        2,                            // right after this header
-		NumberOfPartitionEntries: uint32(len(multipleReaders)), //128, //uint32(len(multipleReaders)),
-		SizeOfPartitionEntry:     128,                          // Must be set to a value of 128 x 2^n, where n is >= 0
+		PartitionEntryLBA:        2, // right after this header
+		NumberOfPartitionEntries: uint32(len(multipleReaders)),
+		SizeOfPartitionEntry:     gpt.HeaderSizeOfPartitionEntry,
 		PartitionEntryArrayCRC32: entriesCheckSum,
 		ReservedEnd:              [420]byte{},
 	}
@@ -677,7 +659,6 @@ func ReadGPTPartitionArray(r io.ReadSeeker, entryArrayLBA uint64, numEntries uin
 	}
 
 	// set writer back to position we started at
-	// TODO katiewasnothere: I'm not really sure if seeking from current position above actually does what I think it does
 	if _, err := r.Seek(currentBytePosition, io.SeekStart); err != nil {
 		return nil, err
 	}
@@ -804,7 +785,7 @@ func ConvertAndComputeRootDigest(r io.Reader) (string, error) {
 
 // ConvertToVhd converts given io.WriteSeeker to VHD, by appending the VHD footer with a fixed size.
 func ConvertToVhd(w io.WriteSeeker) error {
-	size, err := w.Seek(0, io.SeekEnd) // TODO katiewasnothere, maybe I can use this to figure out where the end of the previously written disk is?
+	size, err := w.Seek(0, io.SeekEnd)
 	if err != nil {
 		return err
 	}
@@ -812,11 +793,12 @@ func ConvertToVhd(w io.WriteSeeker) error {
 }
 
 func convertToVhdAlignToMB(w io.WriteSeeker) error {
-	size, err := w.Seek(0, io.SeekEnd) // TODO katiewasnothere, maybe I can use this to figure out where the end of the previously written disk is?
+	size, err := w.Seek(0, io.SeekEnd)
 	if err != nil {
 		return err
 	}
 
+	// TODO katiewasnothere: clean up magic numbers
 	size = size + 512 // size plus the size of the vhd footer
 	if size%1048576 != 0 {
 		remainder := 1048576 - (size % 1048576)

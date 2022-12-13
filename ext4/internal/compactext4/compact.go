@@ -23,8 +23,8 @@ type Writer struct {
 	inodes               []*inode
 	curName              string
 	curInode             *inode
-	pos                  int64 // TODO katiewasnothere: this is in bytes
-	startOffset          int64 // katiewasnothere: offset in the underlying writter to write the data to
+	pos                  int64 // in bytes
+	startOffset          int64 // offset in the underlying writter to write the data to
 	dataWritten, dataMax int64
 	err                  error
 	initialized          bool
@@ -97,8 +97,8 @@ const (
 	inodeFirst        = 11
 	inodeLostAndFound = inodeFirst
 
-	BlockSize               = 4096 // TODO katiewasnothere: this is the PHYSICAL block size, different than the logical block size
-	BlockSizeLogical        = 512  // this is the logical block size in bytes
+	BlockSize               = 4096 // physical block size
+	BlockSizeLogical        = 512  // logical block size in bytes
 	blocksPerGroup          = BlockSize * 8
 	inodeSize               = 256
 	maxInodesPerGroup       = BlockSize * 8 // Limited by the inode bitmap
@@ -366,13 +366,12 @@ func (w *Writer) write(b []byte) (int, error) {
 		w.err = exceededMaxSizeError{w.maxDiskSize}
 		return 0, w.err
 	}
-	n, err := w.bw.Write(b) //TODO katiewasnothere: would this be okay with multi disk?
+	n, err := w.bw.Write(b)
 	w.pos += int64(n)
 	w.err = err
 	return n, err
 }
 
-// TODO katiewasnothere: does this need to be edited for multi readers?
 func (w *Writer) Zero(n int64) (int64, error) {
 	if w.err != nil {
 		return 0, w.err
@@ -743,13 +742,13 @@ func (w *Writer) Block() uint32 {
 	return uint32(w.pos / BlockSize)
 }
 
-// TODO katiewasnothere helper to get the end position of an ext4 partition in bytes
+// helper to get the end position of an ext4 partition in bytes
 func (w *Writer) Position() uint64 {
 	return uint64(w.pos)
 }
 
 func (w *Writer) seekBlock(block uint32) {
-	w.pos = int64(block) * BlockSize // TODO katiewasnothere: this won't be right either
+	w.pos = int64(block) * BlockSize
 	if w.err != nil {
 		return
 	}
@@ -757,7 +756,7 @@ func (w *Writer) seekBlock(block uint32) {
 	if w.err != nil {
 		return
 	}
-	_, w.err = w.f.Seek(w.startOffset+w.pos, io.SeekStart) // TODO katiewasnothere: this won't be right when we have multiple writters
+	_, w.err = w.f.Seek(w.startOffset+w.pos, io.SeekStart)
 }
 
 func (w *Writer) NextBlock() {
@@ -930,7 +929,7 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 	w.startInode("", dir, 0x7fffffffffffffff)
 	left := BlockSize
 	finishBlock := func() error {
-		// katiewasnothere: finish block by making a directory entry with just zeros
+		// finish block by making a directory entry with just zeros
 		if left > 0 {
 			e := format.DirectoryEntry{
 				RecordLength: uint16(left),
@@ -953,16 +952,12 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 	}
 
 	writeEntry := func(ino format.InodeNumber, name string) error {
-		rlb := directoryEntrySize + len(name) // katiewasnothere: record length in bytes
-		rl := (rlb + 3) & ^3                  // katiewasnothere: record length aligned? to be divisible by 4 bytes
+		rlb := directoryEntrySize + len(name) // record length in bytes
+		rl := (rlb + 3) & ^3
 		if left < rl+12 {
-			// katiewasnothere: if there isn't enough space left for this directory,
-			// create a directory entry for the rest of the block that's
-			// zero'd out,
 			if err := finishBlock(); err != nil {
 				return err
 			}
-			// katiewasnothere: now we're starting a new inode
 		}
 		e := format.DirectoryEntry{
 			Inode:        ino,
@@ -970,31 +965,25 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 			NameLength:   uint8(len(name)),
 			FileType:     modeToFileType(w.getInode(ino).Mode),
 		}
-		// katiewasnothere: write the directory entry as binary representation
 		err := binary.Write(w, binary.LittleEndian, e)
 		if err != nil {
 			return err
 		}
-		// katiewasnothere: write the name of the directory immediately after
 		_, err = w.Write([]byte(name))
 		if err != nil {
 			return err
 		}
 		var zero [4]byte
-		// katiewasnothere: zero out the space left needed to align the entry
 		_, err = w.Write(zero[:rl-rlb])
 		if err != nil {
 			return err
 		}
-		// katiewasnothere: calculate space left on this block
 		left -= rl
 		return nil
 	}
-	// katiewasnothere: write entry for the directory
 	if err := writeEntry(dir.Number, "."); err != nil {
 		return err
 	}
-	// katiewasnothere: write entry for the parent directory
 	if err := writeEntry(parent.Number, ".."); err != nil {
 		return err
 	}
@@ -1016,12 +1005,11 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 
 	for _, name := range children {
 		child := dir.Children[name]
-		// katiewasnothere: write the children entries
 		if err := writeEntry(child.Number, name); err != nil {
 			return err
 		}
 	}
-	// katiewasnothere: finish the current block with zeros when we're done
+	// finish the current block with zeros when we're done
 	// with writing children entries
 	if err := finishBlock(); err != nil {
 		return err
@@ -1031,7 +1019,6 @@ func (w *Writer) writeDirectory(dir, parent *inode) error {
 	return nil
 }
 
-// katiewasnothere:
 // helper function to write the current directory then recursively
 // write children directory entries.
 func (w *Writer) writeDirectoryRecursive(dir, parent *inode) error {
@@ -1226,7 +1213,6 @@ func (w *Writer) Close() error {
 		return err
 	}
 	root := w.root()
-	// katiewasnothere: writes all directories recursively starting at the root
 	if err := w.writeDirectoryRecursive(root, root); err != nil {
 		return err
 	}
@@ -1236,8 +1222,7 @@ func (w *Writer) Close() error {
 	}
 
 	// Write the inode table
-	// TODO katiewasnothere: would this be correct with multi readers
-	inodeTableOffset := w.Block() // katiewasnothere: get the number of blocks we've written
+	inodeTableOffset := w.Block() // get the number of blocks we've written
 	groups, inodesPerGroup := bestGroupCount(inodeTableOffset, uint32(len(w.inodes)))
 	err := w.writeInodeTable(groups * inodesPerGroup * inodeSize)
 	if err != nil {
@@ -1245,7 +1230,7 @@ func (w *Writer) Close() error {
 	}
 
 	// Write the bitmaps.
-	bitmapOffset := w.Block() // TODO katiewasnothere: would this be correct with multi readers
+	bitmapOffset := w.Block()
 
 	bitmapSize := groups * 2
 	validDataSize := bitmapOffset + bitmapSize
@@ -1377,6 +1362,6 @@ func (w *Writer) Close() error {
 	if _, err := w.write(blk[:]); err != nil {
 		return err
 	}
-	w.seekBlock(diskSize) // TODO katiewasnothere: why do we do this??? how do we get the size???
+	w.seekBlock(diskSize)
 	return w.err
 }
