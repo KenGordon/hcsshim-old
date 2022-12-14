@@ -13,10 +13,17 @@ var (
 	SizeOfHeaderInBytes  = binary.Size(Header{})
 	SizeOfPartitionEntry = binary.Size(PartitionEntry{})
 
+	ProtectiveMBRStartingCHS = [3]byte{0x00, 0x02, 0x00}
+	ProtectiveMBREndingCHS   = [3]byte{0xff, 0xff, 0xff}
+)
+
+const (
 	MaxPartitions                     int    = 128
 	ReservedLBAsForParitionEntryArray uint64 = 32
-	FirstUsableLBA                    uint64 = 34 // first useable LBA must be >=34, 32 reserved blocks for partition entry array
+	FirstUsableLBA                    uint64 = 34 // first useable LBA must be >=34, 32 reserved blocks for partition entry array, 1 LBA for pmbr, 1 LBA for header
 
+	PrimaryHeaderLBA           uint32 = 1
+	PrimaryEntryArrayLBA       uint32 = 2
 	HeaderSize                 uint32 = 92
 	HeaderRevision             uint32 = 0x00010000
 	HeaderSignature            uint64 = 0x5452415020494645 // ASCII string "EFI PART"
@@ -30,7 +37,7 @@ var (
 
 // ProtectiveMBR is 512 bytes, which is == BlockSizeLogical
 type ProtectiveMBR struct {
-	BootCode               [440]byte       // 440 bytes
+	BootCode               [440]byte       // 440 bytes, unused by UEFI systems
 	UniqueMBRDiskSignature uint32          // 4 bytes, unused set to zero
 	Unknown                uint16          // 2 bytes, unused set to zero
 	PartitionRecord        [4]PartitionMBR // 16*4 bytes, array of four MBR parititions, one actual record and 3 records set to zero

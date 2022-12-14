@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -162,6 +163,30 @@ var fetchUnpackCommand = cli.Command{
 		// exhaust all tar streams used
 		for _, r := range readers {
 			_, _ = io.Copy(ioutil.Discard, r)
+		}
+
+		// TODO katiewasnothere: remove, temp for getting config file
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		configDir := filepath.Join(wd, diskGuid)
+		os.MkdirAll(configDir, fs.FileMode(os.O_RDWR))
+		configFileName := filepath.Join(configDir, "config.json")
+		f, err := os.Create(configFileName)
+		if err != nil {
+			return err
+		}
+		config, err := image.ConfigFile()
+		if err != nil {
+			return err
+		}
+		configBytes, err := json.Marshal(config)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(configBytes); err != nil {
+			return err
 		}
 
 		return nil

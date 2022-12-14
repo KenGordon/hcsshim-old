@@ -31,7 +31,6 @@ var empty = &google_protobuf1.Empty{}
 // callers responsibility to verify that `s.isSandbox == true` before calling
 // this method.
 //
-//
 // If `pod==nil` returns `errdefs.ErrFailedPrecondition`.
 func (s *service) getPod() (shimPod, error) {
 	raw := s.taskOrPod.Load()
@@ -121,7 +120,7 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 		// Layers should be layer N, layer N-1, ..., layer 1, layer 0, scratch
 		var remoteLayers []string
 		if err := json.Unmarshal([]byte(remoteLayersRaw), &remoteLayers); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to marshal remote layers: %v", err)
 		}
 		log.G(ctx).WithField("remoteLayers", remoteLayers).Info("parsed remote layers annotation")
 		spec.Windows.LayerFolders = remoteLayers

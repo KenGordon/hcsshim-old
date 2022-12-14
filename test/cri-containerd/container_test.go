@@ -872,3 +872,62 @@ func Test_RunContainer_ExecUser_Root_LCOW(t *testing.T) {
 		t.Fatalf("expected user for exec to be 'root', got %q", string(r.Stdout))
 	}
 }
+
+func Test_RunContainer_GPTDisk_LCOW(t *testing.T) {
+	requireFeatures(t, featureLCOW)
+
+	pullRequiredLCOWImages(t, []string{imageLcowK8sPause})
+
+	client := newTestRuntimeClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	annots := map[string]string{
+		annotations.VPMemCount:      "0",
+		annotations.AllowOvercommit: "false",
+		annotations.MemorySizeInMB:  "2048",
+	}
+	sandboxRequest := getRunPodSandboxRequest(t, lcowRuntimeHandler, WithSandboxAnnotations(annots))
+
+	podID := runPodSandbox(t, client, ctx, sandboxRequest)
+	defer removePodSandbox(t, client, ctx, podID)
+	defer stopPodSandbox(t, client, ctx, podID)
+
+	request := &runtime.CreateContainerRequest{
+		PodSandboxId: podID,
+		Config: &runtime.ContainerConfig{
+			Metadata: &runtime.ContainerMetadata{
+				Name: t.Name() + "-Container",
+			},
+			Command: []string{
+				"sh",
+				"-c",
+				"while true; do echo 'Hello, World!'; sleep 1; done",
+			},
+			Annotations: map[string]string{
+				"microsoft.com/remote-image-config-hash": "sha256:87110ff511a831a7e64a8bc48e192c882341bed513bfe72cfc8a1725df32ac34",
+				"microsoft.com/remote-image-layer-vhds":  "[\"C:/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/temp-images-test/b66427d4-b988-4150-bfd7-540efbe9b35e.vhd\", \"C:/ContainerPlat/scratch.vhdx\"]",
+				"io.microsoft.layerfolder.partitions":    "1,2,3,4,5,6,7,8,9,10",
+			},
+		},
+		SandboxConfig: sandboxRequest.Config,
+	}
+
+	// verify that container creation is successful
+	containerID := createContainer(t, client, ctx, request)
+	defer removeContainer(t, client, ctx, containerID)
+	startContainer(t, client, ctx, containerID)
+	defer stopContainer(t, client, ctx, containerID)
+
+	cmd := []string{"ls", "/"}
+	containerExecReq := &runtime.ExecSyncRequest{
+		ContainerId: containerID,
+		Cmd:         cmd,
+		Timeout:     20,
+	}
+	r := execSync(t, client, ctx, containerExecReq)
+	if r.ExitCode != 0 {
+		t.Fatalf("expected to find container filesystem, instead found %v", string(r.Stdout))
+	}
+	t.Log(string(r.Stdout))
+}

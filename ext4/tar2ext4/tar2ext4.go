@@ -22,6 +22,10 @@ import (
 	"github.com/Microsoft/hcsshim/ext4/internal/gpt"
 )
 
+var (
+	bytesInMB int64 = 1 * 1024 * 1024 // 1 MB
+)
+
 type params struct {
 	convertWhiteout bool
 	appendVhdFooter bool
@@ -77,7 +81,9 @@ const (
 	opaqueWhiteout = ".wh..wh..opq"
 )
 
-func ConvertTarToExt4GPT(r io.Reader, w io.ReadWriteSeeker, options ...Option) (int, error) {
+// ConvertTarToExt4 writes a compact ext4 file system image that contains the files in the
+// input tar stream.
+func ConvertTarToExt4(r io.Reader, w io.ReadWriteSeeker, options ...Option) (int, error) {
 	var p params
 	for _, opt := range options {
 		opt(&p)
@@ -190,117 +196,6 @@ func ConvertTarToExt4GPT(r io.Reader, w io.ReadWriteSeeker, options ...Option) (
 	return int(fs.Position()), nil
 }
 
-// ConvertTarToExt4 writes a compact ext4 file system image that contains the files in the
-// input tar stream.
-func ConvertTarToExt4(r io.Reader, w io.ReadWriteSeeker, options ...Option) error {
-	var p params
-	for _, opt := range options {
-		opt(&p)
-	}
-
-	t := tar.NewReader(bufio.NewReader(r))
-	fs := compactext4.NewWriter(w, p.ext4opts...)
-	for {
-		hdr, err := t.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-
-		if err = fs.MakeParents(hdr.Name); err != nil {
-			return errors.Wrapf(err, "failed to ensure parent directories for %s", hdr.Name)
-		}
-
-		if p.convertWhiteout {
-			dir, name := path.Split(hdr.Name)
-			if strings.HasPrefix(name, whiteoutPrefix) {
-				if name == opaqueWhiteout {
-					// Update the directory with the appropriate xattr.
-					f, err := fs.Stat(dir)
-					if err != nil {
-						return errors.Wrapf(err, "failed to stat parent directory of whiteout %s", hdr.Name)
-					}
-					f.Xattrs["trusted.overlay.opaque"] = []byte("y")
-					err = fs.Create(dir, f)
-					if err != nil {
-						return errors.Wrapf(err, "failed to create opaque dir %s", hdr.Name)
-					}
-				} else {
-					// Create an overlay-style whiteout.
-					f := &compactext4.File{
-						Mode:     compactext4.S_IFCHR,
-						Devmajor: 0,
-						Devminor: 0,
-					}
-					err = fs.Create(path.Join(dir, name[len(whiteoutPrefix):]), f)
-					if err != nil {
-						return errors.Wrapf(err, "failed to create whiteout file for %s", hdr.Name)
-					}
-				}
-
-				continue
-			}
-		}
-
-		if hdr.Typeflag == tar.TypeLink {
-			err = fs.Link(hdr.Linkname, hdr.Name)
-			if err != nil {
-				return err
-			}
-		} else {
-			f := &compactext4.File{
-				Mode:     uint16(hdr.Mode),
-				Atime:    hdr.AccessTime,
-				Mtime:    hdr.ModTime,
-				Ctime:    hdr.ChangeTime,
-				Crtime:   hdr.ModTime,
-				Size:     hdr.Size,
-				Uid:      uint32(hdr.Uid),
-				Gid:      uint32(hdr.Gid),
-				Linkname: hdr.Linkname,
-				Devmajor: uint32(hdr.Devmajor),
-				Devminor: uint32(hdr.Devminor),
-				Xattrs:   make(map[string][]byte),
-			}
-			for key, value := range hdr.PAXRecords {
-				const xattrPrefix = "SCHILY.xattr."
-				if strings.HasPrefix(key, xattrPrefix) {
-					f.Xattrs[key[len(xattrPrefix):]] = []byte(value)
-				}
-			}
-
-			var typ uint16
-			switch hdr.Typeflag {
-			case tar.TypeReg, tar.TypeRegA:
-				typ = compactext4.S_IFREG
-			case tar.TypeSymlink:
-				typ = compactext4.S_IFLNK
-			case tar.TypeChar:
-				typ = compactext4.S_IFCHR
-			case tar.TypeBlock:
-				typ = compactext4.S_IFBLK
-			case tar.TypeDir:
-				typ = compactext4.S_IFDIR
-			case tar.TypeFifo:
-				typ = compactext4.S_IFIFO
-			}
-			f.Mode &= ^compactext4.TypeMask
-			f.Mode |= typ
-			err = fs.Create(hdr.Name, f)
-			if err != nil {
-				return err
-			}
-			_, err = io.Copy(fs, t)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return fs.Close()
-}
-
 // Convert wraps ConvertTarToExt4 and conditionally computes (and appends) the file image's cryptographic
 // hashes (merkle tree) or/and appends a VHD footer.
 func Convert(r io.Reader, w io.ReadWriteSeeker, options ...Option) error {
@@ -309,7 +204,7 @@ func Convert(r io.Reader, w io.ReadWriteSeeker, options ...Option) error {
 		opt(&p)
 	}
 
-	if err := ConvertTarToExt4(r, w, options...); err != nil {
+	if _, err := ConvertTarToExt4(r, w, options...); err != nil {
 		return err
 	}
 
@@ -327,9 +222,10 @@ func Convert(r io.Reader, w io.ReadWriteSeeker, options ...Option) error {
 
 func findNextLogicalBlock(bytePosition uint64) uint64 {
 	block := uint64(bytePosition / compactext4.BlockSizeLogical)
-	/*if bytePosition%compactext4.BlockSizeLogical == 0 {
+	// TODO katiewasnothere: test this
+	if bytePosition%compactext4.BlockSizeLogical == 0 {
 		return block
-	}*/
+	}
 
 	return block + 1
 }
@@ -339,19 +235,22 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 	for _, opt := range options {
 		opt(&p)
 	}
+
+	// check that we have valid inputs
 	if len(partitionGUIDs) != len(multipleReaders) {
 		return fmt.Errorf("must supply a single guid for every input file")
 	}
 	if len(multipleReaders) > gpt.MaxPartitions {
 		return fmt.Errorf("readers exceeds max number of partitions for a GPT disk: %d", len(multipleReaders))
 	}
-	// calculate starting position
-	var (
-		sizeOfEntryArrayBytes = gpt.SizeOfPartitionEntry * len(multipleReaders) // 128
 
+	var (
+		sizeOfEntryArrayBytes   = gpt.SizeOfPartitionEntry * len(multipleReaders)
 		totalGPTInfoSizeInBytes = sizeOfEntryArrayBytes + gpt.SizeOfHeaderInBytes
 		totaMetadataSizeInBytes = totalGPTInfoSizeInBytes + gpt.SizeOfPMBRInBytes
 	)
+
+	// find the first useable LBA and corresponding byte
 	firstUseableLBA := findNextLogicalBlock(uint64(totaMetadataSizeInBytes))
 	if firstUseableLBA < gpt.FirstUsableLBA {
 		firstUseableLBA = gpt.FirstUsableLBA
@@ -361,6 +260,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("failed to seek to the first useable LBA in disk with %v", err)
 	}
 
+	// prepare to construct the partition entries
 	entries := make([]gpt.PartitionEntry, len(multipleReaders))
 	typeGuid, err := guid.FromString(gpt.LinuxFilesystemDataGUID)
 	if err != nil {
@@ -369,40 +269,44 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 	startLBA := firstUseableLBA
 	endingLBA := firstUseableLBA
 
-	// write partitions out and create entries
+	// create partition entires from input readers
 	for i, r := range multipleReaders {
 		entryGuid, err := guid.FromString(partitionGUIDs[i])
 		if err != nil {
 			return fmt.Errorf("error using supplied guid: %v", err)
 		}
 
-		_, err = w.Seek(int64(startLBA*compactext4.BlockSizeLogical), io.SeekStart)
+		seekStartByte := startLBA * compactext4.BlockSizeLogical
+		_, err = w.Seek(int64(seekStartByte), io.SeekStart)
 		if err != nil {
 			return fmt.Errorf("failed to seek file: %v", err)
 		}
-		startOffset := int64(startLBA * compactext4.BlockSizeLogical)
-		currentOptions := append(options, StartWritePosition(startOffset))
-		currentByte, err := ConvertTarToExt4GPT(r, w, currentOptions...)
+		startOffset := int64(seekStartByte)
+		currentConvertOpts := append(options, StartWritePosition(startOffset))
+		bytesWritten, err := ConvertTarToExt4(r, w, currentConvertOpts...)
 		if err != nil {
 			return err
 		}
-		endingLBA = startLBA + uint64(currentByte/compactext4.BlockSizeLogical)
+
+		endingLBA = findNextLogicalBlock(seekStartByte+uint64(bytesWritten)) - 1
 		entry := gpt.PartitionEntry{
 			PartitionTypeGUID:   typeGuid,
 			UniquePartitionGUID: entryGuid,
 			StartingLBA:         startLBA,
 			EndingLBA:           endingLBA, // inclusive
 			Attributes:          0,
-			PartitionName:       [72]byte{}, // TODO katiewasnothere: make this
+			PartitionName:       [72]byte{}, // Ignore partition name
 		}
 		entries[i] = entry
 
 		// update the startLBA for the next entry
 		startLBA = uint64(endingLBA) + 1
 	}
-	// TODO katiewasnothere: fix this if we never go through loop for partitions
-	lastUseableLBA := findNextLogicalBlock(endingLBA * compactext4.BlockSizeLogical)
-	lastUseableByte := lastUseableLBA * compactext4.BlockSizeLogical
+	// TODO katiewasnothere: fix this if we never go through loop for partitions,
+	// step through this code to understand
+	// lastUseableLBA := findNextLogicalBlock(endingLBA * compactext4.BlockSizeLogical)
+	lastUseableLBA := endingLBA                                            // inclusive
+	lastUseableByte := (lastUseableLBA + 1) * compactext4.BlockSizeLogical // add 1 to account for bytes within the last used block
 
 	altEntriesArrayStartLBA := findNextLogicalBlock(uint64(lastUseableByte))
 	altEntriesArrayStart := altEntriesArrayStartLBA * compactext4.BlockSizeLogical
@@ -412,14 +316,19 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
 
-	//TODO katiewasnothere: there must be a min of 16384 bytes reserved for gpt partition entry array
 	for _, e := range entries {
 		if err := binary.Write(w, binary.LittleEndian, e); err != nil {
 			return fmt.Errorf("failed to write backup entry array with: %v", err)
 		}
 	}
-	// todo katiewasnothere: make sure that the min size if 16384 bytes
-	sizeAfterBackupEntryArrayInBytes, err := w.Seek(int64(int(altEntriesArrayStart)+16384), io.SeekStart)
+
+	// TODO katiewasnothere: fix this in case the entry array is larger than 32 * 512
+	bytesUsedForEntryArray := uint64(sizeOfEntryArrayBytes)
+	entryArrayReservedSize := gpt.ReservedLBAsForParitionEntryArray * compactext4.BlockSizeLogical
+	if uint64(sizeOfEntryArrayBytes) < entryArrayReservedSize {
+		bytesUsedForEntryArray = entryArrayReservedSize
+	}
+	sizeAfterBackupEntryArrayInBytes, err := w.Seek(int64(altEntriesArrayStart+bytesUsedForEntryArray), io.SeekStart)
 	if err != nil {
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
@@ -437,6 +346,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("error using supplied disk guid %v", err)
 	}
 
+	// only calculate the checksum for the actual partition array, do not include reserved bytes
 	altEntriesCheckSum, err := getChecksumPartitionEntryArray(w, uint32(altEntriesArrayStartLBA), uint32(sizeOfEntryArrayBytes))
 	if err != nil {
 		return err
@@ -448,7 +358,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		HeaderCRC32:              0, // set to 0 then calculate crc32 checksum and replace
 		ReservedMiddle:           0,
 		MyLBA:                    alternateHeaderLBA, // LBA of this header
-		AlternateLBA:             1,
+		AlternateLBA:             uint64(gpt.PrimaryHeaderLBA),
 		FirstUsableLBA:           firstUseableLBA,
 		LastUsableLBA:            lastUseableLBA,
 		DiskGUID:                 diskGUID,
@@ -474,19 +384,20 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
 	pMBR := gpt.ProtectiveMBR{
-		BootCode:               [440]byte{}, // unused by UEFI systems
-		UniqueMBRDiskSignature: 0,           // set to 0
+		BootCode:               [440]byte{},
+		UniqueMBRDiskSignature: 0,
 		Unknown:                0,
 		PartitionRecord:        [4]gpt.PartitionMBR{},
-		Signature:              gpt.ProtectiveMBRSignature, // according to spec
+		Signature:              gpt.ProtectiveMBRSignature,
 	}
 	pMBR.PartitionRecord[0] = gpt.PartitionMBR{
 		BootIndicator: 0,
-		StartingCHS:   [3]byte{0x00, 0x02, 0x00},
-		OSType:        gpt.ProtectiveMBRTypeOS,    // GPT protective
-		EndingCHS:     [3]byte{0xff, 0xff, 0xff},  // TODO katiewasnothere: use actual size
-		StartingLBA:   1,                          // LBA of the GPT header
-		SizeInLBA:     uint32(alternateHeaderLBA), // Set to the size of the disk minus one
+		StartingCHS:   gpt.ProtectiveMBRStartingCHS,
+		OSType:        gpt.ProtectiveMBRTypeOS,
+		EndingCHS:     gpt.ProtectiveMBREndingCHS, // TODO katiewasnothere: use actual size
+		StartingLBA:   gpt.PrimaryHeaderLBA,       // LBA of the GPT header
+		// TODO katiewasnothere: test that this is the right value to use here
+		SizeInLBA: uint32(alternateHeaderLBA), // Set to the size of the disk minus one
 	}
 
 	// write the protectiveMBR
@@ -494,24 +405,26 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("failed to write backup header with: %v", err)
 	}
 
-	_, err = w.Seek(int64(2*compactext4.BlockSizeLogical), io.SeekStart)
+	// write partition entries
+	_, err = w.Seek(int64(gpt.PrimaryEntryArrayLBA*compactext4.BlockSizeLogical), io.SeekStart)
 	if err != nil {
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
 
-	// write partition entries
 	for _, e := range entries {
 		if err := binary.Write(w, binary.LittleEndian, e); err != nil {
 			return fmt.Errorf("failed to write backup entry array with: %v", err)
 		}
 	}
 
-	entriesCheckSum, err := getChecksumPartitionEntryArray(w, 2, uint32(sizeOfEntryArrayBytes))
+	// only calculate the checksum for the actual partition array, do not include reserved bytes if any
+	entriesCheckSum, err := getChecksumPartitionEntryArray(w, gpt.PrimaryEntryArrayLBA, uint32(sizeOfEntryArrayBytes))
 	if err != nil {
 		return err
 	}
 
-	_, err = w.Seek(int64(1*compactext4.BlockSizeLogical), io.SeekStart)
+	// write primary gpt header
+	_, err = w.Seek(int64(gpt.PrimaryHeaderLBA*compactext4.BlockSizeLogical), io.SeekStart)
 	if err != nil {
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
@@ -522,12 +435,12 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		HeaderSize:               gpt.HeaderSize,
 		HeaderCRC32:              0, // set to 0 then calculate crc32 checksum and replace
 		ReservedMiddle:           0,
-		MyLBA:                    1, // LBA of this header
+		MyLBA:                    uint64(gpt.PrimaryHeaderLBA), // LBA of this header
 		AlternateLBA:             alternateHeaderLBA,
 		FirstUsableLBA:           firstUseableLBA,
 		LastUsableLBA:            lastUseableLBA,
 		DiskGUID:                 diskGUID,
-		PartitionEntryLBA:        2, // right after this header
+		PartitionEntryLBA:        uint64(gpt.PrimaryEntryArrayLBA), // right after this header
 		NumberOfPartitionEntries: uint32(len(multipleReaders)),
 		SizeOfPartitionEntry:     gpt.HeaderSizeOfPartitionEntry,
 		PartitionEntryArrayCRC32: entriesCheckSum,
@@ -538,7 +451,6 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return err
 	}
 
-	// write the gpt header
 	if err := binary.Write(w, binary.LittleEndian, hGPT); err != nil {
 		return fmt.Errorf("failed to write backup header with: %v", err)
 	}
@@ -766,7 +678,7 @@ func ConvertAndComputeRootDigest(r io.Reader) (string, error) {
 		ConvertWhiteout,
 		MaximumDiskSize(dmverity.RecommendedVHDSizeGB),
 	}
-	if err := ConvertTarToExt4(r, out, options...); err != nil {
+	if _, err := ConvertTarToExt4(r, out, options...); err != nil {
 		return "", fmt.Errorf("failed to convert tar to ext4: %s", err)
 	}
 
@@ -793,23 +705,23 @@ func ConvertToVhd(w io.WriteSeeker) error {
 }
 
 func convertToVhdAlignToMB(w io.WriteSeeker) error {
-	size, err := w.Seek(0, io.SeekEnd)
+	diskSize, err := w.Seek(0, io.SeekEnd)
 	if err != nil {
 		return err
 	}
 
-	// TODO katiewasnothere: clean up magic numbers
-	size = size + 512 // size plus the size of the vhd footer
-	if size%1048576 != 0 {
-		remainder := 1048576 - (size % 1048576)
+	// totalSize is the disk size plus the size of the vhd footer to be added
+	totalSize := diskSize + int64(vhdFooterSize)
+	if totalSize%bytesInMB != 0 {
+		remainder := bytesInMB - (totalSize % bytesInMB)
 		// seek the number of zeros needed to make this MB aligned
-		size, err = w.Seek(remainder, io.SeekCurrent)
+		totalSize, err = w.Seek(remainder, io.SeekCurrent)
 		if err != nil {
 			return err
 		}
 	}
 
-	return binary.Write(w, binary.BigEndian, makeFixedVHDFooter(size))
+	return binary.Write(w, binary.BigEndian, makeFixedVHDFooter(totalSize))
 }
 
 func ReadVHDFooter(r io.ReadSeeker) (*VHDFooter, error) {

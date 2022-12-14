@@ -6,6 +6,10 @@ import (
 	"encoding/binary"
 )
 
+var (
+	vhdFooterSize = binary.Size(VHDFooter{})
+)
+
 // Constants for the VHD footer
 const (
 	cookieMagic            = "conectix"

@@ -260,8 +260,7 @@ func Test_GPT(t *testing.T) {
 		t.Fatalf("failed to convert tar to layer vhd: %s", err)
 	}
 
-	// primary header is always in lba 1
-	header, err := ReadGPTHeader(layerVhd, 1)
+	header, err := ReadGPTHeader(layerVhd, uint64(gpt.PrimaryHeaderLBA))
 	if err != nil {
 		t.Fatalf("failed to read header from tar file %v", err)
 	}
@@ -320,8 +319,21 @@ func validateGPTHeader(h *gpt.Header, diskGUIDString string) error {
 		return fmt.Errorf("expected to find reserved bytes at end of header, instead found %v", h.ReservedEnd)
 	}
 
-	// TODO katiewasnothere: check the header and partition entry checksums
-	// you'll need to zero them out in the og header to calculate correctly
+	// check the header's checksum
+	actualHeaderChecksum := h.HeaderCRC32
+	h.HeaderCRC32 = 0
+
+	// calculate the expected header checksum
+	headerChecksum, err := getHeaderChecksum(*h)
+	if err != nil {
+		return fmt.Errorf("failed to calculate the header checksum: %v", err)
+	}
+	if headerChecksum != actualHeaderChecksum {
+		return fmt.Errorf("mismatch in calculated checksum, expected to get %v, instead got %v", headerChecksum, actualHeaderChecksum)
+	}
+
+	// reset checksum
+	h.HeaderCRC32 = actualHeaderChecksum
 
 	return nil
 }
@@ -343,20 +355,22 @@ func validatePMBR(pmbr *gpt.ProtectiveMBR) error {
 		return fmt.Errorf("expected pmbr signature to be %v, instead got %v", gpt.ProtectiveMBRSignature, pmbr.Signature)
 	}
 
+	// check the first partition, which should contain information about the gpt disk
 	pr := pmbr.PartitionRecord[0]
 	if pr.BootIndicator != 0 {
 		return fmt.Errorf("expected partition record's boot indicator to be 0, instead found %v", pr.BootIndicator)
 	}
-	if pr.StartingCHS != [3]byte{0x00, 0x02, 0x00} {
-		return fmt.Errorf("expected startign CHS to be %v, instead found %v", [3]byte{0x00, 0x02, 0x00}, pr.StartingCHS)
+	if pr.StartingCHS != gpt.ProtectiveMBRStartingCHS {
+		return fmt.Errorf("expected startign CHS to be %v, instead found %v", gpt.ProtectiveMBRStartingCHS, pr.StartingCHS)
 	}
-	if pr.OSType != 0xEE {
-		return fmt.Errorf("expected partition record's os type to be %v, instead found %v", 0xEE, pr.OSType)
+	if pr.OSType != gpt.ProtectiveMBRTypeOS {
+		return fmt.Errorf("expected partition record's os type to be %v, instead found %v", gpt.ProtectiveMBRTypeOS, pr.OSType)
 	}
-	if pr.StartingLBA != 1 {
+	if pr.StartingLBA != gpt.PrimaryHeaderLBA {
 		return fmt.Errorf("expected startign LBA to be 1, instead got %v", pr.StartingLBA)
 	}
-	// TODO katiewasnothere: should I check the ending chs?
-
+	if pr.EndingCHS != gpt.ProtectiveMBREndingCHS {
+		return fmt.Errorf("expected ending chs to be %v, instead got %v", gpt.ProtectiveMBREndingCHS, pr.EndingCHS)
+	}
 	return nil
 }
