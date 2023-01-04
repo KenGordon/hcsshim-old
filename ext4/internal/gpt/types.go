@@ -2,6 +2,7 @@ package gpt
 
 import (
 	"encoding/binary"
+	"math"
 
 	"github.com/Microsoft/go-winio/pkg/guid"
 )
@@ -13,8 +14,10 @@ var (
 	SizeOfHeaderInBytes  = binary.Size(Header{})
 	SizeOfPartitionEntry = binary.Size(PartitionEntry{})
 
-	ProtectiveMBRStartingCHS = [3]byte{0x00, 0x02, 0x00}
-	ProtectiveMBREndingCHS   = [3]byte{0xff, 0xff, 0xff}
+	ProtectiveMBRStartingCHS       = [3]byte{0x00, 0x02, 0x00}
+	ProtectiveMBREndingCHSMaxArray = [3]byte{0xff, 0xff, 0xff}
+
+	ProtectiveMBRSizeInLBAMaxValue = math.MaxUint32
 )
 
 const (
@@ -29,8 +32,9 @@ const (
 	HeaderSignature            uint64 = 0x5452415020494645 // ASCII string "EFI PART"
 	HeaderSizeOfPartitionEntry uint32 = 128
 
-	ProtectiveMBRSignature uint16 = 0xAA55
-	ProtectiveMBRTypeOS    uint8  = 0xEE
+	ProtectiveMBRSignature         uint16 = 0xAA55
+	ProtectiveMBRTypeOS            uint8  = 0xEE
+	ProtectiveMBREndingCHSMaxValue uint32 = 0xFFFFFF
 
 	LinuxFilesystemDataGUID string = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 )

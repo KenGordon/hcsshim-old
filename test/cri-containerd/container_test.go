@@ -905,7 +905,7 @@ func Test_RunContainer_GPTDisk_LCOW(t *testing.T) {
 				"while true; do echo 'Hello, World!'; sleep 1; done",
 			},
 			Annotations: map[string]string{
-				"microsoft.com/remote-image-config-hash": "sha256:87110ff511a831a7e64a8bc48e192c882341bed513bfe72cfc8a1725df32ac34",
+				"microsoft.com/remote-image-config-hash": "sha256:a184b0f0946b97168e33b09b7f8715b494d53cc8a67c3de47fb582bef6448799",
 				"microsoft.com/remote-image-layer-vhds":  "[\"C:/Users/kabaldau/go/src/github.com/Microsoft/hcsshim/temp-images-test/b66427d4-b988-4150-bfd7-540efbe9b35e.vhd\", \"C:/ContainerPlat/scratch.vhdx\"]",
 				"io.microsoft.layerfolder.partitions":    "1,2,3,4,5,6,7,8,9,10",
 			},

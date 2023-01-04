@@ -180,12 +180,12 @@ var createVHDCommand = cli.Command{
 				if err := dmverity.ComputeAndWriteHashDevice(out, hashDev); err != nil {
 					return err
 				}
-				if err := tar2ext4.ConvertToVhd(hashDev); err != nil {
+				if err := tar2ext4.ConvertToVhd(hashDev, false); err != nil {
 					return err
 				}
 				fmt.Fprintf(os.Stdout, "Layer %d: hash device created at %s\n", layerNumber, hashDevPath)
 			}
-			if err := tar2ext4.ConvertToVhd(out); err != nil {
+			if err := tar2ext4.ConvertToVhd(out, false); err != nil {
 				return errors.Wrap(err, "failed to append VHD footer")
 			}
 			fmt.Fprintf(os.Stdout, "Layer %d: layer VHD created at %s\n", layerNumber, vhdPath)

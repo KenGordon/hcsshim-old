@@ -34,12 +34,39 @@ func main() {
 	app.Usage = "tool for interacting with OCI images"
 	app.Commands = []cli.Command{
 		fetchUnpackCommand,
+		kernelFileVHDFooter,
 	}
 	app.Flags = []cli.Flag{}
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+var kernelFileVHDFooter = cli.Command{
+	Name:  "kernel-vhd-footer",
+	Usage: "adds a vhd footer to a kernel file",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:     "kernel" + ",k",
+			Usage:    "Required: path to kernel file to convert",
+			Required: true,
+		},
+	},
+	Action: func(cliCtx *cli.Context) error {
+		kernelPath := cliCtx.String("kernel")
+		if kernelPath == "" {
+			return fmt.Errorf("kernel file path not provided")
+		}
+		if _, err := os.Stat(kernelPath); err != nil {
+			return err
+		}
+		kernelFile, err := os.OpenFile(kernelPath, os.O_RDWR, 0755)
+		if err != nil {
+			return err
+		}
+		return tar2ext4.ConvertToVhd(kernelFile, false)
+	},
 }
 
 var fetchUnpackCommand = cli.Command{

@@ -29,6 +29,7 @@ var (
 type params struct {
 	convertWhiteout bool
 	appendVhdFooter bool
+	alignVHDToMB    bool
 	appendDMVerity  bool
 	ext4opts        []compactext4.Option
 }
@@ -40,6 +41,12 @@ type Option func(*params)
 // (beginning with .wh.) to overlay-style whiteouts.
 func ConvertWhiteout(p *params) {
 	p.convertWhiteout = true
+}
+
+// AlignToMB instructs the converter to make sure the resulting vhd disk is
+// aligned to the nearest MB
+func AlignVHDToMB(p *params) {
+	p.alignVHDToMB = true
 }
 
 // AppendVhdFooter instructs the converter to add a fixed VHD footer to the
@@ -215,14 +222,13 @@ func Convert(r io.Reader, w io.ReadWriteSeeker, options ...Option) error {
 	}
 
 	if p.appendVhdFooter {
-		return ConvertToVhd(w)
+		return ConvertToVhd(w, p.alignVHDToMB)
 	}
 	return nil
 }
 
-func findNextLogicalBlock(bytePosition uint64) uint64 {
+func findNextUnusedLogicalBlock(bytePosition uint64) uint64 {
 	block := uint64(bytePosition / compactext4.BlockSizeLogical)
-	// TODO katiewasnothere: test this
 	if bytePosition%compactext4.BlockSizeLogical == 0 {
 		return block
 	}
@@ -251,7 +257,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 	)
 
 	// find the first useable LBA and corresponding byte
-	firstUseableLBA := findNextLogicalBlock(uint64(totaMetadataSizeInBytes))
+	firstUseableLBA := findNextUnusedLogicalBlock(uint64(totaMetadataSizeInBytes))
 	if firstUseableLBA < gpt.FirstUsableLBA {
 		firstUseableLBA = gpt.FirstUsableLBA
 	}
@@ -288,7 +294,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 			return err
 		}
 
-		endingLBA = findNextLogicalBlock(seekStartByte+uint64(bytesWritten)) - 1
+		endingLBA = findNextUnusedLogicalBlock(seekStartByte+uint64(bytesWritten)) - 1
 		entry := gpt.PartitionEntry{
 			PartitionTypeGUID:   typeGuid,
 			UniquePartitionGUID: entryGuid,
@@ -302,13 +308,10 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		// update the startLBA for the next entry
 		startLBA = uint64(endingLBA) + 1
 	}
-	// TODO katiewasnothere: fix this if we never go through loop for partitions,
-	// step through this code to understand
-	// lastUseableLBA := findNextLogicalBlock(endingLBA * compactext4.BlockSizeLogical)
-	lastUseableLBA := endingLBA                                            // inclusive
-	lastUseableByte := (lastUseableLBA + 1) * compactext4.BlockSizeLogical // add 1 to account for bytes within the last used block
+	lastUseableLBA := endingLBA
+	lastUsedByte := (lastUseableLBA + 1) * compactext4.BlockSizeLogical // add 1 to account for bytes within the last used block
 
-	altEntriesArrayStartLBA := findNextLogicalBlock(uint64(lastUseableByte))
+	altEntriesArrayStartLBA := findNextUnusedLogicalBlock(uint64(lastUsedByte))
 	altEntriesArrayStart := altEntriesArrayStartLBA * compactext4.BlockSizeLogical
 
 	_, err = w.Seek(int64(altEntriesArrayStart), io.SeekStart)
@@ -322,7 +325,6 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		}
 	}
 
-	// TODO katiewasnothere: fix this in case the entry array is larger than 32 * 512
 	bytesUsedForEntryArray := uint64(sizeOfEntryArrayBytes)
 	entryArrayReservedSize := gpt.ReservedLBAsForParitionEntryArray * compactext4.BlockSizeLogical
 	if uint64(sizeOfEntryArrayBytes) < entryArrayReservedSize {
@@ -333,8 +335,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("failed to seek file: %v", err)
 	}
 
-	// TODO katiewasnothere: round to nearest block
-	alternateHeaderLBA := findNextLogicalBlock(uint64(sizeAfterBackupEntryArrayInBytes))
+	alternateHeaderLBA := findNextUnusedLogicalBlock(uint64(sizeAfterBackupEntryArrayInBytes))
 	alternateHeaderInBytes := alternateHeaderLBA * compactext4.BlockSizeLogical
 	_, err = w.Seek(int64(alternateHeaderInBytes), io.SeekStart)
 	if err != nil {
@@ -362,7 +363,7 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		FirstUsableLBA:           firstUseableLBA,
 		LastUsableLBA:            lastUseableLBA,
 		DiskGUID:                 diskGUID,
-		PartitionEntryLBA:        altEntriesArrayStartLBA, // right after this header
+		PartitionEntryLBA:        altEntriesArrayStartLBA, // right before this header
 		NumberOfPartitionEntries: uint32(len(multipleReaders)),
 		SizeOfPartitionEntry:     gpt.HeaderSizeOfPartitionEntry,
 		PartitionEntryArrayCRC32: altEntriesCheckSum,
@@ -390,14 +391,20 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		PartitionRecord:        [4]gpt.PartitionMBR{},
 		Signature:              gpt.ProtectiveMBRSignature,
 	}
+
+	// See gpt package for more information on the max value of the size in LBA
+	sizeInLBA := uint32(alternateHeaderLBA)
+	if alternateHeaderLBA >= uint64(gpt.ProtectiveMBRSizeInLBAMaxValue) {
+		sizeInLBA = uint32(gpt.ProtectiveMBRSizeInLBAMaxValue)
+	}
+
 	pMBR.PartitionRecord[0] = gpt.PartitionMBR{
 		BootIndicator: 0,
 		StartingCHS:   gpt.ProtectiveMBRStartingCHS,
 		OSType:        gpt.ProtectiveMBRTypeOS,
-		EndingCHS:     gpt.ProtectiveMBREndingCHS, // TODO katiewasnothere: use actual size
-		StartingLBA:   gpt.PrimaryHeaderLBA,       // LBA of the GPT header
-		// TODO katiewasnothere: test that this is the right value to use here
-		SizeInLBA: uint32(alternateHeaderLBA), // Set to the size of the disk minus one
+		EndingCHS:     calculateEndingCHS(sizeInLBA),
+		StartingLBA:   gpt.PrimaryHeaderLBA, // LBA of the GPT header
+		SizeInLBA:     sizeInLBA,            // size of disk minus one is the alternate header LBA
 	}
 
 	// write the protectiveMBR
@@ -455,18 +462,30 @@ func ConvertMultiple(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitio
 		return fmt.Errorf("failed to write backup header with: %v", err)
 	}
 
-	/*if p.appendDMVerity {
-		if err := dmverity.ComputeAndWriteHashDevice(w, w); err != nil {
+	if p.appendVhdFooter {
+		if err := ConvertToVhd(w, p.alignVHDToMB); err != nil {
 			return err
 		}
-	}*/
-
-	// TODO katiewasnothere: update the pmbr to use the alt header lba + the extra size up to the vhd header?
-	// not sure but that's what it seems to be wanting
-	if p.appendVhdFooter {
-		return convertToVhdAlignToMB(w)
 	}
 	return nil
+}
+
+func calculateEndingCHS(sizeInLBA uint32) [3]byte {
+	// See gpt package for more information on the max value of the ending CHS
+	result := [3]byte{}
+	if sizeInLBA >= gpt.ProtectiveMBREndingCHSMaxValue {
+		result = gpt.ProtectiveMBREndingCHSMaxArray
+	} else {
+		// Since sizeInLBA is 1 byte bigger than the CHS array capacity,
+		// use a temporary array to hold the result. At this point, we know
+		// that the value of sizeInLBA can be represented in the CHS array,
+		// so we can safely ignore the last value placed by binary package
+		// as it will always be 0x00
+		tempResult := [4]byte{}
+		binary.LittleEndian.PutUint32(tempResult[:], sizeInLBA)
+		copy(result[:], tempResult[:len(tempResult)-1])
+	}
+	return result
 }
 
 func getHeaderChecksum(header gpt.Header) (uint32, error) {
@@ -696,32 +715,28 @@ func ConvertAndComputeRootDigest(r io.Reader) (string, error) {
 }
 
 // ConvertToVhd converts given io.WriteSeeker to VHD, by appending the VHD footer with a fixed size.
-func ConvertToVhd(w io.WriteSeeker) error {
+func ConvertToVhd(w io.WriteSeeker, alignToMB bool) error {
 	size, err := w.Seek(0, io.SeekEnd)
 	if err != nil {
 		return err
 	}
-	return binary.Write(w, binary.BigEndian, makeFixedVHDFooter(size))
-}
 
-func convertToVhdAlignToMB(w io.WriteSeeker) error {
-	diskSize, err := w.Seek(0, io.SeekEnd)
-	if err != nil {
-		return err
-	}
-
-	// totalSize is the disk size plus the size of the vhd footer to be added
-	totalSize := diskSize + int64(vhdFooterSize)
-	if totalSize%bytesInMB != 0 {
-		remainder := bytesInMB - (totalSize % bytesInMB)
-		// seek the number of zeros needed to make this MB aligned
-		totalSize, err = w.Seek(remainder, io.SeekCurrent)
-		if err != nil {
-			return err
+	diskSize := size
+	if alignToMB {
+		// diskPlusFooter is the disk size plus the size of the vhd footer to be added
+		diskPlusFooter := size + int64(vhdFooterSize)
+		if diskPlusFooter%bytesInMB != 0 {
+			remainder := bytesInMB - (diskPlusFooter % bytesInMB)
+			// seek the number of zeros needed to make this MB aligned after the vhd
+			// footer is added
+			diskSize, err = w.Seek(remainder, io.SeekCurrent)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
-	return binary.Write(w, binary.BigEndian, makeFixedVHDFooter(totalSize))
+	return binary.Write(w, binary.BigEndian, makeFixedVHDFooter(diskSize))
 }
 
 func ReadVHDFooter(r io.ReadSeeker) (*VHDFooter, error) {

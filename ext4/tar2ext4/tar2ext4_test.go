@@ -242,7 +242,7 @@ func Test_GPT(t *testing.T) {
 		}
 	}
 
-	opts := []Option{AppendVhdFooter, ConvertWhiteout}
+	opts := []Option{AppendVhdFooter, AlignVHDToMB, ConvertWhiteout}
 	tmpVhdPath := filepath.Join(os.TempDir(), "test-vhd.vhd")
 	layerVhd, err := os.Create(tmpVhdPath)
 	if err != nil {
@@ -292,6 +292,129 @@ func Test_GPT(t *testing.T) {
 	_, err = ReadGPTPartitionArray(layerVhd, altHeader.PartitionEntryLBA, altHeader.NumberOfPartitionEntries)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	// check the partition entry checksums
+	sizeOfEntryArrayInBytes := gpt.HeaderSizeOfPartitionEntry * header.NumberOfPartitionEntries
+	headerEntriesChecksum, err := getChecksumPartitionEntryArray(layerVhd, uint32(header.PartitionEntryLBA), sizeOfEntryArrayInBytes)
+	if err != nil {
+		t.Fatalf("failed to calculate expected header entries checksum: %v", err)
+	}
+	if headerEntriesChecksum != header.PartitionEntryArrayCRC32 {
+		t.Fatalf("header partition entry checksum mismatch, expected %v but got %v", headerEntriesChecksum, header.PartitionEntryArrayCRC32)
+	}
+
+	altEntriesChecksum, err := getChecksumPartitionEntryArray(layerVhd, uint32(altHeader.PartitionEntryLBA), sizeOfEntryArrayInBytes)
+	if err != nil {
+		t.Fatalf("failed to calculate expected alt entries checksum: %v", err)
+	}
+	if altEntriesChecksum != altHeader.PartitionEntryArrayCRC32 {
+		t.Fatalf("alt header partition entry checksum mismatch, expected %v but got %v", altEntriesChecksum, altHeader.PartitionEntryArrayCRC32)
+	}
+
+	// check if the resulting vhd is MB aligned
+	layerVhdSize, err := layerVhd.Seek(0, io.SeekEnd)
+	if err != nil {
+		t.Fatalf("failed to seek the size of the disk: %v", err)
+	}
+	if layerVhdSize%bytesInMB != 0 {
+		t.Fatalf("expected the vhd disk to be MB aligned, instead got %v", layerVhdSize)
+	}
+}
+
+func Test_GPT_NoInputs(t *testing.T) {
+	fileReaders := []io.Reader{}
+	guids := []string{}
+
+	opts := []Option{AppendVhdFooter, ConvertWhiteout}
+	tmpVhdPath := filepath.Join(os.TempDir(), "test-vhd.vhd")
+	layerVhd, err := os.Create(tmpVhdPath)
+	if err != nil {
+		t.Fatalf("failed to create output VHD: %s", err)
+	}
+	defer os.Remove(tmpVhdPath)
+
+	dg, err := guid.NewV4()
+	if err != nil {
+		t.Fatalf("failed to create guid for layer: %v", err)
+	}
+	diskGuid := dg.String()
+
+	if err := ConvertMultiple(fileReaders, layerVhd, guids, diskGuid, opts...); err != nil {
+		t.Fatalf("failed to convert tar to layer vhd: %s", err)
+	}
+
+	// see if we still produce a valid gpt header
+	header, err := ReadGPTHeader(layerVhd, uint64(gpt.PrimaryHeaderLBA))
+	if err != nil {
+		t.Fatalf("failed to read header from tar file %v", err)
+	}
+	if err := validateGPTHeader(&header, diskGuid); err != nil {
+		t.Fatalf("gpt header is corrupt: %v", err)
+	}
+
+	// see if we still produce a valid pmbr
+	pmbr, err := ReadPMBR(layerVhd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePMBR(&pmbr); err != nil {
+		t.Fatalf("pmbr is corrupt: %v", err)
+	}
+
+	// see if we still produce a valid alt header
+	altHeader, err := ReadGPTHeader(layerVhd, header.AlternateLBA)
+	if err != nil {
+		t.Fatalf("failed to read header from tar file %v", err)
+	}
+	if err := validateGPTHeader(&altHeader, diskGuid); err != nil {
+		t.Fatalf("gpt alt header is corrupt: %v", err)
+	}
+
+	// check entry array size
+	if header.NumberOfPartitionEntries != 0 {
+		t.Fatalf("expected no header partition entries, instead got %v", header.NumberOfPartitionEntries)
+	}
+	if altHeader.NumberOfPartitionEntries != 0 {
+		t.Fatalf("expected no alt header partition entries, instead got %v", altHeader.NumberOfPartitionEntries)
+	}
+}
+
+func Test_FindNextUnusedLogicalBlock(t *testing.T) {
+	type config struct {
+		name          string
+		bytePosition  uint64
+		expectedBlock uint64
+	}
+	tests := []config{
+		{
+			name:         "Beginning of a block",
+			bytePosition: 0,
+			// since the block hasn't actually been used, the 0th block is the "next unused"
+			expectedBlock: 0,
+		},
+		{
+			name:         "Middle of a block",
+			bytePosition: 513,
+			// the 0th block has been used and the 1st byte into the 1st block has been used
+			// so the next unused block is the 2nd
+			expectedBlock: 2,
+		},
+		{
+			name:         "End of a block",
+			bytePosition: 512,
+			// the 0th block has been fully used, so the next unused block is the 1st
+			expectedBlock: 1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(subtest *testing.T) {
+			actual := findNextUnusedLogicalBlock(test.bytePosition)
+			if actual != test.expectedBlock {
+				subtest.Fatalf("expected to get block %v, instead got block %v", test.expectedBlock, actual)
+			}
+		})
+
 	}
 }
 
@@ -369,8 +492,10 @@ func validatePMBR(pmbr *gpt.ProtectiveMBR) error {
 	if pr.StartingLBA != gpt.PrimaryHeaderLBA {
 		return fmt.Errorf("expected startign LBA to be 1, instead got %v", pr.StartingLBA)
 	}
-	if pr.EndingCHS != gpt.ProtectiveMBREndingCHS {
-		return fmt.Errorf("expected ending chs to be %v, instead got %v", gpt.ProtectiveMBREndingCHS, pr.EndingCHS)
+
+	expectedEndingCHS := calculateEndingCHS(pr.SizeInLBA)
+	if pr.EndingCHS != expectedEndingCHS {
+		return fmt.Errorf("expected ending chs to be %v, instead got %v", expectedEndingCHS, pr.EndingCHS)
 	}
 	return nil
 }
