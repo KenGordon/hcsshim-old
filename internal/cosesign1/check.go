@@ -4,6 +4,8 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	didx509resolver "github.com/Microsoft/hcsshim/internal/did-x509-resolver"
+
 	"github.com/sirupsen/logrus"
 
 	"github.com/veraison/go-cose"
@@ -66,7 +68,7 @@ type UnpackedCoseSign1 struct {
 // This function is rather unpleasant in that it both decodes the COSE Sign1 document and its various
 // crypto parts AND checks that those parts are sound in this context. Higher layers may yet refuse the
 // payload for reasons beyond the scope of the checking of the document itself.
-// While this function could be decomposed into "unpack" and "verity" there would need to be extra state,
+// While this function could be decomposed into "unpack" and "verify" there would need to be extra state,
 // such as the cert pools, stored in some state object. Then the sensible pattern would be to have
 // accessors and member functions such as "verity()". However that was done there could exist state objects
 // for badly formed COSE Sign1 documents and that would complicate the jobs of callers.
@@ -129,23 +131,7 @@ func UnpackAndValidateCOSE1CertChain(raw []byte) (*UnpackedCoseSign1, error) {
 		return nil, fmt.Errorf("unreasonable number of certs (%d) in COSE_Sign1 document", chainLen)
 	}
 
-	// We need to split the certs into root, leaf and intermediate to use x509.Certificate.Verify(opts) below
-	rootCerts := x509.NewCertPool()
-	intermediateCerts := x509.NewCertPool()
-	var leafCert *x509.Certificate
-
-	// since the certs come from the ordered HeaderLabelX5Chain we can assume chain[0] is the leaf,
-	// chain[len-1] is the root, and the rest are intermediates.
-	for i, cert := range chain {
-		if i == 0 {
-			leafCert = cert
-		} else if i == chainLen-1 {
-			rootCerts.AddCert(cert)
-		} else {
-			intermediateCerts.AddCert(cert)
-		}
-	}
-
+	var leafCert = chain[0]
 	var leafCertBase64 = x509ToBase64(leafCert)
 	var leafPubKey = leafCert.PublicKey
 	var leafPubKeyBase64 = keyToBase64(leafPubKey)
@@ -167,16 +153,9 @@ func UnpackAndValidateCOSE1CertChain(raw []byte) (*UnpackedCoseSign1, error) {
 	// never have issued the leaf cert.
 
 	if len(chain) > 1 {
-		opts := x509.VerifyOptions{
-			Intermediates: intermediateCerts,
-			Roots:         rootCerts,
-			// Any valid cert chain is good for us as we will be matching
-			// part of the chain with a customer provided cert fingerprint.
-			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-		}
-
-		// consider using verifyCertificateChain from resolver to replace much of this logic.
-		_, err = leafCert.Verify(opts)
+		// Any valid cert chain is good for us as we will be matching
+		// part of the chain with a customer provided cert fingerprint.
+		_, err = didx509resolver.VerifyCertificateChain(chain, chain[len(chain)-1:], false)
 
 		if err != nil {
 			return nil, fmt.Errorf("certificate chain verification failed - %w", err)
