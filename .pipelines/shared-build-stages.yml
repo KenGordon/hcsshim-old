@@ -58,6 +58,7 @@ stages:
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/zapdir
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/uvmboot
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/sign1util
 
               GOOS=linux go build -buildmode=pie -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
             env:
