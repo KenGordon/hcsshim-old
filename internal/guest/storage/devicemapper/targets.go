@@ -6,8 +6,8 @@ package devicemapper
 import (
 	"context"
 	"fmt"
+	"time"
 
-	"github.com/pkg/errors"
 	"go.opencensus.io/trace"
 
 	"github.com/Microsoft/hcsshim/ext4/dmverity"
@@ -34,7 +34,8 @@ func CreateZeroSectorLinearTarget(ctx context.Context, devPath, devName string, 
 
 	devMapperPath, err := CreateDevice(devName, CreateReadOnly, []Target{linearTarget})
 	if err != nil {
-		return "", errors.Wrapf(err, "failed to create dm-linear target, device=%s, offset=%d", devPath, mappingInfo.DeviceOffsetInBytes)
+		time.Sleep(time.Millisecond * 500)
+		return CreateDevice(devName, CreateReadOnly, []Target{linearTarget})
 	}
 
 	return devMapperPath, nil
@@ -82,7 +83,8 @@ func CreateVerityTarget(ctx context.Context, devPath, devName string, verityInfo
 
 	mapperPath, err := CreateDevice(devName, CreateReadOnly, []Target{verityTarget})
 	if err != nil {
-		return "", errors.Wrapf(err, "failed to create dm-verity target. device=%s", devPath)
+		time.Sleep(time.Millisecond * 500)
+		return CreateDevice(devName, CreateReadOnly, []Target{verityTarget})
 	}
 
 	return mapperPath, nil
