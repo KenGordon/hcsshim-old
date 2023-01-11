@@ -328,7 +328,7 @@ var didX509Cmd = cli.Command{
 		if err != nil {
 			return fmt.Errorf("failed make DID: %w", err)
 		}
-		fmt.Fprint(os.Stdout, r)
+		fmt.Fprintf(os.Stdout, "%s\n", r)
 		return nil
 	},
 }
