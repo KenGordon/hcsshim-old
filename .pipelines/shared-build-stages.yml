@@ -61,6 +61,7 @@ stages:
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/sign1util
 
               GOOS=linux go build -buildmode=pie -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
+              GOOS=linux go build -buildmode=pie -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/sign1util
             env:
               CGO_ENABLED: "0"
               GOPROXY: off
