@@ -5,6 +5,7 @@ package cosesign1
 import (
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -56,7 +57,7 @@ func keyToBase64(key any) string {
 	return base64Key
 }
 
-// Convertx509ToPEM creates a PEM from input cert in the form:
+// convertx509ToPEM creates a PEM from input cert in the form:
 //
 //	-----BEGIN CERTIFICATE-----
 //	single line base64 standard encoded raw DER certificate
@@ -64,7 +65,7 @@ func keyToBase64(key any) string {
 //
 // Note that there are no extra line breaks added and that a string compare will
 // need to accommodate that.
-func Convertx509ToPEM(cert *x509.Certificate) string {
+func convertx509ToPEM(cert *x509.Certificate) string {
 	base64Cert := x509ToBase64(cert)
 	return base64CertToPEM(base64Cert)
 }
@@ -99,4 +100,45 @@ func StringToAlgorithm(algoType string) (algo cose.Algorithm, err error) {
 		return 0, fmt.Errorf("unknown cose.Algorithm type %q", algoType)
 	}
 	return algo, err
+}
+
+// ParsePemChain reads cose document and converts certificate chain to pem slice
+func ParsePemChain(filename string) ([]string, error) {
+	raw, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	var msg cose.Sign1Message
+	if err = msg.UnmarshalCBOR(raw); err != nil {
+		return nil, err
+	}
+
+	protected := msg.Headers.Protected
+
+	// The spec says this is ordered - leaf, intermediates, root. X5Bag is
+	// unordered and would need sorting
+	chainDer, ok := protected[cose.HeaderLabelX5Chain]
+	if !ok {
+		return nil, errors.New("x5Chain missing")
+	}
+
+	chainIA, ok := chainDer.([]interface{})
+	if !ok {
+		return nil, errors.New("invalid chainDer format")
+	}
+
+	var pems []string
+	for _, c := range chainIA {
+		cb, ok := c.([]byte)
+		if !ok {
+			return nil, errors.New("invalid chain element")
+		}
+		cert, err := x509.ParseCertificate(cb)
+		if err != nil {
+			return nil, err
+		}
+		pems = append(pems, convertx509ToPEM(cert))
+	}
+	return pems, nil
 }
