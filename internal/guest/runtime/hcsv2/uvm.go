@@ -6,6 +6,7 @@ package hcsv2
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,8 +18,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"encoding/base64"
 
 	"github.com/Microsoft/hcsshim/internal/cosesign1"
 	"github.com/Microsoft/hcsshim/internal/debug"
@@ -416,7 +415,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 	// It may be an error to have a security policy but not expose it to the container as
 	// in that case it can never be checked as correct by a verifier.
 	if oci.ParseAnnotationsBool(ctx, settings.OCISpecification.Annotations, annotations.UVMSecurityPolicyEnv, true) {
-		var encodedPolicy = h.securityPolicyEnforcer.EncodedSecurityPolicy()
+		encodedPolicy := h.securityPolicyEnforcer.EncodedSecurityPolicy()
 		if len(encodedPolicy) > 0 {
 			secPolicyEnv := fmt.Sprintf("UVM_SECURITY_POLICY=%s", encodedPolicy)
 			settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, secPolicyEnv)
@@ -425,7 +424,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 			uvmReferenceInfo := fmt.Sprintf("UVM_REFERENCE_INFO=%s", h.uvmReferenceInfo)
 			settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, uvmReferenceInfo)
 		}
-		if len(annotations.HostAMDCertificate) > 0 {
+		if settings.OCISpecification.Annotations != nil && len(settings.OCISpecification.Annotations[annotations.HostAMDCertificate]) > 0 {
 			amdCertEnv := fmt.Sprintf("UVM_HOST_AMD_CERTIFICATE=%s", settings.OCISpecification.Annotations[annotations.HostAMDCertificate])
 			settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, amdCertEnv)
 		}
