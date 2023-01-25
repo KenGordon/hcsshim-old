@@ -6,6 +6,7 @@ package hcsv2
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -145,19 +146,16 @@ func (h *Host) SetConfidentialUVMOptions(ctx context.Context, r *guestresource.L
 	return nil
 }
 
-/*
-   InjectFragment extends current security policy with additional constraints
-   from the incoming fragment. Note that it is base64 encoded over the bridge/
-
-   There are three checking steps:
-
-	1 - Unpack the cose document and check it was actually signed with the cert chain inside its header
-	2 - Check that the issuer field did:x509 identifier is for that cert chain (ie fingerprint of a non leaf cert
-	    and the subject matches the leaf cert)
-	3 - Check that this issuer/feed match the requirement of the user provided security policy (done in the rego
-	    by LoadFragment)
-*/
-
+// InjectFragment extends current security policy with additional constraints
+// from the incoming fragment. Note that it is base64 encoded over the bridge/
+//
+// There are three checking steps:
+// 1 - Unpack the cose document and check it was actually signed with the cert
+// chain inside its header
+// 2 - Check that the issuer field did:x509 identifier is for that cert chain
+// (ie fingerprint of a non leaf cert and the subject matches the leaf cert)
+// 3 - Check that this issuer/feed match the requirement of the user provided
+// security policy (done in the regoby LoadFragment)
 func (h *Host) InjectFragment(ctx context.Context, fragment *guestresource.LCOWSecurityPolicyFragment) (err error) {
 	log.G(ctx).WithField("fragment", fmt.Sprintf("%+v", fragment)).Debug("GCS Host.InjectFragment")
 
@@ -166,9 +164,14 @@ func (h *Host) InjectFragment(ctx context.Context, fragment *guestresource.LCOWS
 		return err
 	}
 	blob := []byte(fragment.Fragment)
-	// keep a copy of the fragment so we can manually figure out what went wrong
-	// will be removed eventually.
-	_ = os.WriteFile("/tmp/fragment.blob", blob, 0644)
+	// keep a copy of the fragment, so we can manually figure out what went wrong
+	// will be removed eventually. Give it a unique name to avoid any potential
+	// race conditions.
+	sha := sha256.New()
+	sha.Sum(blob)
+	timestamp := time.Now()
+	fragmentPath := fmt.Sprintf("fragment-%s-%d.blob", sha.Sum(nil), timestamp)
+	_ = os.WriteFile(filepath.Join("/tmp", fragmentPath), blob, 0644)
 
 	unpacked, err := cosesign1.UnpackAndValidateCOSE1CertChain(raw)
 	if err != nil {
@@ -425,7 +428,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 			uvmReferenceInfo := fmt.Sprintf("UVM_REFERENCE_INFO=%s", h.uvmReferenceInfo)
 			settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, uvmReferenceInfo)
 		}
-		if settings.OCISpecification.Annotations != nil && len(settings.OCISpecification.Annotations[annotations.HostAMDCertificate]) > 0 {
+		if len(settings.OCISpecification.Annotations[annotations.HostAMDCertificate]) > 0 {
 			amdCertEnv := fmt.Sprintf("UVM_HOST_AMD_CERTIFICATE=%s", settings.OCISpecification.Annotations[annotations.HostAMDCertificate])
 			settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, amdCertEnv)
 		}

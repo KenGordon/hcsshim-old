@@ -17,7 +17,7 @@ import (
 	"github.com/lestrrat-go/jwx/jwk"
 )
 
-func verifyCertificateChain(chain []*x509.Certificate, trustedRoots []*x509.Certificate, ignoreTime bool) ([][]*x509.Certificate, error) {
+func VerifyCertificateChain(chain []*x509.Certificate, trustedRoots []*x509.Certificate, ignoreTime bool) ([][]*x509.Certificate, error) {
 	roots := x509.NewCertPool()
 	for _, cert := range trustedRoots {
 		roots.AddCert(cert)
@@ -223,7 +223,7 @@ func verifyDid(chain []*x509.Certificate, did string) error {
 			}
 
 			// Walk the x509 subject description (a list of key:value pairs like "CN:ContainerPlat" saying the subject common
-			// name is ContainerPlat) extrating the various fields and checking they do not occur more than once.
+			// name is ContainerPlat) extracting the various fields and checking they do not occur more than once.
 			var seenFields []string
 			for i := 0; i < len(args); i += 2 {
 				k := strings.ToUpper(args[i])
@@ -274,7 +274,7 @@ func verifyDid(chain []*x509.Certificate, did string) error {
 				}
 				found := false
 				for _, fv := range fieldValues {
-					if strings.Contains(fv, v) {
+					if fv == v {
 						found = true
 						break
 					}
@@ -367,9 +367,9 @@ func createDidDocument(did string, chain []*x509.Certificate) (string, error) {
 	"@context": "https://www.w3.org/ns/did/v1",
 	"id": "%s",
 	"verificationMethod": [{
-		"id": "%s#key-1",
+		"id": "%[1]s#key-1",
 		"type": "JsonWebKey2020",
-		"controller": "%s",
+		"controller": "%[1]s",
 		"publicKeyJwk": %s,
 	}]
 	%s
@@ -400,7 +400,7 @@ func createDidDocument(did string, chain []*x509.Certificate) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	doc := fmt.Sprintf(format, did, did, did, jleaf, am, ka)
+	doc := fmt.Sprintf(format, did, jleaf, am, ka)
 	return doc, nil
 }
 
@@ -435,7 +435,7 @@ func Resolve(chainPem string, did string, ignoreTime bool) (string, error) {
 	// The last certificate in the chain is assumed to be the trusted root.
 	roots := []*x509.Certificate{chain[len(chain)-1]}
 
-	chains, err := verifyCertificateChain(chain, roots, ignoreTime)
+	chains, err := VerifyCertificateChain(chain, roots, ignoreTime)
 
 	if err != nil {
 		return "", fmt.Errorf("certificate chain verification failed: %w", err)

@@ -1,14 +1,13 @@
 package main
 
 import (
-	"crypto/x509"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Microsoft/hcsshim/internal/cosesign1"
 	didx509resolver "github.com/Microsoft/hcsshim/internal/did-x509-resolver"
 	"github.com/urfave/cli"
-	"github.com/veraison/go-cose"
 )
 
 func checkCoseSign1(inputFilename string, chainFilename string, didString string, verbose bool) (*cosesign1.UnpackedCoseSign1, error) {
@@ -344,34 +343,11 @@ var chainCmd = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
-		raw, err := os.ReadFile(ctx.String("in"))
+		pems, err := cosesign1.ParsePemChain(ctx.String("in"))
 		if err != nil {
 			return err
 		}
-
-		var msg cose.Sign1Message
-		if err = msg.UnmarshalCBOR(raw); err != nil {
-			return err
-		}
-
-		protected := msg.Headers.Protected
-
-		// The spec says this is ordered - leaf, intermediates, root. X5Bag is
-		// unordered and would need sorting
-		chainDER, chainPresent := protected[cose.HeaderLabelX5Chain]
-		if !chainPresent {
-			return fmt.Errorf("x5Chain missing")
-		}
-
-		chainIA := chainDER.([]interface{})
-		for _, c := range chainIA {
-			cert, err := x509.ParseCertificate(c.([]byte))
-			if err != nil {
-				return err
-			}
-			fmt.Println(cosesign1.Convertx509ToPEM(cert))
-		}
-
+		fmt.Fprintf(os.Stdout, "%s\n", strings.Join(pems, "\n"))
 		return nil
 	},
 }
