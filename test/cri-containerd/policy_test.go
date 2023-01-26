@@ -364,7 +364,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_Allowed(t *testing.T) {
 			sideEffect: func(req *runtime.CreateContainerRequest) error {
 				req.Config.Mounts = append(
 					req.Config.Mounts, &runtime.Mount{
-						HostPath:      "sandbox://sandbox/path",
+						HostPath:      "sandbox:///sandbox/path",
 						ContainerPath: "/container/path",
 						Propagation:   runtime.MountPropagation_PROPAGATION_BIDIRECTIONAL,
 					},
@@ -375,7 +375,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_Allowed(t *testing.T) {
 				securitypolicy.WithMountConstraints(
 					[]securitypolicy.MountConfig{
 						{
-							HostPath:      "sandbox://sandbox/path",
+							HostPath:      "sandbox:///sandbox/path",
 							ContainerPath: "/container/path",
 						},
 					},
@@ -386,7 +386,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_Allowed(t *testing.T) {
 			sideEffect: func(req *runtime.CreateContainerRequest) error {
 				req.Config.Mounts = append(
 					req.Config.Mounts, &runtime.Mount{
-						HostPath:      "sandbox://sandbox/path",
+						HostPath:      "sandbox:///sandbox/path",
 						ContainerPath: "/container/path",
 						Propagation:   runtime.MountPropagation_PROPAGATION_BIDIRECTIONAL,
 						Readonly:      true,
@@ -398,7 +398,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_Allowed(t *testing.T) {
 				securitypolicy.WithMountConstraints(
 					[]securitypolicy.MountConfig{
 						{
-							HostPath:      "sandbox://sandbox/path",
+							HostPath:      "sandbox:///sandbox/path",
 							ContainerPath: "/container/path",
 							Readonly:      true,
 						},
@@ -410,7 +410,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_Allowed(t *testing.T) {
 			sideEffect: func(req *runtime.CreateContainerRequest) error {
 				req.Config.Mounts = append(
 					req.Config.Mounts, &runtime.Mount{
-						HostPath:      "sandbox://sandbox/path/regexp",
+						HostPath:      "sandbox:///sandbox/path/regexp",
 						ContainerPath: "/container/path",
 						Propagation:   runtime.MountPropagation_PROPAGATION_BIDIRECTIONAL,
 					},
@@ -421,7 +421,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_Allowed(t *testing.T) {
 				securitypolicy.WithMountConstraints(
 					[]securitypolicy.MountConfig{
 						{
-							HostPath:      "sandbox://sandbox/path/r.+",
+							HostPath:      "sandbox:///sandbox/path/r.+",
 							ContainerPath: "/container/path",
 						},
 					},
@@ -479,7 +479,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_NotAllowed(t *testing.T) 
 		securitypolicy.WithMountConstraints(
 			[]securitypolicy.MountConfig{
 				{
-					HostPath:      "sandbox://sandbox/path",
+					HostPath:      "sandbox:///sandbox/path",
 					ContainerPath: "/container/path",
 				},
 			},
@@ -491,7 +491,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_NotAllowed(t *testing.T) 
 			sideEffect: func(req *runtime.CreateContainerRequest) error {
 				req.Config.Mounts = append(
 					req.Config.Mounts, &runtime.Mount{
-						HostPath:      "sandbox://sandbox/invalid/path",
+						HostPath:      "sandbox:///sandbox/invalid/path",
 						ContainerPath: "/container/path",
 						Propagation:   runtime.MountPropagation_PROPAGATION_BIDIRECTIONAL,
 					},
@@ -506,7 +506,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_NotAllowed(t *testing.T) 
 			sideEffect: func(req *runtime.CreateContainerRequest) error {
 				req.Config.Mounts = append(
 					req.Config.Mounts, &runtime.Mount{
-						HostPath:      "sandbox://sandbox/path",
+						HostPath:      "sandbox:///sandbox/path",
 						ContainerPath: "/container/path/invalid",
 						Propagation:   runtime.MountPropagation_PROPAGATION_BIDIRECTIONAL,
 					},
@@ -521,7 +521,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_NotAllowed(t *testing.T) 
 			sideEffect: func(req *runtime.CreateContainerRequest) error {
 				req.Config.Mounts = append(
 					req.Config.Mounts, &runtime.Mount{
-						HostPath:      "sandbox://sandbox/path",
+						HostPath:      "sandbox:///sandbox/path",
 						ContainerPath: "/container/path",
 						Propagation:   runtime.MountPropagation_PROPAGATION_BIDIRECTIONAL,
 						Readonly:      true,
@@ -537,7 +537,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_NotAllowed(t *testing.T) 
 			sideEffect: func(req *runtime.CreateContainerRequest) error {
 				req.Config.Mounts = append(
 					req.Config.Mounts, &runtime.Mount{
-						HostPath:      "sandbox://sandbox/path",
+						HostPath:      "sandbox:///sandbox/path",
 						ContainerPath: "/container/path",
 						Propagation:   runtime.MountPropagation_PROPAGATION_BIDIRECTIONAL,
 					},
@@ -548,7 +548,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_NotAllowed(t *testing.T) 
 				securitypolicy.WithMountConstraints(
 					[]securitypolicy.MountConfig{
 						{
-							HostPath:      "sandbox://sandbox/path",
+							HostPath:      "sandbox:///sandbox/path",
 							ContainerPath: "/container/path",
 							Readonly:      true,
 						},
@@ -561,7 +561,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_NotAllowed(t *testing.T) 
 			sideEffect: func(req *runtime.CreateContainerRequest) error {
 				req.Config.Mounts = append(
 					req.Config.Mounts, &runtime.Mount{
-						HostPath:      "sandbox://sandbox/path/regex/no/match",
+						HostPath:      "sandbox:///sandbox/path/regex/no/match",
 						ContainerPath: "/container/path",
 						Propagation:   runtime.MountPropagation_PROPAGATION_BIDIRECTIONAL,
 					},
@@ -572,7 +572,7 @@ func Test_RunContainer_WithPolicy_And_MountConstraints_NotAllowed(t *testing.T) 
 				securitypolicy.WithMountConstraints(
 					[]securitypolicy.MountConfig{
 						{
-							HostPath:      "sandbox://sandbox/path/R.+",
+							HostPath:      "sandbox:///sandbox/path/R.+",
 							ContainerPath: "/container/path",
 						},
 					},
