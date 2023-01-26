@@ -168,9 +168,9 @@ func (h *Host) InjectFragment(ctx context.Context, fragment *guestresource.LCOWS
 	// will be removed eventually. Give it a unique name to avoid any potential
 	// race conditions.
 	sha := sha256.New()
-	sha.Sum(blob)
+	sha.Write(blob)
 	timestamp := time.Now()
-	fragmentPath := fmt.Sprintf("fragment-%s-%d.blob", sha.Sum(nil), timestamp)
+	fragmentPath := fmt.Sprintf("fragment-%x-%d.blob", sha.Sum(nil), timestamp.UnixMilli())
 	_ = os.WriteFile(filepath.Join("/tmp", fragmentPath), blob, 0644)
 
 	unpacked, err := cosesign1.UnpackAndValidateCOSE1CertChain(raw)
