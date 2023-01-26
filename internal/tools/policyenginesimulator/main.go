@@ -128,7 +128,7 @@ func parseNamespace(rego string) string {
 	}
 
 	namespace := parts[1]
-	return namespace
+	return strings.TrimSpace(namespace)
 }
 
 func loadLocalFragment(commandsDir string, input map[string]interface{}) *rpi.RegoModule {
