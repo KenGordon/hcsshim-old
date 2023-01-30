@@ -153,7 +153,7 @@ var fetchUnpackCommand = cli.Command{
 			m := LayerMapping{
 				LayerDigest:    layerDigest.String(),
 				PartitionGUID:  g.String(),
-				PartitionIndex: layerNumber,
+				PartitionIndex: layerNumber + 1, // partitions are 1 based indexed
 			}
 			di.Layers = append(di.Layers, m)
 		}
@@ -182,6 +182,7 @@ var fetchUnpackCommand = cli.Command{
 		opts := []tar2ext4.Option{
 			tar2ext4.ConvertWhiteout,
 			tar2ext4.AppendVhdFooter,
+			tar2ext4.AlignVHDToMB,
 		}
 		if err := tar2ext4.ConvertMultiple(readers, out, guids, diskGuid, opts...); err != nil {
 			return errors.Wrap(err, "failed to convert tar to ext4")

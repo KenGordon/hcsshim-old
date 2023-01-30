@@ -723,8 +723,7 @@ func ConvertToVhd(w io.WriteSeeker, alignToMB bool) error {
 
 	diskSize := size
 	if alignToMB {
-		// diskPlusFooter is the disk size plus the size of the vhd footer to be added
-		diskPlusFooter := size + int64(vhdFooterSize)
+		diskPlusFooter := size
 		if diskPlusFooter%bytesInMB != 0 {
 			remainder := bytesInMB - (diskPlusFooter % bytesInMB)
 			// seek the number of zeros needed to make this MB aligned after the vhd
