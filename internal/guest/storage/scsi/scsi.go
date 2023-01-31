@@ -158,7 +158,11 @@ func Mount(
 		cryptDeviceName := fmt.Sprintf(cryptDeviceFmt, controller, lun)
 		encryptedSource, err := encryptDevice(spnCtx, source, cryptDeviceName)
 		if err != nil {
-			return fmt.Errorf("failed to mount encrypted device %s: %w", source, err)
+			time.Sleep(time.Millisecond * 500)
+			encryptedSource, err = encryptDevice(spnCtx, source, cryptDeviceName)
+			if err != nil {
+				return fmt.Errorf("failed to mount encrypted device %s: %w", source, err)
+			}
 		}
 		source = encryptedSource
 	}
