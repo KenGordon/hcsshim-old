@@ -5,11 +5,13 @@ package layers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -73,7 +75,7 @@ func (layers *ImageLayers) Release(ctx context.Context, all bool) error {
 // Returns the path at which the `rootfs` of the container can be accessed. Also, returns the path inside the
 // UVM at which container scratch directory is located. Usually, this path is the path at which the container
 // scratch VHD is mounted. However, in case of scratch sharing this is a directory under the UVM scratch.
-func MountLCOWLayers(ctx context.Context, containerID string, layerFolders []string, partitions []int, guestRoot, volumeMountPath string, vm *uvm.UtilityVM) (_, _ string, err error) {
+func MountLCOWLayers(ctx context.Context, containerID string, layerFolders []string, guestRoot, volumeMountPath string, vm *uvm.UtilityVM) (_, _ string, err error) {
 	if vm.OS() != "linux" {
 		return "", "", errors.New("MountLCOWLayers should only be called for LCOW")
 	}
@@ -100,12 +102,26 @@ func MountLCOWLayers(ctx context.Context, containerID string, layerFolders []str
 		if e := path.Ext(layerPath); e != ".vhd" && e != ".vhdx" {
 			layerPath = filepath.Join(layerPath, "layer.vhd")
 		}
+		var partitions []int
+		if strings.HasPrefix(layerPath, "mmi://") {
+			pathWithPartitions := strings.TrimPrefix(layerPath, "mmi://")
+			separatedPath := strings.SplitN(pathWithPartitions, "/", 2)
+			if len(separatedPath) != 2 {
+				return "", "", fmt.Errorf("failed to get the mmi paths: %v", layerPath)
+			}
+			partitionsRaw := separatedPath[0]
+			if err := json.Unmarshal([]byte(partitionsRaw), &partitions); err != nil {
+				return "", "", fmt.Errorf("failed to unmarshal partitions: %v", partitionsRaw)
+			}
+			layerPath = separatedPath[1]
+		}
 		uvmPath, err := addLCOWLayer(ctx, vm, layerPath, partitions)
 		if err != nil {
 			return "", "", fmt.Errorf("failed to add LCOW layer: %s", err)
 		}
 		layersAdded = append(layersAdded, layerPath)
-		if partitions != nil && len(partitions) != 0 {
+		if len(partitions) != 0 {
+			// if we found partitions, we need to update the uvm layer paths that we're using
 			for _, p := range partitions {
 				// katiewasnothere: using filepath join doesn't work here
 				// because it changes the separator to "\", causing the combine
@@ -170,10 +186,13 @@ func MountLCOWLayers(ctx context.Context, containerID string, layerFolders []str
 // v1/v2: Argon WCOW: Returns the mount path on the host as a volume GUID.
 // v1:    Xenon WCOW: Done internally in HCS, so no point calling doing anything here.
 // v2:    Xenon WCOW: Returns a CombinedLayersV2 structure where ContainerRootPath is a folder
-//                    inside the utility VM which is a GUID mapping of the scratch folder. Each
-//                    of the layers are the VSMB locations where the read-only layers are mounted.
+//
+//	inside the utility VM which is a GUID mapping of the scratch folder. Each
+//	of the layers are the VSMB locations where the read-only layers are mounted.
+//
 // Job container:     Returns the mount path on the host as a volume guid, with the volume mounted on
-// 					  the host at `volumeMountPath`.
+//
+//	the host at `volumeMountPath`.
 func MountWCOWLayers(ctx context.Context, containerID string, layerFolders []string, guestRoot, volumeMountPath string, vm *uvm.UtilityVM) (_ string, err error) {
 	if vm == nil {
 		if len(layerFolders) < 2 {
