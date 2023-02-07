@@ -89,8 +89,7 @@ type UtilityVM struct {
 	// SCSI devices that are mapped into a Windows or Linux utility VM
 	scsiLocations       [4][64]*SCSIAttachment // Hyper-V supports 4 controllers, 64 slots per controller. Limited to 1 controller for now though.
 	scsiControllerCount uint32                 // Number of SCSI controllers in the utility VM
-	scsiMounts          map[string]*SCSIMount
-	encryptScratch      bool // Enable scratch encryption
+	encryptScratch      bool                   // Enable scratch encryption
 
 	vpciDevices map[VPCIDeviceKey]*VPCIDevice // map of device instance id to vpci device
 
