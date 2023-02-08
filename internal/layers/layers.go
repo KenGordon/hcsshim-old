@@ -259,10 +259,9 @@ func MountWCOWLayers(ctx context.Context, containerID string, layerFolders []str
 			}
 		}
 
-		// we only need to track the base path here because on unmount, that's
-		// all we need
 		layerMount := &LayerMount{
-			HostPath: path,
+			HostPath:  path,
+			GuestPath: mountPath,
 		}
 		layersAdded = append(layersAdded, layerMount)
 
@@ -465,11 +464,12 @@ func UnmountContainerLayers(ctx context.Context, layerMounts []*LayerMount, cont
 			}
 		}
 
-		baseLayer := layerMounts[len(layerMounts)-1]
-		if err := wclayer.UnprepareLayer(ctx, baseLayer.HostPath); err != nil {
+		// last layer should be the scratch layer
+		layer := layerMounts[len(layerMounts)-1]
+		if err := wclayer.UnprepareLayer(ctx, layer.HostPath); err != nil {
 			return err
 		}
-		return wclayer.DeactivateLayer(ctx, baseLayer.HostPath)
+		return wclayer.DeactivateLayer(ctx, layer.HostPath)
 	}
 
 	// V2 Xenon

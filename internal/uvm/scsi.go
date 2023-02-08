@@ -435,6 +435,12 @@ func (uvm *UtilityVM) deallocateSCSIAttachment(ctx context.Context, sm *SCSIAtta
 	}
 }
 
+func (uvm *UtilityVM) GetSCSIAttachment(ctx context.Context, hostPath string) (*SCSIAttachment, error) {
+	uvm.m.Lock()
+	defer uvm.m.Unlock()
+	return uvm.findSCSIAttachment(ctx, hostPath)
+}
+
 // Lock must be held when calling this function.
 func (uvm *UtilityVM) findSCSIAttachment(ctx context.Context, findThisHostPath string) (*SCSIAttachment, error) {
 	for _, luns := range uvm.scsiLocations {
