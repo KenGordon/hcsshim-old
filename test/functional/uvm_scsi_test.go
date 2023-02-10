@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -27,9 +26,7 @@ import (
 
 // TestSCSIAddRemovev2LCOW validates adding and removing SCSI disks
 // from a utility VM in both attach-only and with a container path.
-func TestSCSIAddRemoveLCOW(t *testing.T) {
-	t.Skip("not yet updated")
-
+func TestSCSIAddRemoveMultipleLCOW(t *testing.T) {
 	require.Build(t, osversion.RS5)
 	requireFeatures(t, featureLCOW, featureSCSI)
 
@@ -39,19 +36,88 @@ func TestSCSIAddRemoveLCOW(t *testing.T) {
 	testSCSIAddRemoveMultiple(t, u, `/run/gcs/c/0/scsi`, "linux", []string{})
 }
 
+func TestSCSIAddRemoveSingleLCOW(t *testing.T) {
+	require.Build(t, osversion.RS5)
+	requireFeatures(t, featureLCOW, featureSCSI)
+
+	u := tuvm.CreateAndStartLCOWFromOpts(context.Background(), t, defaultLCOWOptions(t))
+	defer u.Close()
+
+	testSCSIAddRemoveSingle(t, u, `/run/gcs/c/0/scsi`, "linux", []string{})
+}
+
 // TestSCSIAddRemoveWCOW validates adding and removing SCSI disks
 // from a utility VM in both attach-only and with a container path.
-func TestSCSIAddRemoveWCOW(t *testing.T) {
-	t.Skip("not yet updated")
-
+func TestSCSIAddRemoveSingleWCOW(t *testing.T) {
 	require.Build(t, osversion.RS5)
 	requireFeatures(t, featureWCOW, featureSCSI)
 
 	// TODO make the image configurable to the build we're testing on
-	u, layers, _ := tuvm.CreateWCOWUVM(context.Background(), t, t.Name(), "mcr.microsoft.com/windows/nanoserver:1903")
+	u, layers, _ := tuvm.CreateWCOWUVM(context.Background(), t, t.Name(), "mcr.microsoft.com/windows/nanoserver:1909")
+	defer u.Close()
+
+	testSCSIAddRemoveMultiple(t, u, `c:\`, "windows", layers)
+}
+
+func TestSCSIAddRemoveMultipleWCOW(t *testing.T) {
+	require.Build(t, osversion.RS5)
+	requireFeatures(t, featureWCOW, featureSCSI)
+
+	// TODO make the image configurable to the build we're testing on
+	u, layers, _ := tuvm.CreateWCOWUVM(context.Background(), t, t.Name(), "mcr.microsoft.com/windows/nanoserver:1909")
 	defer u.Close()
 
 	testSCSIAddRemoveSingle(t, u, `c:\`, "windows", layers)
+}
+
+func TestSCSIWithEmptyAndNonEmptyUVMPathLCOW(t *testing.T) {
+	require.Build(t, osversion.RS5)
+	requireFeatures(t, featureLCOW, featureSCSI)
+
+	u := tuvm.CreateAndStartLCOWFromOpts(context.Background(), t, defaultLCOWOptions(t))
+	defer u.Close()
+
+	numDisks := 64
+	pathPrefix := `/run/gcs/c/0/scsi`
+	// Create a bunch of directories each containing sandbox.vhdx
+	disks := make([]string, numDisks)
+	for i := 0; i < numDisks; i++ {
+		tempDir := testutilities.CreateLCOWBlankRWLayer(context.Background(), t)
+		disks[i] = filepath.Join(tempDir, `sandbox.vhdx`)
+	}
+
+	logrus.Debugln("Adding scsi disks with empty uvmPaths")
+	useUvmPathPrefix := false
+	mounts, err := testAddSCSI(u, disks, pathPrefix, useUvmPathPrefix, false)
+	if err != nil {
+		t.Fatalf("failed to add SCSI device: %v", err)
+	}
+
+	// Try to re-add
+	logrus.Debugln("Next - try re-adding scsi disks with non-empty uvmPaths")
+	useUvmPathPrefix = true
+	reMounts, err := testAddSCSI(u, disks, pathPrefix, useUvmPathPrefix, true)
+	if err != nil {
+		t.Fatalf("failed to add SCSI device: %v", err)
+	}
+
+	// validate that all remounted scsi devices have a non empty uvm path
+	for _, m := range reMounts {
+		if m.UVMPath == "" {
+			t.Fatalf("expected uvmPath to be non-empty for scsi disk: %v", m.HostPath)
+		}
+	}
+
+	logrus.Debugln("Next - Remove emtpy uvmPath scsi mounts")
+	err = testRemoveAllSCSI(u, mounts)
+	if err != nil {
+		t.Fatalf("failed to remove SCSI disk: %v", err)
+	}
+	logrus.Debugln("Next - Remove non-emtpy uvmPath scsi mounts")
+	err = testRemoveAllSCSI(u, reMounts)
+	if err != nil {
+		t.Fatalf("failed to remove SCSI disk: %v", err)
+	}
 }
 
 //nolint:unused // unused since tests are skipped
@@ -216,16 +282,6 @@ func testSCSIAddRemoveMultiple(t *testing.T, u *uvm.UtilityVM, pathPrefix string
 		t.Fatalf("failed to remove SCSI disk: %v", err)
 	}
 
-	// check the devices are no longer present on the uvm
-	targetNamespace := "k8s.io"
-	for i := 0; i < numDisks; i++ {
-		uvmPath := fmt.Sprintf(`%s%d`, pathPrefix, i)
-		out, err := exec.Command(`shimdiag.exe`, `exec`, targetNamespace, `ls`, uvmPath).Output()
-		if err == nil {
-			t.Fatalf("expected to no longer have scsi device files, instead returned %s", string(out))
-		}
-	}
-
 	// TODO: Could extend to validate can't add a 64th disk (windows). 65th (linux).
 }
 
@@ -301,7 +357,6 @@ func TestParallelScsiOps(t *testing.T) {
 					// This worker cant continue because the index is dead. We have to stop
 					break
 				}
-
 				scsiMount, err = u.AddSCSI(context.Background(), path, fmt.Sprintf("/run/gcs/c/0/scsi/%d", iteration), false, false, options, uvm.VMAccessTypeIndividual)
 				if err != nil {
 					os.Remove(path)

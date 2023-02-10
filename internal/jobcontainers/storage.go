@@ -49,8 +49,6 @@ func (c *JobContainer) mountLayers(ctx context.Context, containerID string, s *s
 		s.Root = &specs.Root{}
 	}
 
-	// todo katiewasnothere: what happens when s.Root.Path is not empty
-
 	if s.Root.Path == "" {
 		log.G(ctx).Debug("mounting job container storage")
 		rootPath, layersMounted, err := layers.MountWCOWLayers(ctx, containerID, s.Windows.LayerFolders, "", volumeMountPath, nil)

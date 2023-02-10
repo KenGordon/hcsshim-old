@@ -377,7 +377,6 @@ func addLCOWLayer(ctx context.Context, vm *uvm.UtilityVM, layerPath string) (_ *
 		}
 	}
 
-	// TODO katiewasnothere: parse the string to see if we have a partition
 	options := []string{"ro"}
 	uvmPath := fmt.Sprintf(guestpath.LCOWGlobalMountPrefixFmt, vm.UVMMountCounter())
 	sm, err := vm.AddSCSILayer(
@@ -497,9 +496,7 @@ func UnmountContainerLayers(ctx context.Context, layerMounts []*LayerMount, cont
 
 	// Unload the SCSI scratch path
 	if (op & UnmountOperationSCSI) == UnmountOperationSCSI {
-		// TODO katiewasnothere: make sure that there is a scratch layer mount
 		scratchFile := getScratchVHDMount(layerMounts)
-		// TODO katiewasnothere: make sure scratch has a uvm path
 		if err := vm.RemoveSCSIMount(ctx, scratchFile.HostPath, scratchFile.GuestPath); err != nil {
 			log.G(ctx).WithError(err).Warn("failed to remove scratch")
 			if retError == nil {
@@ -531,7 +528,6 @@ func UnmountContainerLayers(ctx context.Context, layerMounts []*LayerMount, cont
 	// share layers. Note that SCSI is used on large layers.
 	if vm.OS() == "linux" && (op&UnmountOperationVPMEM) == UnmountOperationVPMEM {
 		for _, layer := range layerMounts[:len(layerMounts)-1] {
-			// TODO katiewasnothere: make sure the hostpath has the vhdx ext
 			if err := removeLCOWLayer(ctx, vm, layer); err != nil {
 				log.G(ctx).WithError(err).Warn("remove layer failed")
 				if retError == nil {
@@ -584,7 +580,6 @@ func getScratchVHDHostPath(layerFolders []string) (string, error) {
 	return hostPath, nil
 }
 
-// TODO katiewasnothere: this should already have the vhdx at the end
 func getScratchVHDMount(layerMounts []*LayerMount) *LayerMount {
 	scratchMount := layerMounts[len(layerMounts)-1]
 	return scratchMount
