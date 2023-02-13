@@ -32,8 +32,6 @@ func init() {
 	defaultMarshaller = regoMarshaller
 }
 
-const plan9Prefix = "plan9://"
-
 // RegoEnforcer is a stub implementation of a security policy, which will be
 // based on [Rego] policy language. The detailed implementation will be
 // introduced in the subsequent PRs and documentation updated accordingly.
@@ -297,7 +295,7 @@ func errorString(errors interface{}) string {
 }
 
 func (policy *regoEnforcer) getReasonNotAllowed(enforcementPoint string, input inputData) error {
-	inputJSON, err := json.Marshal(input)
+	inputJSON, err := json.Marshal(policy.redactSensitiveData(input))
 	if err != nil {
 		return fmt.Errorf("%s not allowed by policy. Input unavailable due to marshalling error", enforcementPoint)
 	}
@@ -307,11 +305,33 @@ func (policy *regoEnforcer) getReasonNotAllowed(enforcementPoint string, input i
 	if err == nil {
 		errors, _ := result.Value("errors")
 		if errors != nil {
-			return fmt.Errorf("%s not allowed by policy. Errors: %v.\nInput: %s", enforcementPoint, errors, string(inputJSON))
+			if len(errors.([]interface{})) > 0 {
+				return fmt.Errorf("%s not allowed by policy. Errors: %v. Input: %s", enforcementPoint, errors, string(inputJSON))
+			} else {
+				return fmt.Errorf("%s not allowed by policy. Security policy is not valid. Please check security policy or re-generate with tooling. Input: %s", enforcementPoint, string(inputJSON))
+			}
 		}
 	}
 
-	return fmt.Errorf("%s not allowed by policy.\nInput: %s", enforcementPoint, string(inputJSON))
+	return fmt.Errorf("%s not allowed by policy. Security policy is not valid. Please check security policy or re-generate with tooling. Input: %s", enforcementPoint, string(inputJSON))
+}
+
+func (policy *regoEnforcer) redactSensitiveData(input inputData) inputData {
+	if v, k := input["envList"]; k {
+		newEnvList := make([]string, 0)
+		cast, ok := v.([]string)
+		if ok {
+			for _, env := range cast {
+				parts := strings.Split(env, "=")
+				redacted := parts[0] + "=<<redacted>>"
+				newEnvList = append(newEnvList, redacted)
+			}
+		}
+
+		input["envList"] = newEnvList
+	}
+
+	return input
 }
 
 func (policy *regoEnforcer) EnforceDeviceMountPolicy(target string, deviceHash string) error {
