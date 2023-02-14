@@ -1,9 +1,8 @@
 package main
 
 import (
-	"context"
 	"encoding/binary"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,79 +10,138 @@ import (
 	"github.com/Microsoft/go-winio/pkg/guid"
 	"github.com/Microsoft/hcsshim/ext4/gpt"
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
-	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/memory"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	cli "github.com/urfave/cli/v2"
 )
 
 const (
-	// flags for gpt disks
-	inputFlag              = "input"
-	outputFlag             = "output"
-	pmbrFlag               = "pmbr"
-	headerFlag             = "header"
-	altHeaderFlag          = "alt-header"
-	entryFlag              = "entry"
-	altEntryFlag           = "alt-entry"
-	readAllBytesFlag       = "all"
-	partitionFlag          = "partition"
-	paritionSuperblockFlag = "partition-sb"
+	usernameFlag  = "username"
+	passwordFlag  = "password"
+	imageFlag     = "image"
+	verboseFlag   = "verbose"
+	outputDirFlag = "out-dir"
 )
 
-func main() {
-	app := cli.NewApp()
-	app.Name = "images"
-	app.Usage = "tool for interacting with OCI images"
-	app.Commands = []*cli.Command{
-		convertToGPT,
-		readGPTCommand,
-		fetchUnpackCommand,
-	}
-	app.Flags = []cli.Flag{}
-	if err := app.Run(os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+type ImageConfigInfo struct {
+	PartitionGUID  string
+	PartitionIndex int
+	StartOffset    uint32
+	Size           int
+}
+type LayerMapping struct {
+	LayerDigest    string
+	PartitionGUID  string
+	PartitionIndex int
+}
+type DiskInfo struct {
+	DiskGuid    string
+	ImageDigest string
+	Layers      []LayerMapping
+	ImageConfig ImageConfigInfo
 }
 
-var convertToGPT = &cli.Command{
-	Name:  "convert-gpt",
-	Usage: "converts a set of tar files into a single GPT image",
+var fetchUnpackCommand = &cli.Command{
+	Name:  "fetch-unpacker",
+	Usage: "fetches and unpacks images",
 	Flags: []cli.Flag{
-		&cli.StringSliceFlag{
-			Name:     "input",
+		&cli.StringFlag{
+			Name:     imageFlag,
 			Aliases:  []string{"i"},
-			Usage:    "input tar files to be converted",
+			Usage:    "Required: container image reference",
 			Required: true,
 		},
-		&cli.StringSliceFlag{
-			Name:     "output",
+		&cli.StringFlag{
+			Name:     outputFlag,
 			Aliases:  []string{"o"},
-			Usage:    "output file to write gpt disk to",
+			Usage:    "Required: output vhd path",
 			Required: true,
+		},
+		&cli.StringFlag{
+			Name:    usernameFlag,
+			Aliases: []string{"u"},
+			Usage:   "Optional: custom registry username",
+		},
+		&cli.StringFlag{
+			Name:    passwordFlag,
+			Aliases: []string{"p"},
+			Usage:   "Optional: custom registry password",
 		},
 	},
 	Action: func(cliCtx *cli.Context) error {
-		fileNames := cliCtx.StringSlice(inputFlag)
-		inputReaders := []io.Reader{}
-		if len(fileNames) == 0 {
-			return errors.New("input files are required")
+		image, layers, err := fetchImageLayers(cliCtx)
+		if err != nil {
+			return errors.Wrap(err, "failed to fetch image layers")
+		}
+		imageDigest, err := image.Digest()
+		if err != nil {
+			return errors.Wrap(err, "failed to fetch image digest")
 		}
 
-		partitionGUIDs := []guid.GUID{}
-		for _, p := range fileNames {
-			in, err := os.Open(p)
+		readers := []io.Reader{}
+		guids := []guid.GUID{}
+
+		di := DiskInfo{
+			ImageDigest: imageDigest.String(),
+			Layers:      []LayerMapping{},
+		}
+
+		// first layer is the image config data
+		configGUID, err := guid.NewV4()
+		if err != nil {
+			return err
+		}
+
+		config, err := image.ConfigFile()
+		if err != nil {
+			return err
+		}
+		configBytes, err := json.Marshal(config)
+		if err != nil {
+			return err
+		}
+
+		for i, layer := range layers {
+			layerNumber := i + 2 // +1 for config, +1 for partition indices being 1-based
+			diffID, err := layer.DiffID()
+			if err != nil {
+				return errors.Wrap(err, "failed to read layer diff")
+			}
+			log.Debugf("Layer #%d, layer hash: %s", layerNumber, diffID.String())
+
+			rc, err := layer.Uncompressed()
+			if err != nil {
+				return errors.Wrapf(err, "failed to uncompress layer %s", diffID.String())
+			}
+			readers = append(readers, rc)
+			g, err := guid.NewV4()
 			if err != nil {
 				return err
 			}
-			inputReaders = append(inputReaders, in)
+			guids = append(guids, g)
 
-			pGUID, err := guid.NewV4()
+			layerDigest, err := layer.Digest()
 			if err != nil {
-				return err
+				return errors.Wrap(err, "failed to read layer digets")
 			}
-			partitionGUIDs = append(partitionGUIDs, pGUID)
+			m := LayerMapping{
+				LayerDigest:    layerDigest.String(),
+				PartitionGUID:  g.String(),
+				PartitionIndex: layerNumber,
+			}
+			di.Layers = append(di.Layers, m)
 		}
+
+		dg, err := guid.NewV4()
+		if err != nil {
+			return err
+		}
+		di.DiskGuid = dg.String()
 
 		outputName := cliCtx.String(outputFlag)
 		if outputName == "" {
@@ -95,38 +153,113 @@ var convertToGPT = &cli.Command{
 			return err
 		}
 
-		diskGUID, err := guid.NewV4()
+		imageConfigInfo, err := createGPTDiskWithImageConfig(readers, out, configBytes, configGUID, guids, dg)
 		if err != nil {
 			return err
 		}
+		di.ImageConfig = *imageConfigInfo
 
-		return createGPTDisk(inputReaders, out, partitionGUIDs, diskGUID)
+		marshelledMappinges, err := json.Marshal(di)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%v", string(marshelledMappinges))
+
+		return nil
 	},
 }
 
-func createGPTDisk(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitionGUIDs []guid.GUID, diskGUID guid.GUID) error {
-	// check that we have valid inputs
-	if len(partitionGUIDs) != len(multipleReaders) {
-		return fmt.Errorf("must supply a single guid for every input file")
-	}
-	if len(multipleReaders) > gpt.MaxPartitions {
-		return fmt.Errorf("readers exceeds max number of partitions for a GPT disk: %d", len(multipleReaders))
+// TODO katiewasnothere: move to on top of the containerd pull/fetcher packages
+func fetchImageLayers(ctx *cli.Context) (img v1.Image, layers []v1.Layer, err error) {
+	image := ctx.String(imageFlag)
+	ref, err := name.ParseReference(image)
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "failed to parse image reference: %s", image)
 	}
 
-	actualSizeOfEntryArrayBytes := gpt.SizeOfPartitionEntry * len(multipleReaders)
-	sizeOfEntryArrayBytes := gpt.GetSizeOfEntryArray(len(multipleReaders))
+	var remoteOpts []remote.Option
+	if ctx.IsSet(usernameFlag) && ctx.IsSet(passwordFlag) {
+		auth := authn.Basic{
+			Username: ctx.String(usernameFlag),
+			Password: ctx.String(passwordFlag),
+		}
+		authConf, err := auth.Authorization()
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "failed to set remote")
+		}
+		log.Debug("using basic auth")
+		authOpt := remote.WithAuth(authn.FromConfig(*authConf))
+		remoteOpts = append(remoteOpts, authOpt)
+	}
+
+	img, err = remote.Image(ref, remoteOpts...)
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "unable to fetch image %q, make sure it exists", image)
+	}
+	conf, _ := img.ConfigName()
+	log.Debugf("Image id: %s", conf.String())
+	layers, err = img.Layers()
+	return img, layers, err
+}
+
+func createGPTDiskWithImageConfig(multipleReaders []io.Reader, w io.ReadWriteSeeker, configData []byte, configGUID guid.GUID, partitionGUIDs []guid.GUID, diskGUID guid.GUID) (*ImageConfigInfo, error) {
+	// check that we have valid inputs
+	if len(partitionGUIDs) != len(multipleReaders) {
+		return nil, fmt.Errorf("must supply a single guid for every input file")
+	}
+	if len(multipleReaders) > gpt.MaxPartitions {
+		return nil, fmt.Errorf("readers exceeds max number of partitions for a GPT disk: %d", len(multipleReaders))
+	}
+
+	actualSizeOfEntryArrayBytes := gpt.SizeOfPartitionEntry * (len(multipleReaders) + 1)
+	sizeOfEntryArrayBytes := gpt.GetSizeOfEntryArray(len(multipleReaders) + 1)
 
 	// find the first useable LBA and corresponding byte
 	firstUseableLBA := gpt.GetFirstUseableLBA(sizeOfEntryArrayBytes)
 	firstUseableByte := firstUseableLBA * gpt.BlockSizeLogical
 	if _, err := w.Seek(int64(firstUseableByte), io.SeekStart); err != nil {
-		return fmt.Errorf("failed to seek to the first useable LBA in disk with %v", err)
+		return nil, fmt.Errorf("failed to seek to the first useable LBA in disk with %v", err)
 	}
 
 	// prepare to construct the partition entries
-	entries := make([]gpt.PartitionEntry, len(multipleReaders))
+	entries := make([]gpt.PartitionEntry, len(multipleReaders)+1) // TODO katiewasnothere: account for image config
 	startLBA := firstUseableLBA
 	endingLBA := firstUseableLBA
+
+	// write the image config in the first partition
+
+	seekStartByte := startLBA * gpt.BlockSizeLogical
+	_, err := w.Seek(int64(seekStartByte), io.SeekStart)
+	if err != nil {
+		return nil, fmt.Errorf("failed to seek file: %v", err)
+	}
+
+	imageConfigInfo := &ImageConfigInfo{
+		PartitionGUID:  configGUID.String(),
+		PartitionIndex: 1,
+		StartOffset:    uint32(seekStartByte),
+		Size:           len(configData),
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, configData); err != nil {
+		return nil, fmt.Errorf("failed to write backup header with: %v", err)
+	}
+
+	endingLBA = gpt.FindNextUnusedLogicalBlock(seekStartByte+uint64(len(configData))) - 1
+	if endingLBA%2 == 0 {
+		// make sure the next start lba is 2 aligned
+		endingLBA++
+	}
+	entry := gpt.PartitionEntry{
+		PartitionTypeGUID:   gpt.LinuxFilesystemDataGUID,
+		UniquePartitionGUID: configGUID,
+		StartingLBA:         startLBA,
+		EndingLBA:           endingLBA, // inclusive
+		Attributes:          0,
+		PartitionName:       [72]byte{}, // Ignore partition name
+	}
+	entries[0] = entry
+	startLBA = uint64(endingLBA) + 1
 
 	// create partition entires from input readers
 	for i, r := range multipleReaders {
@@ -135,17 +268,16 @@ func createGPTDisk(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitionG
 		seekStartByte := startLBA * gpt.BlockSizeLogical
 		_, err := w.Seek(int64(seekStartByte), io.SeekStart)
 		if err != nil {
-			return fmt.Errorf("failed to seek file: %v", err)
+			return nil, fmt.Errorf("failed to seek file: %v", err)
 		}
 		startOffset := int64(seekStartByte)
 		currentConvertOpts := []tar2ext4.Option{
 			tar2ext4.ConvertWhiteout,
-			// tar2ext4.InlineData,
 			tar2ext4.StartWritePosition(startOffset),
 		}
 		bytesWritten, err := tar2ext4.ConvertTarToExt4(r, w, currentConvertOpts...)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		endingLBA = gpt.FindNextUnusedLogicalBlock(seekStartByte+uint64(bytesWritten)) - 1
@@ -157,7 +289,7 @@ func createGPTDisk(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitionG
 			Attributes:          0,
 			PartitionName:       [72]byte{}, // Ignore partition name
 		}
-		entries[i] = entry
+		entries[i+1] = entry // TODO katiewasnothere: this +1 accounts for image config
 
 		// update the startLBA for the next entry
 		startLBA = uint64(endingLBA) + 1
@@ -168,33 +300,33 @@ func createGPTDisk(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitionG
 	altEntriesArrayStartLBA := gpt.FindNextUnusedLogicalBlock(uint64(lastUsedByte))
 	altEntriesArrayStart := altEntriesArrayStartLBA * gpt.BlockSizeLogical
 
-	_, err := w.Seek(int64(altEntriesArrayStart), io.SeekStart)
+	_, err = w.Seek(int64(altEntriesArrayStart), io.SeekStart)
 	if err != nil {
-		return fmt.Errorf("failed to seek file: %v", err)
+		return nil, fmt.Errorf("failed to seek file: %v", err)
 	}
 
 	for _, e := range entries {
 		if err := binary.Write(w, binary.LittleEndian, e); err != nil {
-			return fmt.Errorf("failed to write backup entry array with: %v", err)
+			return nil, fmt.Errorf("failed to write backup entry array with: %v", err)
 		}
 	}
 
 	sizeAfterBackupEntryArrayInBytes, err := w.Seek(int64(altEntriesArrayStart+uint64(sizeOfEntryArrayBytes)), io.SeekStart)
 	if err != nil {
-		return fmt.Errorf("failed to seek file: %v", err)
+		return nil, fmt.Errorf("failed to seek file: %v", err)
 	}
 
 	alternateHeaderLBA := gpt.FindNextUnusedLogicalBlock(uint64(sizeAfterBackupEntryArrayInBytes))
 	alternateHeaderInBytes := alternateHeaderLBA * gpt.BlockSizeLogical
 	_, err = w.Seek(int64(alternateHeaderInBytes), io.SeekStart)
 	if err != nil {
-		return fmt.Errorf("failed to seek file: %v", err)
+		return nil, fmt.Errorf("failed to seek file: %v", err)
 	}
 
 	// only calculate the checksum for the actual partition array, do not include reserved bytes
 	altEntriesCheckSum, err := gpt.CalculateChecksumPartitionEntryArray(w, uint32(altEntriesArrayStartLBA), uint32(actualSizeOfEntryArrayBytes))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	altGPTHeader := gpt.Header{
 		Signature:                gpt.HeaderSignature,
@@ -208,25 +340,25 @@ func createGPTDisk(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitionG
 		LastUsableLBA:            lastUseableLBA,
 		DiskGUID:                 diskGUID,
 		PartitionEntryLBA:        altEntriesArrayStartLBA, // right before this header
-		NumberOfPartitionEntries: uint32(len(multipleReaders)),
+		NumberOfPartitionEntries: uint32(len(multipleReaders) + 1),
 		SizeOfPartitionEntry:     gpt.HeaderSizeOfPartitionEntry,
 		PartitionEntryArrayCRC32: altEntriesCheckSum,
 		ReservedEnd:              [420]byte{},
 	}
 	altGPTHeader.HeaderCRC32, err = gpt.CalculateHeaderChecksum(altGPTHeader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// write the alternate header
 	if err := binary.Write(w, binary.LittleEndian, altGPTHeader); err != nil {
-		return fmt.Errorf("failed to write backup header with: %v", err)
+		return nil, fmt.Errorf("failed to write backup header with: %v", err)
 	}
 
 	// write the protectiveMBR at the beginning of the disk
 	_, err = w.Seek(0, io.SeekStart)
 	if err != nil {
-		return fmt.Errorf("failed to seek file: %v", err)
+		return nil, fmt.Errorf("failed to seek file: %v", err)
 	}
 	pMBR := gpt.ProtectiveMBR{
 		BootCode:               [440]byte{},
@@ -253,31 +385,31 @@ func createGPTDisk(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitionG
 
 	// write the protectiveMBR
 	if err := binary.Write(w, binary.LittleEndian, pMBR); err != nil {
-		return fmt.Errorf("failed to write backup header with: %v", err)
+		return nil, fmt.Errorf("failed to write backup header with: %v", err)
 	}
 
 	// write partition entries
 	_, err = w.Seek(int64(gpt.PrimaryEntryArrayLBA*gpt.BlockSizeLogical), io.SeekStart)
 	if err != nil {
-		return fmt.Errorf("failed to seek file: %v", err)
+		return nil, fmt.Errorf("failed to seek file: %v", err)
 	}
 
 	for _, e := range entries {
 		if err := binary.Write(w, binary.LittleEndian, e); err != nil {
-			return fmt.Errorf("failed to write backup entry array with: %v", err)
+			return nil, fmt.Errorf("failed to write backup entry array with: %v", err)
 		}
 	}
 
 	// only calculate the checksum for the actual partition array, do not include reserved bytes if any
 	entriesCheckSum, err := gpt.CalculateChecksumPartitionEntryArray(w, gpt.PrimaryEntryArrayLBA, uint32(actualSizeOfEntryArrayBytes))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// write primary gpt header
 	_, err = w.Seek(int64(gpt.PrimaryHeaderLBA*gpt.BlockSizeLogical), io.SeekStart)
 	if err != nil {
-		return fmt.Errorf("failed to seek file: %v", err)
+		return nil, fmt.Errorf("failed to seek file: %v", err)
 	}
 
 	hGPT := gpt.Header{
@@ -292,194 +424,37 @@ func createGPTDisk(multipleReaders []io.Reader, w io.ReadWriteSeeker, partitionG
 		LastUsableLBA:            lastUseableLBA,
 		DiskGUID:                 diskGUID,
 		PartitionEntryLBA:        uint64(gpt.PrimaryEntryArrayLBA), // right after this header
-		NumberOfPartitionEntries: uint32(len(multipleReaders)),
+		NumberOfPartitionEntries: uint32(len(multipleReaders) + 1),
 		SizeOfPartitionEntry:     gpt.HeaderSizeOfPartitionEntry,
 		PartitionEntryArrayCRC32: entriesCheckSum,
 		ReservedEnd:              [420]byte{},
 	}
 	hGPT.HeaderCRC32, err = gpt.CalculateHeaderChecksum(hGPT)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := binary.Write(w, binary.LittleEndian, hGPT); err != nil {
-		return fmt.Errorf("failed to write backup header with: %v", err)
+		return nil, fmt.Errorf("failed to write backup header with: %v", err)
 	}
 
 	// align to MB
 	diskSize, err := w.Seek(0, io.SeekEnd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if diskSize%memory.MiB != 0 {
 		remainder := memory.MiB - (diskSize % memory.MiB)
 		// seek the number of zeros needed to make this disk MB aligned
 		diskSize, err = w.Seek(remainder, io.SeekCurrent)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	// convert to VHD with aligned disk size
 	if err := tar2ext4.ConvertToVhdWithSize(w, diskSize); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
-}
-
-var readGPTCommand = &cli.Command{
-	Name:  "read-gpt",
-	Usage: "read various data structures from a gpt disk",
-	Flags: []cli.Flag{
-		&cli.StringFlag{
-			Name:  inputFlag + ",i",
-			Usage: "input file to read",
-		},
-		&cli.BoolFlag{
-			Name:  pmbrFlag,
-			Usage: "read pmbr data structures",
-		},
-		&cli.BoolFlag{
-			Name:  headerFlag,
-			Usage: "read gpt header",
-		},
-		&cli.BoolFlag{
-			Name:  altHeaderFlag,
-			Usage: "read alt gpt header",
-		},
-		&cli.BoolFlag{
-			Name:  entryFlag,
-			Usage: "read the main entry array",
-		},
-		&cli.BoolFlag{
-			Name:  altEntryFlag,
-			Usage: "read the alt entry array",
-		},
-		&cli.BoolFlag{
-			Name:  readAllBytesFlag,
-			Usage: "read all bytes",
-		},
-		&cli.Uint64Flag{
-			Name:  partitionFlag,
-			Usage: "partition to print",
-		},
-		&cli.Uint64Flag{
-			Name:  paritionSuperblockFlag,
-			Usage: "superblock of partition to print",
-		},
-	},
-	Action: func(cliCtx *cli.Context) error {
-		ctx := context.Background()
-		input := cliCtx.String(inputFlag)
-		if input == "" {
-			return fmt.Errorf("input must be specified ")
-		}
-		inFile, err := os.Open(input)
-		if err != nil {
-			return err
-		}
-
-		if cliCtx.Bool(pmbrFlag) {
-			pmbr, err := gpt.ReadPMBR(inFile)
-			if err != nil {
-				return err
-			}
-			log.G(ctx).WithField(pmbrFlag, pmbr).Info("file pmbr")
-		}
-
-		if cliCtx.Bool(headerFlag) {
-			header, err := gpt.ReadGPTHeader(inFile, 1)
-			if err != nil {
-				return err
-			}
-			log.G(ctx).WithField(headerFlag, header).Info("file header")
-		}
-
-		if cliCtx.Bool(entryFlag) {
-			header, err := gpt.ReadGPTHeader(inFile, 1)
-			if err != nil {
-				return err
-			}
-			entry, err := gpt.ReadGPTPartitionArray(inFile, header.PartitionEntryLBA, header.NumberOfPartitionEntries)
-			if err != nil {
-				return err
-			}
-			log.G(ctx).WithField(entryFlag, entry).Info("file entry")
-		}
-
-		if cliCtx.Bool(altEntryFlag) {
-			header, err := gpt.ReadGPTHeader(inFile, 1)
-			if err != nil {
-				return err
-			}
-			altHeader, err := gpt.ReadGPTHeader(inFile, header.AlternateLBA)
-			if err != nil {
-				return err
-			}
-			entry, err := gpt.ReadGPTPartitionArray(inFile, altHeader.PartitionEntryLBA, altHeader.NumberOfPartitionEntries)
-			if err != nil {
-				return err
-			}
-			log.G(ctx).WithField(altEntryFlag, entry).Info("file alt-entry")
-		}
-
-		if cliCtx.Bool(altHeaderFlag) {
-			header, err := gpt.ReadGPTHeader(inFile, 1)
-			if err != nil {
-				return err
-			}
-			altHeader, err := gpt.ReadGPTHeader(inFile, header.AlternateLBA)
-			if err != nil {
-				return err
-			}
-			log.G(ctx).WithField(altHeaderFlag, altHeader).Info("file altHeader")
-		}
-
-		if cliCtx.Bool(readAllBytesFlag) {
-			all, err := io.ReadAll(inFile)
-			if err != nil {
-				return err
-			}
-			resultAsString := ""
-			for _, b := range all {
-				resultAsString += fmt.Sprintf(" %x", b)
-			}
-			log.G(ctx).WithField("byte", resultAsString).Infof("all file content in bytes")
-		}
-
-		partitionIndex := cliCtx.Uint64(partitionFlag)
-		if partitionIndex != 0 {
-			header, err := gpt.ReadGPTHeader(inFile, 1)
-			if err != nil {
-				return err
-			}
-			entry, err := gpt.ReadGPTPartitionArray(inFile, header.PartitionEntryLBA, header.NumberOfPartitionEntries)
-			if err != nil {
-				return err
-			}
-			partitionContent, err := gpt.ReadPartitionRaw(inFile, entry[partitionIndex-1].StartingLBA, entry[partitionIndex-1].EndingLBA)
-			if err != nil {
-				return err
-			}
-			log.G(ctx).WithField(partitionFlag, partitionContent).Infof("content of partition %v", partitionIndex)
-		}
-
-		partitionSuperblockIndex := cliCtx.Uint64(paritionSuperblockFlag)
-		if partitionSuperblockIndex != 0 {
-			header, err := gpt.ReadGPTHeader(inFile, 1)
-			if err != nil {
-				return err
-			}
-			entry, err := gpt.ReadGPTPartitionArray(inFile, header.PartitionEntryLBA, header.NumberOfPartitionEntries)
-			if err != nil {
-				return err
-			}
-			sb, err := tar2ext4.ReadExt4SuperBlockFromPartition(inFile.Name(), int64(entry[partitionSuperblockIndex-1].StartingLBA))
-			if err != nil {
-				return err
-			}
-			log.G(ctx).WithField(paritionSuperblockFlag, sb).Infof("content of partition %v", partitionSuperblockIndex)
-		}
-		return nil
-	},
+	return imageConfigInfo, nil
 }
