@@ -183,7 +183,7 @@ func mount(
 					// wait for `source` to show up.
 					logrus.WithField("err", err).Info("Failed to mount source")
 
-					if err == unix.ENOENT {
+					if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENXIO) {
 						select {
 						case <-ctx.Done():
 							return ctx.Err()
@@ -215,7 +215,7 @@ func mount(
 				// The `source` found by controllerLunToName can take some time
 				// before its actually available under `/dev/sd*`. Retry while we
 				// wait for `source` to show up.
-				if err == unix.ENOENT {
+				if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENXIO) {
 					select {
 					case <-ctx.Done():
 						return ctx.Err()
