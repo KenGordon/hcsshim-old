@@ -529,7 +529,21 @@ func modifyMappedVirtualDisk(ctx context.Context, rt guestrequest.RequestType, m
 		mountCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 		defer cancel()
 		if mvd.MountPath != "" {
-			return scsi.Mount(mountCtx, mvd.Controller, mvd.Lun, mvd.Partitions, mvd.MountPath, mvd.ReadOnly, mvd.Encrypted, mvd.Options, mvd.VerityInfo, securityPolicy)
+			if mvd.ReadOnly {
+				// containers only have read-only layers so only enforce for them
+				var deviceHash string
+				if mvd.VerityInfo != nil {
+					deviceHash = mvd.VerityInfo.RootDigest
+				}
+
+				err = securityPolicy.EnforceDeviceMountPolicy(mvd.MountPath, deviceHash)
+				if err != nil {
+					return errors.Wrapf(err, "mounting scsi device controller %d lun %d onto %s denied by policy", mvd.Controller, mvd.Lun, mvd.MountPath)
+				}
+			}
+
+			return scsi.Mount(mountCtx, mvd.Controller, mvd.Lun, mvd.Partitions, mvd.MountPath,
+				mvd.ReadOnly, mvd.Encrypted, mvd.Options, mvd.VerityInfo, mvd.Format)
 		}
 		return nil
 	case guestrequest.RequestTypeRemove:

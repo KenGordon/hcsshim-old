@@ -142,7 +142,7 @@ func MountLCOWLayers(ctx context.Context, containerID string, layerFolders []str
 	log.G(ctx).WithField("hostPath", hostPath).Debug("mounting scratch VHD")
 
 	var options []string
-	scsiMount, err := vm.AddSCSI(
+	scsiMount, err := vm.AddSCSIScratch(
 		ctx,
 		hostPath,
 		containerScratchPathInUVM,
@@ -150,6 +150,7 @@ func MountLCOWLayers(ctx context.Context, containerID string, layerFolders []str
 		vm.ScratchEncryptionEnabled(),
 		options,
 		uvm.VMAccessTypeIndividual,
+		true,
 	)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to add SCSI scratch VHD: %s", err)

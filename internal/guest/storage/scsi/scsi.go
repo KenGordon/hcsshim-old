@@ -100,8 +100,7 @@ func mount(
 	encrypted bool,
 	options []string,
 	verityInfo *guestresource.DeviceVerityInfo,
-	securityPolicy securitypolicy.SecurityPolicyEnforcer,
-) (err error) {
+	format bool) (err error) {
 	spnCtx, span := oc.StartSpan(ctx, "scsi::Mount")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
@@ -116,15 +115,9 @@ func mount(
 	}
 
 	if readonly {
-		// containers only have read-only layers so only enforce for them
 		var deviceHash string
 		if verityInfo != nil {
 			deviceHash = verityInfo.RootDigest
-		}
-
-		err = securityPolicy.EnforceDeviceMountPolicy(target, deviceHash)
-		if err != nil {
-			return errors.Wrapf(err, "won't mount scsi controller %d lun %d onto %s", controller, lun, target)
 		}
 
 		if verityInfo != nil {
@@ -165,6 +158,12 @@ func mount(
 			return errors.Wrapf(err, "failed to mount encrypted device: "+source)
 		}
 		source = encryptedSource
+	}
+
+	if format {
+		if err := storage.FormatDiskExt4(ctx, source); err != nil {
+			return fmt.Errorf("failed to format device as ext4 %s: %w", source, err)
+		}
 	}
 
 	if partitions != nil && len(partitions) != 0 {
@@ -255,13 +254,13 @@ func Mount(
 	encrypted bool,
 	options []string,
 	verityInfo *guestresource.DeviceVerityInfo,
-	securityPolicy securitypolicy.SecurityPolicyEnforcer,
+	format bool,
 ) (err error) {
 	cNum, err := fetchActualControllerNumber(ctx, controller)
 	if err != nil {
 		return err
 	}
-	return mount(ctx, cNum, lun, partitions, target, readonly, encrypted, options, verityInfo, securityPolicy)
+	return mount(ctx, cNum, lun, partitions, target, readonly, encrypted, options, verityInfo, format)
 }
 
 // unmount unmounts a SCSI device mounted at `target`.

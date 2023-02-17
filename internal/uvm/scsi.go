@@ -112,6 +112,7 @@ type addSCSIRequest struct {
 	attachmentType string
 	// indicates if the VHD is encrypted
 	encrypted bool
+	format    bool
 	// indicates if the attachment should be added read only.
 	readOnly bool
 	// guestOptions is a slice that contains optional information to pass to the guest
@@ -403,6 +404,29 @@ func (uvm *UtilityVM) AddSCSIPartitions(
 	return uvm.addSCSIActual(ctx, addReq)
 }
 
+func (uvm *UtilityVM) AddSCSIScratch(
+	ctx context.Context,
+	hostPath string,
+	uvmPath string,
+	readOnly bool,
+	encrypted bool,
+	guestOptions []string,
+	vmAccess VMAccessType,
+	format bool,
+) (*SCSIMount, error) {
+	addReq := &addSCSIRequest{
+		hostPath:       hostPath,
+		uvmPath:        uvmPath,
+		attachmentType: "VirtualDisk",
+		readOnly:       readOnly,
+		encrypted:      encrypted,
+		guestOptions:   guestOptions,
+		vmAccess:       vmAccess,
+		format:         format,
+	}
+	return uvm.addSCSIActual(ctx, addReq)
+}
+
 // addSCSIActual is the implementation behind the external functions AddSCSI,
 // AddSCSIPhysicalDisk, AddSCSIExtensibleVirtualDisk.
 //
@@ -484,6 +508,7 @@ func (uvm *UtilityVM) addSCSIActual(ctx context.Context, addReq *addSCSIRequest)
 				Encrypted:  addReq.encrypted,
 				Options:    addReq.guestOptions,
 				VerityInfo: verity,
+				Format:     addReq.format,
 			}
 		}
 		SCSIModification.GuestRequest = guestReq
