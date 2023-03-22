@@ -1,5 +1,11 @@
 trigger:
   - main
+  - release/*
+
+parameters:
+  - name: SeccompRunC
+    type: boolean
+    default: false
 
 variables:
   WindowsContainerImage: cdpxwin1809.azurecr.io/global/vse2019:latest
@@ -19,6 +25,11 @@ resources:
       type: git
       name: ContainerPlatform/ContainerPlatform
       ref: refs/heads/main
+    - repository: runc
+      type: github
+      name: opencontainers/runc
+      ref: refs/tags/v1.1.5
+      endpoint: ContainerPlatform
 
 extends:
   template: v2/OneBranch.Official.CrossPlat.yml@ob-templates
@@ -29,3 +40,5 @@ extends:
         suppressionSet: default
     stages:
       - template: shared-build-stages.yml@self
+        parameters:
+          SeccompRunC: ${{ parameters.SeccompRunC }}
