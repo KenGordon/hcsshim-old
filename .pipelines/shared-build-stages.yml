@@ -5,6 +5,9 @@ parameters:
   - name: Nightly
     type: boolean
     default: false
+  - name: SeccompRunC
+    type: boolean
+    default: false
 
 stages:
   - stage: build_repo
@@ -106,6 +109,33 @@ stages:
               GOOS: linux
               OUT_DIR: '$(Build.StagingDirectory)/out'
             displayName: build opengcs
+
+          # TODO (maksiman): remove this once LSG provides runc binary with seccomp support.
+          - ${{ if parameters.SeccompRunC }}:
+              - checkout: runc
+                fetchTags: true
+                displayName: "checkout runc"
+
+              - script: |
+                  set -eux
+
+                  # building runc
+                  pushd $(Build.SourcesDirectory)/runc
+                  apt install libseccomp-dev
+                  make static
+                  cp runc $(Build.SourcesDirectory)/out
+                  popd
+
+                  # replacing existing runc with the one that supports seccomp
+                  cd out
+                  mkdir -p rootfs
+                  tar -xzf $OUT_DIR/delta-dev-rego.tar.gz -C rootfs
+                  cp runc rootfs/bin
+                  tar -zcf $OUT_DIR/delta-dev-rego.tar.gz -C rootfs .
+                  rm -rf rootfs
+                env:
+                  OUT_DIR: '$(Build.StagingDirectory)/out'
+                displayName: "Building runc with seccomp"
 
           - template: .pipelines/templates/build/go-licenses.yml@cplat
             parameters:
