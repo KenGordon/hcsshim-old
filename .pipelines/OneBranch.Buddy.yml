@@ -19,6 +19,11 @@ resources:
       type: git
       name: ContainerPlatform/ContainerPlatform
       ref: refs/heads/main
+    - repository: runc
+      type: github
+      name: opencontainers/runc
+      ref: refs/tags/v1.1.1
+      endpoint: ContainerPlaform
 
 extends:
   template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
@@ -29,3 +34,5 @@ extends:
         suppressionSet: default
     stages:
       - template: shared-build-stages.yml@self
+        parameters:
+          BuildRunC: true
