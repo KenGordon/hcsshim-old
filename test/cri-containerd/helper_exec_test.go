@@ -17,20 +17,20 @@ import (
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 )
 
-func execSync(t *testing.T, client runtime.RuntimeServiceClient, ctx context.Context, request *runtime.ExecSyncRequest) *runtime.ExecSyncResponse {
-	t.Helper()
+func execSync(tb testing.TB, client runtime.RuntimeServiceClient, ctx context.Context, request *runtime.ExecSyncRequest) *runtime.ExecSyncResponse {
+	tb.Helper()
 	response, err := client.ExecSync(ctx, request)
 	if err != nil {
-		t.Fatalf("failed ExecSync request with: %v", err)
+		tb.Fatalf("failed ExecSync request with: %v", err)
 	}
 	return response
 }
 
-func execRequest(t *testing.T, client runtime.RuntimeServiceClient, ctx context.Context, request *runtime.ExecRequest) string {
-	t.Helper()
+func execRequest(tb testing.TB, client runtime.RuntimeServiceClient, ctx context.Context, request *runtime.ExecRequest) string {
+	tb.Helper()
 	response, err := client.Exec(ctx, request)
 	if err != nil {
-		t.Fatalf("failed Exec request with: %v", err)
+		tb.Fatalf("failed Exec request with: %v", err)
 	}
 	return response.Url
 }
@@ -77,13 +77,12 @@ func execInHost(ctx context.Context, client shimdiag.ShimDiagService, args []str
 	return resp.ExitCode, nil
 }
 
-// shimDiagExecOutput is a small wrapper on top of execInHost, that returns the exec output
-func shimDiagExecOutput(ctx context.Context, t *testing.T, podID string, cmd []string) string {
-	t.Helper()
+func shimDiagExecOutputWithErr(ctx context.Context, tb testing.TB, podID string, cmd []string) (string, error) {
+	tb.Helper()
 	shimName := fmt.Sprintf("k8s.io-%s", podID)
 	shim, err := shimdiag.GetShim(shimName)
 	if err != nil {
-		t.Fatalf("failed to find shim %v: %v", shimName, err)
+		return "", err
 	}
 	shimClient := shimdiag.NewShimDiagClient(shim)
 
@@ -94,13 +93,23 @@ func shimDiagExecOutput(ctx context.Context, t *testing.T, podID string, cmd []s
 
 	exitCode, err := execInHost(ctx, shimClient, cmd, nil, bw, bwErr)
 	if err != nil {
-		t.Fatalf("failed to exec request in the host with: %v and %v", err, bufErr.String())
+		return "", fmt.Errorf("failed to exec request in the host with: %s and %s", err, bufErr.String())
+
 	}
 	if exitCode != 0 {
-		t.Fatalf("exec request in host failed with exit code %v: %v", exitCode, bufErr.String())
+		return "", fmt.Errorf("exec request in host failed with exit code %v: %v", exitCode, bufErr.String())
 	}
+	return strings.TrimSpace(bufOut.String()), nil
+}
 
-	return strings.TrimSpace(bufOut.String())
+// shimDiagExecOutput is a small wrapper on top of execInHost, that returns the exec output
+func shimDiagExecOutput(ctx context.Context, tb testing.TB, podID string, cmd []string) string {
+	tb.Helper()
+	out, err := shimDiagExecOutputWithErr(ctx, tb, podID, cmd)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return out
 }
 
 func filterStrings(input []string, include string) []string {

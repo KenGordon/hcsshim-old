@@ -43,6 +43,10 @@ const (
 	maxGeneratedExecProcesses                 = 4
 	maxGeneratedWorkingDirLength              = 128
 	maxSignalNumber                           = 64
+	maxGeneratedNameLength                    = 8
+	maxGeneratedGroupNames                    = 4
+	maxGeneratedCapabilities                  = 12
+	maxGeneratedCapabilitesLength             = 24
 	// additional consts
 	// the standard enforcer tests don't do anything with the encoded policy
 	// string. this const exists to make that explicit
@@ -309,7 +313,7 @@ func Test_EnforceOverlayMountPolicy_Overlay_Single_Container_Twice_With_Differen
 		containerIDOne = generateContainerID(testRand)
 		containerIDTwo = generateContainerID(testRand)
 	}
-	container := selectContainerFromConstraints(p, testRand)
+	container := selectContainerFromContainerList(p.containers, testRand)
 
 	layerPaths, err := testDataGenerator.createValidOverlayForContainer(sp, container)
 	if err != nil {
@@ -946,7 +950,7 @@ func setupContainerWithOverlay(gc *generatedConstraints, valid bool) (tc *testCo
 	sp := NewStandardSecurityPolicyEnforcer(gc.containers, ignoredEncodedPolicyString)
 
 	containerID := testDataGenerator.uniqueContainerID()
-	c := selectContainerFromConstraints(gc, testRand)
+	c := selectContainerFromContainerList(gc.containers, testRand)
 
 	var layerPaths []string
 	if valid {
@@ -988,6 +992,7 @@ func generateConstraints(r *rand.Rand, maxContainers int32) *generatedConstraint
 		allowUnencryptedScratch:          randBool(r),
 		namespace:                        generateFragmentNamespace(testRand),
 		svn:                              generateSVN(testRand),
+		allowCapabilityDropping:          false,
 	}
 }
 
@@ -1005,8 +1010,46 @@ func generateConstraintsContainer(r *rand.Rand, minNumberOfLayers, maxNumberOfLa
 	c.ExecProcesses = generateExecProcesses(r)
 	c.Signals = generateListOfSignals(r, 0, maxSignalNumber)
 	c.AllowStdioAccess = randBool(r)
+	c.NoNewPrivileges = randBool(r)
+	c.User = generateUser(r)
+	c.Capabilities = generateInternalCapabilities(r)
+	c.SeccompProfileSHA256 = generateSeccomp(r)
 
 	return &c
+}
+
+func generateSeccomp(r *rand.Rand) string {
+	if randBool(r) {
+		// 50% chance of no seccomp profile
+		return ""
+	}
+
+	return generateRootHash(r)
+}
+
+func generateInternalCapabilities(r *rand.Rand) *capabilitiesInternal {
+	return &capabilitiesInternal{
+		Bounding:    generateCapabilitiesSet(r, 0),
+		Effective:   generateCapabilitiesSet(r, 0),
+		Inheritable: generateCapabilitiesSet(r, 0),
+		Permitted:   generateCapabilitiesSet(r, 0),
+		Ambient:     generateCapabilitiesSet(r, 0),
+	}
+}
+
+func generateCapabilitiesSet(r *rand.Rand, minSize int32) []string {
+	capabilities := make([]string, 0)
+
+	numArgs := atLeastNAtMostM(r, minSize, maxGeneratedCapabilities)
+	for i := 0; i < int(numArgs); i++ {
+		capabilities = append(capabilities, generateCapability(r))
+	}
+
+	return capabilities
+}
+
+func generateCapability(r *rand.Rand) string {
+	return randVariableString(r, maxGeneratedCapabilitesLength)
 }
 
 func generateContainerInitProcess(r *rand.Rand) containerInitProcess {
@@ -1070,6 +1113,47 @@ func generateExecProcesses(r *rand.Rand) []containerExecProcess {
 	return processes
 }
 
+func generateUmask(r *rand.Rand) string {
+	// we are generating values from 000 to 777 as decimal values
+	// to ensure we cover the full range of umask values
+	// and so the resulting string will be a 4 digit octal representation
+	// even though we are using decimal values
+	return fmt.Sprintf("%04d", randMinMax(r, 0, 777))
+}
+
+func generateIDNameConfig(r *rand.Rand) IDNameConfig {
+	strategies := []IDNameStrategy{IDNameStrategyName, IDNameStrategyID}
+	strategy := strategies[randMinMax(r, 0, int32(len(strategies)-1))]
+	switch strategy {
+	case IDNameStrategyName:
+		return IDNameConfig{
+			Strategy: IDNameStrategyName,
+			Rule:     randVariableString(r, maxGeneratedNameLength),
+		}
+
+	case IDNameStrategyID:
+		return IDNameConfig{
+			Strategy: IDNameStrategyID,
+			Rule:     fmt.Sprintf("%d", r.Uint32()),
+		}
+	}
+	panic("unreachable")
+}
+
+func generateUser(r *rand.Rand) UserConfig {
+	numGroups := int(atLeastOneAtMost(r, maxGeneratedGroupNames))
+	groupIDs := make([]IDNameConfig, numGroups)
+	for i := 0; i < numGroups; i++ {
+		groupIDs[i] = generateIDNameConfig(r)
+	}
+
+	return UserConfig{
+		UserIDName:   generateIDNameConfig(r),
+		GroupIDNames: groupIDs,
+		Umask:        generateUmask(r),
+	}
+}
+
 func generateEnvironmentVariables(r *rand.Rand) []string {
 	var envVars []string
 
@@ -1093,6 +1177,16 @@ func buildEnvironmentVariablesFromEnvRules(rules []EnvRuleConfig, r *rand.Rand) 
 	// variable
 	numberOfRules := int32(len(rules))
 	numberOfMatches := randMinMax(r, 1, numberOfRules)
+
+	// Build in all required rules, this isn't a setup method of "missing item"
+	// tests
+	for _, rule := range rules {
+		if rule.Required {
+			vars = append(vars, rule.Rule)
+			numberOfMatches--
+		}
+	}
+
 	usedIndexes := map[int]struct{}{}
 	for numberOfMatches > 0 {
 		anIndex := -1
@@ -1217,9 +1311,8 @@ func generateSignal(r *rand.Rand) syscall.Signal {
 	return syscall.Signal(atLeastOneAtMost(r, maxSignalNumber))
 }
 
-func selectContainerFromConstraints(constraints *generatedConstraints, r *rand.Rand) *securityPolicyContainer {
-	numberOfContainersInConstraints := len(constraints.containers)
-	return constraints.containers[r.Intn(numberOfContainersInConstraints)]
+func selectContainerFromContainerList(containers []*securityPolicyContainer, r *rand.Rand) *securityPolicyContainer {
+	return containers[r.Intn(len(containers))]
 }
 
 type dataGenerator struct {
@@ -1408,6 +1501,7 @@ type generatedConstraints struct {
 	allowUnencryptedScratch          bool
 	namespace                        string
 	svn                              string
+	allowCapabilityDropping          bool
 }
 
 type containerInitProcess struct {

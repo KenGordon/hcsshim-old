@@ -23,6 +23,7 @@ type marshalFunc func(
 	allowRuntimeLogging bool,
 	allowEnvironmentVariableDropping bool,
 	allowUnencryptedScratch bool,
+	allowCapabilityDropping bool,
 ) (string, error)
 
 const (
@@ -58,6 +59,7 @@ func marshalJSON(
 	_ bool,
 	_ bool,
 	_ bool,
+	_ bool,
 ) (string, error) {
 	var policy *SecurityPolicy
 	if allowAll {
@@ -88,6 +90,7 @@ func marshalRego(
 	allowRuntimeLogging bool,
 	allowEnvironmentVariableDropping bool,
 	allowUnencryptedScratch bool,
+	allowCapabilityDropping bool,
 ) (string, error) {
 	if allowAll {
 		if len(containers) > 0 {
@@ -106,6 +109,7 @@ func marshalRego(
 		allowRuntimeLogging,
 		allowEnvironmentVariableDropping,
 		allowUnencryptedScratch,
+		allowCapabilityDropping,
 	)
 	if err != nil {
 		return "", err
@@ -139,6 +143,7 @@ func MarshalPolicy(
 	allowRuntimeLogging bool,
 	allowEnvironmentVariableDropping bool,
 	allowUnencryptedScratch bool,
+	allowCapbilitiesDropping bool,
 ) (string, error) {
 	if marshaller == "" {
 		marshaller = defaultMarshaller
@@ -157,6 +162,7 @@ func MarshalPolicy(
 			allowRuntimeLogging,
 			allowEnvironmentVariableDropping,
 			allowUnencryptedScratch,
+			allowCapbilitiesDropping,
 		)
 	}
 }
@@ -255,7 +261,7 @@ func writeCommand(builder *strings.Builder, command []string, indent string) {
 }
 
 func (e EnvRuleConfig) marshalRego() string {
-	return fmt.Sprintf(`{"pattern": "%s", "strategy": "%s", "required": %v}`, e.Rule, e.Strategy, e.Required)
+	return fmt.Sprintf("{\"pattern\": `%s`, \"strategy\": \"%s\", \"required\": %v}", e.Rule, e.Strategy, e.Required)
 }
 
 type envRuleArray []EnvRuleConfig
@@ -275,6 +281,20 @@ func writeEnvRules(builder *strings.Builder, envRules []EnvRuleConfig, indent st
 
 func writeLayers(builder *strings.Builder, layers []string, indent string) {
 	writeLine(builder, `%s"layers": %s,`, indent, (stringArray(layers)).marshalRego())
+}
+
+func writeCapabilities(builder *strings.Builder, capabilities *capabilitiesInternal, indent string) {
+	if capabilities != nil {
+		writeLine(builder, `%s"capabilities": {`, indent)
+		writeLine(builder, `%s"bounding": %s,`, indent+indentUsing, (stringArray(capabilities.Bounding)).marshalRego())
+		writeLine(builder, `%s"effective": %s,`, indent+indentUsing, (stringArray(capabilities.Effective)).marshalRego())
+		writeLine(builder, `%s"inheritable": %s,`, indent+indentUsing, (stringArray(capabilities.Inheritable)).marshalRego())
+		writeLine(builder, `%s"permitted": %s,`, indent+indentUsing, (stringArray(capabilities.Permitted)).marshalRego())
+		writeLine(builder, `%s"ambient": %s,`, indent+indentUsing, (stringArray(capabilities.Ambient)).marshalRego())
+		writeLine(builder, `%s},`, indent)
+	} else {
+		writeLine(builder, `%s"capabilities": null,`, indent)
+	}
 }
 
 func (m mountInternal) marshalRego() string {
@@ -311,6 +331,30 @@ func writeSignals(builder *strings.Builder, signals []syscall.Signal, indent str
 	writeLine(builder, `%s"signals": %s,`, indent, array)
 }
 
+func (n IDNameConfig) marshalRego() string {
+	return fmt.Sprintf("{\"pattern\": `%s`, \"strategy\": \"%s\"}", n.Rule, n.Strategy)
+}
+
+type idConfigArray []IDNameConfig
+
+func (array idConfigArray) marshalRego() string {
+	values := make([]string, len(array))
+	for i, name := range array {
+		values[i] = name.marshalRego()
+	}
+
+	return fmt.Sprintf("[%s]", strings.Join(values, ","))
+}
+
+func writeUser(builder *strings.Builder, user UserConfig, indent string) {
+	groupIDNames := idConfigArray(user.GroupIDNames).marshalRego()
+	writeLine(builder, `%s"user": {`, indent)
+	writeLine(builder, `%s"user_idname": %s,`, indent+indentUsing, user.UserIDName.marshalRego())
+	writeLine(builder, `%s"group_idnames": %s,`, indent+indentUsing, groupIDNames)
+	writeLine(builder, `%s"umask": "%s"`, indent+indentUsing, user.Umask)
+	writeLine(builder, `%s},`, indent)
+}
+
 func writeContainer(builder *strings.Builder, container *securityPolicyContainer, indent string) {
 	writeLine(builder, "%s{", indent)
 	writeCommand(builder, container.Command, indent+indentUsing)
@@ -319,9 +363,13 @@ func writeContainer(builder *strings.Builder, container *securityPolicyContainer
 	writeMounts(builder, container.Mounts, indent+indentUsing)
 	writeExecProcesses(builder, container.ExecProcesses, indent+indentUsing)
 	writeSignals(builder, container.Signals, indent+indentUsing)
-	writeLine(builder, `%s"allow_elevated": %v,`, indent+indentUsing, container.AllowElevated)
+	writeUser(builder, container.User, indent+indentUsing)
+	writeCapabilities(builder, container.Capabilities, indent+indentUsing)
+	writeLine(builder, `%s"seccomp_profile_sha256": "%s",`, indent+indentUsing, container.SeccompProfileSHA256)
+	writeLine(builder, `%s"allow_elevated": %t,`, indent+indentUsing, container.AllowElevated)
 	writeLine(builder, `%s"working_dir": "%s",`, indent+indentUsing, container.WorkingDir)
-	writeLine(builder, `%s"allow_stdio_access": %t`, indent+indentUsing, container.AllowStdioAccess)
+	writeLine(builder, `%s"allow_stdio_access": %t,`, indent+indentUsing, container.AllowStdioAccess)
+	writeLine(builder, `%s"no_new_privileges": %t,`, indent+indentUsing, container.NoNewPrivileges)
 	writeLine(builder, "%s},", indent)
 }
 
@@ -382,11 +430,12 @@ func (p securityPolicyInternal) marshalRego() string {
 	addFragments(builder, p.Fragments)
 	addContainers(builder, p.Containers)
 	addExternalProcesses(builder, p.ExternalProcesses)
-	writeLine(builder, `allow_properties_access := %v`, p.AllowPropertiesAccess)
-	writeLine(builder, `allow_dump_stacks := %v`, p.AllowDumpStacks)
-	writeLine(builder, `allow_runtime_logging := %v`, p.AllowRuntimeLogging)
-	writeLine(builder, "allow_environment_variable_dropping := %v", p.AllowEnvironmentVariableDropping)
+	writeLine(builder, `allow_properties_access := %t`, p.AllowPropertiesAccess)
+	writeLine(builder, `allow_dump_stacks := %t`, p.AllowDumpStacks)
+	writeLine(builder, `allow_runtime_logging := %t`, p.AllowRuntimeLogging)
+	writeLine(builder, "allow_environment_variable_dropping := %t", p.AllowEnvironmentVariableDropping)
 	writeLine(builder, "allow_unencrypted_scratch := %t", p.AllowUnencryptedScratch)
+	writeLine(builder, "allow_capability_dropping := %t", p.AllowCapabilityDropping)
 	result := strings.Replace(policyRegoTemplate, "@@OBJECTS@@", builder.String(), 1)
 	result = strings.Replace(result, "@@API_SVN@@", apiSVN, 1)
 	result = strings.Replace(result, "@@FRAMEWORK_SVN@@", frameworkSVN, 1)
