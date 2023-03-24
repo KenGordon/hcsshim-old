@@ -1,5 +1,11 @@
 trigger:
   - main
+  - release/*
+
+parameters:
+  - name: SeccompRunC
+    type: boolean
+    default: false
 
 variables:
   WindowsContainerImage: cdpxwin1809.azurecr.io/global/vse2019:latest
@@ -35,4 +41,4 @@ extends:
     stages:
       - template: shared-build-stages.yml@self
         parameters:
-          BuildRunC: true
+          SeccompRunC: ${{ parameters.SeccompRunC }}

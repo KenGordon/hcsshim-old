@@ -5,7 +5,7 @@ parameters:
   - name: Nightly
     type: boolean
     default: false
-  - name: BuildRunC
+  - name: SeccompRunC
     type: boolean
     default: false
 
@@ -110,7 +110,8 @@ stages:
               OUT_DIR: '$(Build.StagingDirectory)/out'
             displayName: build opengcs
 
-          - ${{ if parameters.BuildRunC }}:
+          # TODO (maksiman): remove this once LSG provides runc binary with seccomp support.
+          - ${{ if parameters.SeccompRunC }}:
               - checkout: runc
                 fetchTags: true
                 displayName: "checkout runc"
