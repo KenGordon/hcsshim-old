@@ -88,6 +88,15 @@ stages:
             workingDirectory: test
             displayName: build test binaries
 
+          - task: CopyFiles@2
+            inputs:
+              sourceFolder: "test/cri-containerd"
+              contents: |
+                *.rego
+                *.json
+              targetFolder: "$(Build.StagingDirectory)/out"
+            displayName: Copy cri-containerd test payload
+
           - script: |
               set -eoux
 
