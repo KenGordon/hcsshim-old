@@ -4,7 +4,8 @@ on:
   - pull_request
 
 env:
-  GO_VERSION: "1.18.x"
+  GO_VERSION: "1.19.x"
+  GOTESTSUM_VERSION: "latest"
 
 jobs:
   lint:
@@ -26,12 +27,16 @@ jobs:
               ./ext4/...
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
+      - name: Clean mod cache
+        shell: Powershell
+        run: |
+          go clean -modcache
       - uses: golangci/golangci-lint-action@v3
         with:
-          version: v1.49
+          version: v1.52
           args: >-
             --verbose
             --max-issues-per-linter=0
@@ -45,7 +50,7 @@ jobs:
   protos:
     runs-on: "windows-2019"
     steps:
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
       - uses: actions/checkout@v3
@@ -93,7 +98,7 @@ jobs:
       GOPROXY: "https://proxy.golang.org,direct"
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Validate go.mod and vendoring
@@ -128,7 +133,7 @@ jobs:
     runs-on: "windows-2019"
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Validate go generate
@@ -159,18 +164,25 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@${{ env.GOTESTSUM_VERSION }}
+
       - name: Test standard security policy
-        run: go test -timeout=30m -mod=mod -gcflags=all=-d=checkptr -v ./pkg/securitypolicy
+        run: gotestsum --format standard-verbose --debug -- -timeout=30m -mod=mod -gcflags=all=-d=checkptr ./pkg/securitypolicy
 
       - name: Test rego security policy
-        run: go test --tags=rego -timeout=30m -mod=mod -gcflags=all=-d=checkptr -v ./pkg/securitypolicy
-    
+        run: gotestsum --format standard-verbose --debug -- -tags=rego -timeout=30m -mod=mod -gcflags=all=-d=checkptr ./pkg/securitypolicy
+
       - name: Test rego policy interpreter
-        run: go test -mod=mod -gcflags=all=-d=checkptr -v ./internal/regopolicyinterpreter
+        run: gotestsum --format standard-verbose --debug -- -mod=mod -gcflags=all=-d=checkptr ./internal/regopolicyinterpreter
+
+      - name: Build gcs Testing Binary
+        run: go test -mod=mod -gcflags=all=-d=checkptr -c -tags functional ./gcs
+        working-directory: test
 
   test-windows:
     needs: [lint, protos, verify-vendor, go-gen]
@@ -180,26 +192,38 @@ jobs:
         os: [windows-2019, windows-2022]
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - run: go test -gcflags=all=-d=checkptr -v ./... -tags admin
-      - run: go test -mod=mod -gcflags=all=-d=checkptr -v ./internal -tags admin
-        working-directory: test
-      - run: go test -mod=mod -gcflags=all=-d=checkptr -c ./containerd-shim-runhcs-v1/ -tags functional
-        working-directory: test
-      - run: go test -mod=mod -gcflags=all=-d=checkptr -c ./cri-containerd/ -tags functional
-        working-directory: test
-      - run: go test -mod=mod -gcflags=all=-d=checkptr -c ./functional/ -tags functional
-        working-directory: test
-      - run: go test -mod=mod -gcflags=all=-d=checkptr -c ./runhcs/ -tags functional
-        working-directory: test
-      - run: go build -mod=mod -o sample-logging-driver.exe ./cri-containerd/helpers/log.go
-        working-directory: test
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@${{ env.GOTESTSUM_VERSION }}
 
+      # run tests
+      - name: Test repo
+        run: gotestsum --format standard-verbose --debug -- -gcflags=all=-d=checkptr -tags admin ./...
+      - name: Test schema version
+        run: gotestsum --format standard-verbose --debug -- -mod=mod -gcflags=all=-d=checkptr -tags admin ./internal
+        working-directory: test
       - name: Test rego policy interpreter
-        run: go test -mod=mod -gcflags=all=-d=checkptr -v ./internal/regopolicyinterpreter
+        run: gotestsum --format standard-verbose --debug -- -mod=mod -gcflags=all=-d=checkptr ./internal/regopolicyinterpreter
+
+      # build testing binaries
+      - name: Build containerd-shim-runhcs-v1 Testing Binary
+        run: go test -mod=mod -gcflags=all=-d=checkptr -c -tags functional ./containerd-shim-runhcs-v1
+        working-directory: test
+      - name: Build cri-containerd Testing Binary
+        run: go test -mod=mod -gcflags=all=-d=checkptr -c -tags functional ./cri-containerd
+        working-directory: test
+      - name: Build functional Testing Binary
+        run: go test -mod=mod -gcflags=all=-d=checkptr -c -tags functional ./functional
+        working-directory: test
+      - name: Build runhcs Testing Binary
+        run: go test -mod=mod -gcflags=all=-d=checkptr -c -tags functional ./runhcs
+        working-directory: test
+      - name: Build logging-driver Binary
+        run: go build -mod=mod -o sample-logging-driver.exe ./cri-containerd/helpers/log.go
+        working-directory: test
 
       - uses: actions/upload-artifact@v3
         if: ${{ github.event_name == 'pull_request' }}
@@ -221,7 +245,7 @@ jobs:
         os: [windows-2019, windows-2022]
 
     steps:
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
@@ -243,12 +267,72 @@ jobs:
         with:
           path: src/github.com/Microsoft/hcsshim
 
+      - name: Install crictl
+        shell: powershell
+        run: |
+          $VerbosePreference = 'Continue'
+          $ErrorActionPreference = 'Stop'
+
+          $crictlVersion = 'v1.24.2'
+          $url = "https://github.com/kubernetes-sigs/cri-tools/releases/download/${crictlVersion}/crictl-${crictlVersion}-windows-amd64.tar.gz"
+          curl.exe -L --no-progress-meter -o c:\crictl.tar.gz $url
+          tar.exe xf c:\crictl.tar.gz -C "${{ github.workspace }}/bin"
+
+          if ( $LASTEXITCODE ) {
+            Write-Output '::error::Could not install crictl.'
+            exit $LASTEXITCODE
+          }
+
+      - name: Install mingw
+        shell: powershell
+        run: |
+          $VerbosePreference = 'Continue'
+          # dont set $ErrorActionPreference since we want to allow choco install to fail later on
+
+          Write-Output '::group::Update chocolaty'
+          choco upgrade -y chocolatey
+          Write-Output '::endgroup::'
+
+          if ( $LASTEXITCODE ) {
+            Write-Output '::error::Could not update chocolatey.'
+            exit $LASTEXITCODE
+          }
+
+          Write-Output 'Install mingw'
+          # Install sometimes fails when downloading mingw zip from source-forge with:
+          #  "ERROR: The remote file either doesn't exist, is unauthorized, or is forbidden for url"
+          # Issue is with accessing from source-forge, which version 10.3+ do not use, but cannot upgrade versions.
+
+          # Add retry and backoff
+          foreach ( $i in 1..3 ) {
+            Write-Output "::group::Attempt $i"
+            if ( $i -gt 1 ) {
+              # remove any left-over state
+              choco uninstall -y --no-progress --force mingw
+
+              Write-Output 'Sleeping for 60 seconds'
+              Sleep -Seconds 60
+            }
+
+            choco install -y --no-progress --stop-on-first-failure --force mingw --allow-downgrade --version 10.2.0
+            Write-Output '::endgroup::'
+            if ( -not $LASTEXITCODE ) {
+              Write-Output "Attempt $i succeeded (exit code: $LASTEXITCODE)"
+              break
+            }
+            Write-Output "::warning title=mingw::Attempt $i failed (exit code: $LASTEXITCODE)"
+          }
+
+          if ( $LASTEXITCODE ) {
+            Write-Output "::error::Could not install mingw after $i attempts."
+            exit $LASTEXITCODE
+          }
+
       - name: Build binaries
         shell: bash
         working-directory: src/github.com/containerd/containerd
         run: |
           set -o xtrace
-          choco install mingw --version 10.2.0 --allow-downgrade
           mingw32-make.exe binaries
           script/setup/install-cni-windows
 
@@ -257,12 +341,6 @@ jobs:
         shell: powershell
         run: |
           go build -mod vendor -o "${{ github.workspace }}/src/github.com/containerd/containerd/bin/containerd-shim-runhcs-v1.exe" .\cmd\containerd-shim-runhcs-v1
-
-      - name: Get crictl tool
-        shell: powershell
-        run: |
-          curl.exe -L "https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.24.2/crictl-v1.24.2-windows-amd64.tar.gz" -o c:\crictl.tar.gz
-          tar xf c:\crictl.tar.gz -C "${{ github.workspace }}/bin"
 
       - name: Run containerd integration tests
         shell: bash
@@ -351,7 +429,7 @@ jobs:
     runs-on: "windows-2019"
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -399,7 +477,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
 

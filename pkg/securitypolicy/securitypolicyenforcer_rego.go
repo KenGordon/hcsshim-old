@@ -4,17 +4,22 @@
 package securitypolicy
 
 import (
+	"context"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/Microsoft/hcsshim/internal/guest/spec"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
+	"github.com/Microsoft/hcsshim/internal/log"
 	rpi "github.com/Microsoft/hcsshim/internal/regopolicyinterpreter"
+	"github.com/opencontainers/runc/libcontainer/user"
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -31,6 +36,11 @@ func init() {
 	defaultEnforcer = regoEnforcerName
 	defaultMarshaller = regoMarshaller
 }
+
+const capabilitiesNilError = "capabilities object provided by the UVM to the policy engine is nil"
+const invalidError = "Security policy is not valid. Please check security policy or re-generate with tooling."
+const noReasonError = "Security policy is either not valid or did not provide a reason for denial. Please check security policy or re-generate with tooling."
+const noAPIVersionError = "policy does not define api_version"
 
 // RegoEnforcer is a stub implementation of a security policy, which will be
 // based on [Rego] policy language. The detailed implementation will be
@@ -108,6 +118,10 @@ func createRegoEnforcer(base64EncodedPolicy string,
 	securityPolicy := new(SecurityPolicy)
 	err = json.Unmarshal(rawPolicy, securityPolicy)
 	if err == nil {
+		if securityPolicy.AllowAll {
+			return createOpenDoorEnforcer(base64EncodedPolicy, defaultMounts, privilegedMounts)
+		}
+
 		containers := make([]*Container, securityPolicy.Containers.Length)
 
 		for i := 0; i < securityPolicy.Containers.Length; i++ {
@@ -116,11 +130,15 @@ func createRegoEnforcer(base64EncodedPolicy string,
 			if !ok {
 				return nil, fmt.Errorf("container constraint with index %q not found", index)
 			}
+			cConf.AllowStdioAccess = true
+			cConf.NoNewPrivileges = false
+			cConf.User = UserConfig{
+				UserIDName:   IDNameConfig{Strategy: IDNameStrategyAny},
+				GroupIDNames: []IDNameConfig{{Strategy: IDNameStrategyAny}},
+				Umask:        "0022",
+			}
+			cConf.SeccompProfileSHA256 = ""
 			containers[i] = &cConf
-		}
-
-		if securityPolicy.AllowAll {
-			return createOpenDoorEnforcer(base64EncodedPolicy, defaultMounts, privilegedMounts)
 		}
 
 		code, err = marshalRego(
@@ -133,6 +151,7 @@ func createRegoEnforcer(base64EncodedPolicy string,
 			true,
 			false,
 			true,
+			false,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling the policy to Rego: %w", err)
@@ -160,21 +179,16 @@ func newRegoPolicy(code string, defaultMounts []oci.Mount, privilegedMounts []oc
 	policy.defaultMounts = make([]oci.Mount, len(defaultMounts))
 	copy(policy.defaultMounts, defaultMounts)
 
-	objectDefaults := make(map[string]interface{})
-	err = json.Unmarshal([]byte(FrameworkObjects), &objectDefaults)
-	if err != nil {
-		return nil, fmt.Errorf("unable to unmarshal framework object defaults: %w", err)
-	}
-
 	defaultMountData := make([]interface{}, 0, len(defaultMounts))
 	privilegedMountData := make([]interface{}, 0, len(privilegedMounts))
 	data := map[string]interface{}{
-		"objectDefaults":   objectDefaults,
-		"defaultMounts":    appendMountData(defaultMountData, defaultMounts),
-		"privilegedMounts": appendMountData(privilegedMountData, privilegedMounts),
-		"sandboxPrefix":    guestpath.SandboxMountPrefix,
-		"hugePagesPrefix":  guestpath.HugePagesMountPrefix,
-		"plan9Prefix":      plan9Prefix,
+		"defaultMounts":                   appendMountData(defaultMountData, defaultMounts),
+		"privilegedMounts":                appendMountData(privilegedMountData, privilegedMounts),
+		"sandboxPrefix":                   guestpath.SandboxMountPrefix,
+		"hugePagesPrefix":                 guestpath.HugePagesMountPrefix,
+		"plan9Prefix":                     plan9Prefix,
+		"defaultUnprivilegedCapabilities": DefaultUnprivilegedCapabilities(),
+		"defaultPrivilegedCapabilities":   DefaultPrivilegedCapabilities(),
 	}
 
 	policy.rego, err = rpi.NewRegoPolicyInterpreter(code, data)
@@ -244,6 +258,15 @@ func (policy *regoEnforcer) queryEnforcementPoint(enforcementPoint string) (*enf
 		return nil, fmt.Errorf("enforcement point rule %s is invalid", enforcementPoint)
 	}
 
+	versionMissing, err := result.Bool("version_missing")
+	if err != nil {
+		return nil, err
+	}
+
+	if versionMissing {
+		return nil, errors.New(noAPIVersionError)
+	}
+
 	defaultResults, err := result.Object("default_results")
 	if err != nil {
 		return nil, errors.New("enforcement point result missing defaults")
@@ -260,26 +283,25 @@ func (policy *regoEnforcer) queryEnforcementPoint(enforcementPoint string) (*enf
 	}, nil
 }
 
-func (policy *regoEnforcer) enforce(enforcementPoint string, input inputData) (rpi.RegoQueryResult, error) {
+func (policy *regoEnforcer) enforce(ctx context.Context, enforcementPoint string, input inputData) (rpi.RegoQueryResult, error) {
 	rule := "data.policy." + enforcementPoint
 	result, err := policy.rego.Query(rule, input)
 	if err != nil {
-		return nil, err
+		return nil, policy.denyWithError(ctx, err, input)
 	}
 
 	result, err = policy.applyDefaults(enforcementPoint, result)
 	if err != nil {
-		return result, err
+		return result, policy.denyWithError(ctx, err, input)
 	}
 
 	allowed, err := result.Bool("allowed")
 	if err != nil {
-		return nil, err
+		return nil, policy.denyWithError(ctx, err, input)
 	}
 
 	if !allowed {
-		err = policy.getReasonNotAllowed(enforcementPoint, input)
-		return nil, err
+		return nil, policy.denyWithReason(ctx, enforcementPoint, input)
 	}
 
 	return result, nil
@@ -294,26 +316,53 @@ func errorString(errors interface{}) string {
 	return strings.Join(output, ",")
 }
 
-func (policy *regoEnforcer) getReasonNotAllowed(enforcementPoint string, input inputData) error {
-	inputJSON, err := json.Marshal(policy.redactSensitiveData(input))
-	if err != nil {
-		return fmt.Errorf("%s not allowed by policy. Input unavailable due to marshalling error", enforcementPoint)
+func (policy *regoEnforcer) denyWithError(ctx context.Context, policyError error, input inputData) error {
+	policyDecision := map[string]interface{}{
+		"input":       policy.redactSensitiveData(input),
+		"decision":    "deny",
+		"reason":      invalidError,
+		"policyError": policyError.Error(),
 	}
 
+	decisionJSON, err := json.Marshal(policyDecision)
+	if err != nil {
+		log.G(ctx).Errorf("Unable to marshal error object: %v", err)
+		decisionJSON = []byte(`"Unable to marshal error object"`)
+	}
+
+	log.G(ctx).WithField("error", string(decisionJSON)).Debug("Policy decision")
+
+	base64EncodedDecisionJSON := base64.RawURLEncoding.EncodeToString(decisionJSON)
+
+	return fmt.Errorf(policyDecisionPattern, base64EncodedDecisionJSON)
+}
+
+func (policy *regoEnforcer) denyWithReason(ctx context.Context, enforcementPoint string, input inputData) error {
 	input["rule"] = enforcementPoint
+	policyDecision := map[string]interface{}{
+		"input":    policy.redactSensitiveData(input),
+		"decision": "deny",
+	}
+
 	result, err := policy.rego.Query("data.policy.reason", input)
 	if err == nil {
-		errors, _ := result.Value("errors")
-		if errors != nil {
-			if len(errors.([]interface{})) > 0 {
-				return fmt.Errorf("%s not allowed by policy. Errors: %v. Input: %s", enforcementPoint, errors, string(inputJSON))
-			} else {
-				return fmt.Errorf("%s not allowed by policy. Security policy is not valid. Please check security policy or re-generate with tooling. Input: %s", enforcementPoint, string(inputJSON))
-			}
-		}
+		policyDecision["reason"] = result
+	} else {
+		log.G(ctx).Warnf("Unable to obtain reason for policy decision: %v", err)
+		policyDecision["reason"] = noReasonError
 	}
 
-	return fmt.Errorf("%s not allowed by policy. Security policy is not valid. Please check security policy or re-generate with tooling. Input: %s", enforcementPoint, string(inputJSON))
+	decisionJSON, err := json.Marshal(policyDecision)
+	if err != nil {
+		log.G(ctx).Errorf("Unable to marshal error object: %v", err)
+		decisionJSON = []byte(`"Unable to marshal error object"`)
+	}
+
+	log.G(ctx).WithField("policyDecision", string(decisionJSON)).Debug("Policy decision")
+
+	base64EncodedDecisionJSON := base64.RawURLEncoding.EncodeToString(decisionJSON)
+
+	return fmt.Errorf(policyDecisionPattern, base64EncodedDecisionJSON)
 }
 
 func (policy *regoEnforcer) redactSensitiveData(input inputData) inputData {
@@ -341,33 +390,33 @@ func (policy *regoEnforcer) redactSensitiveData(input inputData) inputData {
 	return input
 }
 
-func (policy *regoEnforcer) EnforceDeviceMountPolicy(target string, deviceHash string) error {
+func (policy *regoEnforcer) EnforceDeviceMountPolicy(ctx context.Context, target string, deviceHash string) error {
 	input := inputData{
 		"target":     target,
 		"deviceHash": deviceHash,
 	}
 
-	_, err := policy.enforce("mount_device", input)
+	_, err := policy.enforce(ctx, "mount_device", input)
 	return err
 }
 
-func (policy *regoEnforcer) EnforceOverlayMountPolicy(containerID string, layerPaths []string, target string) error {
+func (policy *regoEnforcer) EnforceOverlayMountPolicy(ctx context.Context, containerID string, layerPaths []string, target string) error {
 	input := inputData{
 		"containerID": containerID,
 		"layerPaths":  layerPaths,
 		"target":      target,
 	}
 
-	_, err := policy.enforce("mount_overlay", input)
+	_, err := policy.enforce(ctx, "mount_overlay", input)
 	return err
 }
 
-func (policy *regoEnforcer) EnforceOverlayUnmountPolicy(target string) error {
+func (policy *regoEnforcer) EnforceOverlayUnmountPolicy(ctx context.Context, target string) error {
 	input := inputData{
 		"unmountTarget": target,
 	}
 
-	_, err := policy.enforce("unmount_overlay", input)
+	_, err := policy.enforce(ctx, "unmount_overlay", input)
 	return err
 }
 
@@ -398,7 +447,106 @@ func getEnvsToKeep(envList []string, results rpi.RegoQueryResult) ([]string, err
 	return keepSet.toArray(), nil
 }
 
+func getCapsToKeep(capsList *oci.LinuxCapabilities, results rpi.RegoQueryResult) (*oci.LinuxCapabilities, error) {
+	value, err := results.Value("caps_list")
+	if err != nil || value == nil {
+		// policy did not return an 'caps_list'. This is interpreted
+		// as "proceed with provided caps list".
+		return capsList, nil
+	}
+
+	capsMap, ok := value.(map[string]interface{})
+
+	if !ok {
+		return nil, fmt.Errorf("policy returned incorrect type for 'caps_list', expected map[string]interface{}, received %T", value)
+	}
+
+	bounding, err := filterCapabilities(capsList.Bounding, capsMap["bounding"])
+	if err != nil {
+		return nil, err
+	}
+	effective, err := filterCapabilities(capsList.Effective, capsMap["effective"])
+	if err != nil {
+		return nil, err
+	}
+	inheritable, err := filterCapabilities(capsList.Inheritable, capsMap["inheritable"])
+	if err != nil {
+		return nil, err
+	}
+	permitted, err := filterCapabilities(capsList.Permitted, capsMap["permitted"])
+	if err != nil {
+		return nil, err
+	}
+	ambient, err := filterCapabilities(capsList.Ambient, capsMap["ambient"])
+	if err != nil {
+		return nil, err
+	}
+
+	return &oci.LinuxCapabilities{
+		Bounding:    bounding,
+		Effective:   effective,
+		Inheritable: inheritable,
+		Permitted:   permitted,
+		Ambient:     ambient,
+	}, nil
+}
+
+func filterCapabilities(suppliedList []string, fromRegoCapsList interface{}) ([]string, error) {
+	keepSet := make(stringSet)
+	if capsList, ok := fromRegoCapsList.([]interface{}); ok {
+		for _, capAsInterface := range capsList {
+			if cap, ok := capAsInterface.(string); ok {
+				keepSet.add(cap)
+			} else {
+				return nil, fmt.Errorf("members of capability sets from policy must be strings, received %T", capAsInterface)
+			}
+		}
+	} else {
+		return nil, fmt.Errorf("capability sets of caps_list from policy must be an array of interface{}, received %T", fromRegoCapsList)
+	}
+
+	keepSet = keepSet.intersect(toStringSet(suppliedList))
+	return keepSet.toArray(), nil
+}
+
+func (idName IDName) toInput() interface{} {
+	return map[string]interface{}{
+		"id":   idName.ID,
+		"name": idName.Name,
+	}
+}
+
+func groupsToInputs(groups []IDName) []interface{} {
+	inputs := []interface{}{}
+	for _, group := range groups {
+		inputs = append(inputs, group.toInput())
+	}
+	return inputs
+}
+
+func handleNilOrEmptyCaps(caps []string) []string {
+	if len(caps) > 0 {
+		return caps
+	}
+
+	// caps is either nil or empty.
+	// In either case, we want to return an empty array.
+	return make([]string, 0)
+}
+
+func mapifyCapabilities(caps *oci.LinuxCapabilities) map[string][]string {
+	out := make(map[string][]string)
+
+	out["bounding"] = handleNilOrEmptyCaps(caps.Bounding)
+	out["effective"] = handleNilOrEmptyCaps(caps.Effective)
+	out["inheritable"] = handleNilOrEmptyCaps(caps.Inheritable)
+	out["permitted"] = handleNilOrEmptyCaps(caps.Permitted)
+	out["ambient"] = handleNilOrEmptyCaps(caps.Ambient)
+	return out
+}
+
 func (policy *regoEnforcer) EnforceCreateContainerPolicy(
+	ctx context.Context,
 	sandboxID string,
 	containerID string,
 	argList []string,
@@ -406,31 +554,55 @@ func (policy *regoEnforcer) EnforceCreateContainerPolicy(
 	workingDir string,
 	mounts []oci.Mount,
 	privileged bool,
-) (toKeep EnvList, stdioAccessAllowed bool, err error) {
+	noNewPrivileges bool,
+	user IDName,
+	groups []IDName,
+	umask string,
+	capabilities *oci.LinuxCapabilities,
+	seccompProfileSHA256 string,
+) (envToKeep EnvList,
+	capsToKeep *oci.LinuxCapabilities,
+	stdioAccessAllowed bool,
+	err error) {
+	if capabilities == nil {
+		return nil, nil, false, errors.New(capabilitiesNilError)
+	}
+
 	input := inputData{
-		"containerID":  containerID,
-		"argList":      argList,
-		"envList":      envList,
-		"workingDir":   workingDir,
-		"sandboxDir":   spec.SandboxMountsDir(sandboxID),
-		"hugePagesDir": spec.HugePagesMountsDir(sandboxID),
-		"mounts":       appendMountData([]interface{}{}, mounts),
-		"privileged":   privileged,
+		"containerID":          containerID,
+		"argList":              argList,
+		"envList":              envList,
+		"workingDir":           workingDir,
+		"sandboxDir":           spec.SandboxMountsDir(sandboxID),
+		"hugePagesDir":         spec.HugePagesMountsDir(sandboxID),
+		"mounts":               appendMountData([]interface{}{}, mounts),
+		"privileged":           privileged,
+		"noNewPrivileges":      noNewPrivileges,
+		"user":                 user.toInput(),
+		"groups":               groupsToInputs(groups),
+		"umask":                umask,
+		"capabilities":         mapifyCapabilities(capabilities),
+		"seccompProfileSHA256": seccompProfileSHA256,
 	}
 
-	results, err := policy.enforce("create_container", input)
+	results, err := policy.enforce(ctx, "create_container", input)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
-	toKeep, err = getEnvsToKeep(envList, results)
+	envToKeep, err = getEnvsToKeep(envList, results)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
+	}
+
+	capsToKeep, err = getCapsToKeep(capabilities, results)
+	if err != nil {
+		return nil, nil, false, err
 	}
 
 	stdioAccessAllowed, err = results.Bool("allow_stdio_access")
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
 	// Store the result of stdio access allowed for this container so we can use
@@ -438,15 +610,15 @@ func (policy *regoEnforcer) EnforceCreateContainerPolicy(
 	// is on a per-container, not per-process basis.
 	policy.stdio[containerID] = stdioAccessAllowed
 
-	return toKeep, stdioAccessAllowed, nil
+	return envToKeep, capsToKeep, stdioAccessAllowed, nil
 }
 
-func (policy *regoEnforcer) EnforceDeviceUnmountPolicy(unmountTarget string) error {
+func (policy *regoEnforcer) EnforceDeviceUnmountPolicy(ctx context.Context, unmountTarget string) error {
 	input := inputData{
 		"unmountTarget": unmountTarget,
 	}
 
-	_, err := policy.enforce("unmount_device", input)
+	_, err := policy.enforce(ctx, "unmount_device", input)
 	return err
 }
 
@@ -473,35 +645,63 @@ func (policy *regoEnforcer) EncodedSecurityPolicy() string {
 	return policy.base64policy
 }
 
-func (policy *regoEnforcer) EnforceExecInContainerPolicy(containerID string, argList []string, envList []string, workingDir string) (toKeep EnvList, stdioAccessAllowed bool, err error) {
+func (policy *regoEnforcer) EnforceExecInContainerPolicy(
+	ctx context.Context,
+	containerID string,
+	argList []string,
+	envList []string,
+	workingDir string,
+	noNewPrivileges bool,
+	user IDName,
+	groups []IDName,
+	umask string,
+	capabilities *oci.LinuxCapabilities,
+) (envToKeep EnvList,
+	capsToKeep *oci.LinuxCapabilities,
+	stdioAccessAllowed bool,
+	err error) {
+	if capabilities == nil {
+		return nil, nil, false, errors.New(capabilitiesNilError)
+	}
+
 	input := inputData{
-		"containerID": containerID,
-		"argList":     argList,
-		"envList":     envList,
-		"workingDir":  workingDir,
+		"containerID":     containerID,
+		"argList":         argList,
+		"envList":         envList,
+		"workingDir":      workingDir,
+		"noNewPrivileges": noNewPrivileges,
+		"user":            user.toInput(),
+		"groups":          groupsToInputs(groups),
+		"umask":           umask,
+		"capabilities":    mapifyCapabilities(capabilities),
 	}
 
-	results, err := policy.enforce("exec_in_container", input)
+	results, err := policy.enforce(ctx, "exec_in_container", input)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
-	toKeep, err = getEnvsToKeep(envList, results)
+	envToKeep, err = getEnvsToKeep(envList, results)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
-	return toKeep, policy.stdio[containerID], nil
+	capsToKeep, err = getCapsToKeep(capabilities, results)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	return envToKeep, capsToKeep, policy.stdio[containerID], nil
 }
 
-func (policy *regoEnforcer) EnforceExecExternalProcessPolicy(argList []string, envList []string, workingDir string) (toKeep EnvList, stdioAccessAllowed bool, err error) {
+func (policy *regoEnforcer) EnforceExecExternalProcessPolicy(ctx context.Context, argList []string, envList []string, workingDir string) (toKeep EnvList, stdioAccessAllowed bool, err error) {
 	input := map[string]interface{}{
 		"argList":    argList,
 		"envList":    envList,
 		"workingDir": workingDir,
 	}
 
-	results, err := policy.enforce("exec_external", input)
+	results, err := policy.enforce(ctx, "exec_external", input)
 	if err != nil {
 		return nil, false, err
 	}
@@ -519,16 +719,16 @@ func (policy *regoEnforcer) EnforceExecExternalProcessPolicy(argList []string, e
 	return toKeep, stdioAccessAllowed, nil
 }
 
-func (policy *regoEnforcer) EnforceShutdownContainerPolicy(containerID string) error {
+func (policy *regoEnforcer) EnforceShutdownContainerPolicy(ctx context.Context, containerID string) error {
 	input := inputData{
 		"containerID": containerID,
 	}
 
-	_, err := policy.enforce("shutdown_container", input)
+	_, err := policy.enforce(ctx, "shutdown_container", input)
 	return err
 }
 
-func (policy *regoEnforcer) EnforceSignalContainerProcessPolicy(containerID string, signal syscall.Signal, isInitProcess bool, startupArgList []string) error {
+func (policy *regoEnforcer) EnforceSignalContainerProcessPolicy(ctx context.Context, containerID string, signal syscall.Signal, isInitProcess bool, startupArgList []string) error {
 	input := inputData{
 		"containerID":   containerID,
 		"signal":        signal,
@@ -536,11 +736,11 @@ func (policy *regoEnforcer) EnforceSignalContainerProcessPolicy(containerID stri
 		"argList":       startupArgList,
 	}
 
-	_, err := policy.enforce("signal_container_process", input)
+	_, err := policy.enforce(ctx, "signal_container_process", input)
 	return err
 }
 
-func (policy *regoEnforcer) EnforcePlan9MountPolicy(target string) error {
+func (policy *regoEnforcer) EnforcePlan9MountPolicy(ctx context.Context, target string) error {
 	mountPathPrefix := strings.Replace(guestpath.LCOWMountPathPrefixFmt, "%d", "[0-9]+", 1)
 	input := inputData{
 		"rootPrefix":      guestpath.LCOWRootPrefixInUVM,
@@ -548,36 +748,36 @@ func (policy *regoEnforcer) EnforcePlan9MountPolicy(target string) error {
 		"target":          target,
 	}
 
-	_, err := policy.enforce("plan9_mount", input)
+	_, err := policy.enforce(ctx, "plan9_mount", input)
 	return err
 }
 
-func (policy *regoEnforcer) EnforcePlan9UnmountPolicy(target string) error {
+func (policy *regoEnforcer) EnforcePlan9UnmountPolicy(ctx context.Context, target string) error {
 	input := map[string]interface{}{
 		"unmountTarget": target,
 	}
 
-	_, err := policy.enforce("plan9_unmount", input)
+	_, err := policy.enforce(ctx, "plan9_unmount", input)
 	return err
 }
 
-func (policy *regoEnforcer) EnforceGetPropertiesPolicy() error {
+func (policy *regoEnforcer) EnforceGetPropertiesPolicy(ctx context.Context) error {
 	input := make(inputData)
 
-	_, err := policy.enforce("get_properties", input)
+	_, err := policy.enforce(ctx, "get_properties", input)
 	return err
 }
 
-func (policy *regoEnforcer) EnforceDumpStacksPolicy() error {
+func (policy *regoEnforcer) EnforceDumpStacksPolicy(ctx context.Context) error {
 	input := make(inputData)
 
-	_, err := policy.enforce("dump_stacks", input)
+	_, err := policy.enforce(ctx, "dump_stacks", input)
 	return err
 }
 
-func (policy *regoEnforcer) EnforceRuntimeLoggingPolicy() error {
+func (policy *regoEnforcer) EnforceRuntimeLoggingPolicy(ctx context.Context) error {
 	input := make(inputData)
-	_, err := policy.enforce("runtime_logging", input)
+	_, err := policy.enforce(ctx, "runtime_logging", input)
 	return err
 }
 
@@ -591,7 +791,7 @@ func parseNamespace(rego string) (string, error) {
 	return strings.TrimSpace(parts[1]), nil
 }
 
-func (policy *regoEnforcer) LoadFragment(issuer string, feed string, rego string) error {
+func (policy *regoEnforcer) LoadFragment(ctx context.Context, issuer string, feed string, rego string) error {
 	namespace, err := parseNamespace(rego)
 	if err != nil {
 		return fmt.Errorf("unable to load fragment: %w", err)
@@ -612,7 +812,7 @@ func (policy *regoEnforcer) LoadFragment(issuer string, feed string, rego string
 		"namespace": namespace,
 	}
 
-	results, err := policy.enforce("load_fragment", input)
+	results, err := policy.enforce(ctx, "load_fragment", input)
 
 	addModule, _ := results.Bool("add_module")
 	if !addModule {
@@ -622,25 +822,114 @@ func (policy *regoEnforcer) LoadFragment(issuer string, feed string, rego string
 	return err
 }
 
-func (policy *regoEnforcer) EnforceScratchMountPolicy(scratchPath string, encrypted bool) error {
+func (policy *regoEnforcer) EnforceScratchMountPolicy(ctx context.Context, scratchPath string, encrypted bool) error {
 	input := map[string]interface{}{
 		"target":    scratchPath,
 		"encrypted": encrypted,
 	}
-	_, err := policy.enforce("scratch_mount", input)
+	_, err := policy.enforce(ctx, "scratch_mount", input)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (policy *regoEnforcer) EnforceScratchUnmountPolicy(scratchPath string) error {
+func (policy *regoEnforcer) EnforceScratchUnmountPolicy(ctx context.Context, scratchPath string) error {
 	input := map[string]interface{}{
 		"unmountTarget": scratchPath,
 	}
-	_, err := policy.enforce("scratch_unmount", input)
+	_, err := policy.enforce(ctx, "scratch_unmount", input)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func getUser(passwdPath string, filter func(user.User) bool) (user.User, error) {
+	users, err := user.ParsePasswdFileFilter(passwdPath, filter)
+	if err != nil {
+		return user.User{}, err
+	}
+	if len(users) != 1 {
+		return user.User{}, errors.Errorf("expected exactly 1 user matched '%d'", len(users))
+	}
+	return users[0], nil
+}
+
+func getGroup(groupPath string, filter func(user.Group) bool) (user.Group, error) {
+	groups, err := user.ParseGroupFileFilter(groupPath, filter)
+	if err != nil {
+		return user.Group{}, err
+	}
+	if len(groups) != 1 {
+		return user.Group{}, errors.Errorf("expected exactly 1 group matched '%d'", len(groups))
+	}
+	return groups[0], nil
+}
+
+func (policy *regoEnforcer) GetUserInfo(containerID string, process *oci.Process) (IDName, []IDName, string, error) {
+	rootPath := filepath.Join(guestpath.LCOWRootPrefixInUVM, containerID, guestpath.RootfsPath)
+	passwdPath := filepath.Join(rootPath, "/etc/passwd")
+	groupPath := filepath.Join(rootPath, "/etc/group")
+
+	if process == nil {
+		return IDName{}, nil, "", errors.New("spec.Process is nil")
+	}
+
+	uid := process.User.UID
+	userIDName := IDName{ID: strconv.FormatUint(uint64(uid), 10), Name: ""}
+	if _, err := os.Stat(passwdPath); err == nil {
+		userInfo, err := getUser(passwdPath, func(user user.User) bool {
+			return uint32(user.Uid) == uid
+		})
+
+		if err != nil {
+			return userIDName, nil, "", err
+		}
+
+		userIDName.Name = userInfo.Name
+	}
+
+	gid := process.User.GID
+	groupIDName := IDName{ID: strconv.FormatUint(uint64(gid), 10), Name: ""}
+
+	checkGroup := true
+	if _, err := os.Stat(groupPath); err == nil {
+		groupInfo, err := getGroup(groupPath, func(group user.Group) bool {
+			return uint32(group.Gid) == gid
+		})
+
+		if err != nil {
+			return userIDName, nil, "", err
+		}
+		groupIDName.Name = groupInfo.Name
+	} else {
+		checkGroup = false
+	}
+
+	groupIDNames := []IDName{groupIDName}
+	additionalGIDs := process.User.AdditionalGids
+	if len(additionalGIDs) > 0 {
+		for _, gid := range additionalGIDs {
+			groupIDName = IDName{ID: strconv.FormatUint(uint64(gid), 10), Name: ""}
+			if checkGroup {
+				groupInfo, err := getGroup(groupPath, func(group user.Group) bool {
+					return uint32(group.Gid) == gid
+				})
+				if err != nil {
+					return userIDName, nil, "", err
+				}
+				groupIDName.Name = groupInfo.Name
+			}
+			groupIDNames = append(groupIDNames, groupIDName)
+		}
+	}
+
+	// this default value is used in the Linux kernel if no umask is specified
+	umask := "0022"
+	if process.User.Umask != nil {
+		umask = fmt.Sprintf("%04o", *process.User.Umask)
+	}
+
+	return userIDName, groupIDNames, umask, nil
 }
