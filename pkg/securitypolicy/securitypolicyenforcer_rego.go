@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -15,6 +17,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guest/spec"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
 	rpi "github.com/Microsoft/hcsshim/internal/regopolicyinterpreter"
+	"github.com/opencontainers/runc/libcontainer/user"
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -108,6 +111,10 @@ func createRegoEnforcer(base64EncodedPolicy string,
 	securityPolicy := new(SecurityPolicy)
 	err = json.Unmarshal(rawPolicy, securityPolicy)
 	if err == nil {
+		if securityPolicy.AllowAll {
+			return createOpenDoorEnforcer(base64EncodedPolicy, defaultMounts, privilegedMounts)
+		}
+
 		containers := make([]*Container, securityPolicy.Containers.Length)
 
 		for i := 0; i < securityPolicy.Containers.Length; i++ {
@@ -116,11 +123,15 @@ func createRegoEnforcer(base64EncodedPolicy string,
 			if !ok {
 				return nil, fmt.Errorf("container constraint with index %q not found", index)
 			}
+			cConf.AllowStdioAccess = true
+			cConf.NoNewPrivileges = false
+			cConf.User = UserConfig{
+				UserIDName:   IDNameConfig{Strategy: IDNameStrategyAny},
+				GroupIDNames: []IDNameConfig{{Strategy: IDNameStrategyAny}},
+				Umask:        "0022",
+			}
+			cConf.SeccompProfileSHA256 = ""
 			containers[i] = &cConf
-		}
-
-		if securityPolicy.AllowAll {
-			return createOpenDoorEnforcer(base64EncodedPolicy, defaultMounts, privilegedMounts)
 		}
 
 		code, err = marshalRego(
@@ -133,6 +144,7 @@ func createRegoEnforcer(base64EncodedPolicy string,
 			true,
 			false,
 			true,
+			false,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling the policy to Rego: %w", err)
@@ -160,21 +172,16 @@ func newRegoPolicy(code string, defaultMounts []oci.Mount, privilegedMounts []oc
 	policy.defaultMounts = make([]oci.Mount, len(defaultMounts))
 	copy(policy.defaultMounts, defaultMounts)
 
-	objectDefaults := make(map[string]interface{})
-	err = json.Unmarshal([]byte(FrameworkObjects), &objectDefaults)
-	if err != nil {
-		return nil, fmt.Errorf("unable to unmarshal framework object defaults: %w", err)
-	}
-
 	defaultMountData := make([]interface{}, 0, len(defaultMounts))
 	privilegedMountData := make([]interface{}, 0, len(privilegedMounts))
 	data := map[string]interface{}{
-		"objectDefaults":   objectDefaults,
-		"defaultMounts":    appendMountData(defaultMountData, defaultMounts),
-		"privilegedMounts": appendMountData(privilegedMountData, privilegedMounts),
-		"sandboxPrefix":    guestpath.SandboxMountPrefix,
-		"hugePagesPrefix":  guestpath.HugePagesMountPrefix,
-		"plan9Prefix":      plan9Prefix,
+		"defaultMounts":                   appendMountData(defaultMountData, defaultMounts),
+		"privilegedMounts":                appendMountData(privilegedMountData, privilegedMounts),
+		"sandboxPrefix":                   guestpath.SandboxMountPrefix,
+		"hugePagesPrefix":                 guestpath.HugePagesMountPrefix,
+		"plan9Prefix":                     plan9Prefix,
+		"defaultUnprivilegedCapabilities": DefaultUnprivilegedCapabilities(),
+		"defaultPrivilegedCapabilities":   DefaultPrivilegedCapabilities(),
 	}
 
 	policy.rego, err = rpi.NewRegoPolicyInterpreter(code, data)
@@ -300,20 +307,34 @@ func (policy *regoEnforcer) getReasonNotAllowed(enforcementPoint string, input i
 		return fmt.Errorf("%s not allowed by policy. Input unavailable due to marshalling error", enforcementPoint)
 	}
 
+	defaultMessage := fmt.Errorf("%s not allowed by policy. Security policy is not valid. Please check security policy or re-generate with tooling. Input: %s", enforcementPoint, string(inputJSON))
+
 	input["rule"] = enforcementPoint
 	result, err := policy.rego.Query("data.policy.reason", input)
-	if err == nil {
-		errors, _ := result.Value("errors")
-		if errors != nil {
-			if len(errors.([]interface{})) > 0 {
-				return fmt.Errorf("%s not allowed by policy. Errors: %v. Input: %s", enforcementPoint, errors, string(inputJSON))
-			} else {
-				return fmt.Errorf("%s not allowed by policy. Security policy is not valid. Please check security policy or re-generate with tooling. Input: %s", enforcementPoint, string(inputJSON))
-			}
-		}
+	// TODO: log error via logrus once the enforcer interface is updated to accept context as parameter.
+	if err != nil {
+		return defaultMessage
 	}
 
-	return fmt.Errorf("%s not allowed by policy. Security policy is not valid. Please check security policy or re-generate with tooling. Input: %s", enforcementPoint, string(inputJSON))
+	errors, err := result.Value("errors")
+	// TODO: log error via logrus once the enforcer interface is updated to accept context as parameter.
+	if err != nil || len(errors.([]interface{})) == 0 {
+		return defaultMessage
+	}
+
+	errorMessage := fmt.Errorf("%s not allowed by policy. Errors: %v. Input: %s.", enforcementPoint, errors, string(inputJSON))
+
+	matches, err := result.Value("error_objects")
+	if err != nil {
+		return errorMessage
+	}
+
+	matchesJSON, err := json.Marshal(matches)
+	if err != nil {
+		return errorMessage
+	}
+
+	return fmt.Errorf("%s not allowed by policy. Errors: %v. Input: %s. Error Objects: %s", enforcementPoint, errors, string(inputJSON), string(matchesJSON))
 }
 
 func (policy *regoEnforcer) redactSensitiveData(input inputData) inputData {
@@ -398,6 +419,104 @@ func getEnvsToKeep(envList []string, results rpi.RegoQueryResult) ([]string, err
 	return keepSet.toArray(), nil
 }
 
+func getCapsToKeep(capsList *oci.LinuxCapabilities, results rpi.RegoQueryResult) (*oci.LinuxCapabilities, error) {
+	value, err := results.Value("caps_list")
+	if err != nil || value == nil {
+		// policy did not return an 'caps_list'. This is interpreted
+		// as "proceed with provided caps list".
+		return capsList, nil
+	}
+
+	capsMap, ok := value.(map[string]interface{})
+
+	if !ok {
+		return nil, fmt.Errorf("policy returned incorrect type for 'caps_list', expected map[string]interface{}, received %T", value)
+	}
+
+	bounding, err := filterCapabilities(capsList.Bounding, capsMap["bounding"])
+	if err != nil {
+		return nil, err
+	}
+	effective, err := filterCapabilities(capsList.Effective, capsMap["effective"])
+	if err != nil {
+		return nil, err
+	}
+	inheritable, err := filterCapabilities(capsList.Inheritable, capsMap["inheritable"])
+	if err != nil {
+		return nil, err
+	}
+	permitted, err := filterCapabilities(capsList.Permitted, capsMap["permitted"])
+	if err != nil {
+		return nil, err
+	}
+	ambient, err := filterCapabilities(capsList.Ambient, capsMap["ambient"])
+	if err != nil {
+		return nil, err
+	}
+
+	return &oci.LinuxCapabilities{
+		Bounding:    bounding,
+		Effective:   effective,
+		Inheritable: inheritable,
+		Permitted:   permitted,
+		Ambient:     ambient,
+	}, nil
+}
+
+func filterCapabilities(suppliedList []string, fromRegoCapsList interface{}) ([]string, error) {
+	keepSet := make(stringSet)
+	if capsList, ok := fromRegoCapsList.([]interface{}); ok {
+		for _, capAsInterface := range capsList {
+			if cap, ok := capAsInterface.(string); ok {
+				keepSet.add(cap)
+			} else {
+				return nil, fmt.Errorf("members of capability sets from policy must be strings, received %T", capAsInterface)
+			}
+		}
+	} else {
+		return nil, fmt.Errorf("capability sets of caps_list from policy must be an array of interface{}, received %T", fromRegoCapsList)
+	}
+
+	keepSet = keepSet.intersect(toStringSet(suppliedList))
+	return keepSet.toArray(), nil
+}
+
+func (idName IDName) toInput() interface{} {
+	return map[string]interface{}{
+		"id":   idName.ID,
+		"name": idName.Name,
+	}
+}
+
+func groupsToInputs(groups []IDName) []interface{} {
+	inputs := []interface{}{}
+	for _, group := range groups {
+		inputs = append(inputs, group.toInput())
+	}
+	return inputs
+}
+
+func handleNilOrEmptyCaps(caps []string) []string {
+	if len(caps) > 0 {
+		return caps
+	}
+
+	// caps is either nil or empty.
+	// In either case, we want to return an empty array.
+	return make([]string, 0)
+}
+
+func mapifyCapabilities(caps *oci.LinuxCapabilities) map[string][]string {
+	out := make(map[string][]string)
+
+	out["bounding"] = handleNilOrEmptyCaps(caps.Bounding)
+	out["effective"] = handleNilOrEmptyCaps(caps.Effective)
+	out["inheritable"] = handleNilOrEmptyCaps(caps.Inheritable)
+	out["permitted"] = handleNilOrEmptyCaps(caps.Permitted)
+	out["ambient"] = handleNilOrEmptyCaps(caps.Ambient)
+	return out
+}
+
 func (policy *regoEnforcer) EnforceCreateContainerPolicy(
 	sandboxID string,
 	containerID string,
@@ -407,32 +526,54 @@ func (policy *regoEnforcer) EnforceCreateContainerPolicy(
 	mounts []oci.Mount,
 	privileged bool,
 	noNewPrivileges bool,
-) (toKeep EnvList, stdioAccessAllowed bool, err error) {
+	user IDName,
+	groups []IDName,
+	umask string,
+	capabilities *oci.LinuxCapabilities,
+	seccompProfileSHA256 string,
+) (envToKeep EnvList,
+	capsToKeep *oci.LinuxCapabilities,
+	stdioAccessAllowed bool,
+	err error) {
+	if capabilities == nil {
+		return nil, nil, false, errors.New("capabilities is nil")
+	}
+
 	input := inputData{
-		"containerID":     containerID,
-		"argList":         argList,
-		"envList":         envList,
-		"workingDir":      workingDir,
-		"sandboxDir":      spec.SandboxMountsDir(sandboxID),
-		"hugePagesDir":    spec.HugePagesMountsDir(sandboxID),
-		"mounts":          appendMountData([]interface{}{}, mounts),
-		"privileged":      privileged,
-		"noNewPrivileges": noNewPrivileges,
+		"containerID":          containerID,
+		"argList":              argList,
+		"envList":              envList,
+		"workingDir":           workingDir,
+		"sandboxDir":           spec.SandboxMountsDir(sandboxID),
+		"hugePagesDir":         spec.HugePagesMountsDir(sandboxID),
+		"mounts":               appendMountData([]interface{}{}, mounts),
+		"privileged":           privileged,
+		"noNewPrivileges":      noNewPrivileges,
+		"user":                 user.toInput(),
+		"groups":               groupsToInputs(groups),
+		"umask":                umask,
+		"capabilities":         mapifyCapabilities(capabilities),
+		"seccompProfileSHA256": seccompProfileSHA256,
 	}
 
 	results, err := policy.enforce("create_container", input)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
-	toKeep, err = getEnvsToKeep(envList, results)
+	envToKeep, err = getEnvsToKeep(envList, results)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
+	}
+
+	capsToKeep, err = getCapsToKeep(capabilities, results)
+	if err != nil {
+		return nil, nil, false, err
 	}
 
 	stdioAccessAllowed, err = results.Bool("allow_stdio_access")
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
 	// Store the result of stdio access allowed for this container so we can use
@@ -440,7 +581,7 @@ func (policy *regoEnforcer) EnforceCreateContainerPolicy(
 	// is on a per-container, not per-process basis.
 	policy.stdio[containerID] = stdioAccessAllowed
 
-	return toKeep, stdioAccessAllowed, nil
+	return envToKeep, capsToKeep, stdioAccessAllowed, nil
 }
 
 func (policy *regoEnforcer) EnforceDeviceUnmountPolicy(unmountTarget string) error {
@@ -475,26 +616,52 @@ func (policy *regoEnforcer) EncodedSecurityPolicy() string {
 	return policy.base64policy
 }
 
-func (policy *regoEnforcer) EnforceExecInContainerPolicy(containerID string, argList []string, envList []string, workingDir string, noNewPrivileges bool) (toKeep EnvList, stdioAccessAllowed bool, err error) {
+func (policy *regoEnforcer) EnforceExecInContainerPolicy(
+	containerID string,
+	argList []string,
+	envList []string,
+	workingDir string,
+	noNewPrivileges bool,
+	user IDName,
+	groups []IDName,
+	umask string,
+	capabilities *oci.LinuxCapabilities,
+) (envToKeep EnvList,
+	capsToKeep *oci.LinuxCapabilities,
+	stdioAccessAllowed bool,
+	err error) {
+	if capabilities == nil {
+		return nil, nil, false, errors.New("capabilities is nil")
+	}
+
 	input := inputData{
 		"containerID":     containerID,
 		"argList":         argList,
 		"envList":         envList,
 		"workingDir":      workingDir,
 		"noNewPrivileges": noNewPrivileges,
+		"user":            user.toInput(),
+		"groups":          groupsToInputs(groups),
+		"umask":           umask,
+		"capabilities":    mapifyCapabilities(capabilities),
 	}
 
 	results, err := policy.enforce("exec_in_container", input)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
-	toKeep, err = getEnvsToKeep(envList, results)
+	envToKeep, err = getEnvsToKeep(envList, results)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
-	return toKeep, policy.stdio[containerID], nil
+	capsToKeep, err = getCapsToKeep(capabilities, results)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	return envToKeep, capsToKeep, policy.stdio[containerID], nil
 }
 
 func (policy *regoEnforcer) EnforceExecExternalProcessPolicy(argList []string, envList []string, workingDir string) (toKeep EnvList, stdioAccessAllowed bool, err error) {
@@ -646,4 +813,93 @@ func (policy *regoEnforcer) EnforceScratchUnmountPolicy(scratchPath string) erro
 		return err
 	}
 	return nil
+}
+
+func getUser(passwdPath string, filter func(user.User) bool) (user.User, error) {
+	users, err := user.ParsePasswdFileFilter(passwdPath, filter)
+	if err != nil {
+		return user.User{}, err
+	}
+	if len(users) != 1 {
+		return user.User{}, errors.Errorf("expected exactly 1 user matched '%d'", len(users))
+	}
+	return users[0], nil
+}
+
+func getGroup(groupPath string, filter func(user.Group) bool) (user.Group, error) {
+	groups, err := user.ParseGroupFileFilter(groupPath, filter)
+	if err != nil {
+		return user.Group{}, err
+	}
+	if len(groups) != 1 {
+		return user.Group{}, errors.Errorf("expected exactly 1 group matched '%d'", len(groups))
+	}
+	return groups[0], nil
+}
+
+func (policy *regoEnforcer) GetUserInfo(containerID string, process *oci.Process) (IDName, []IDName, string, error) {
+	rootPath := filepath.Join(guestpath.LCOWRootPrefixInUVM, containerID, guestpath.RootfsPath)
+	passwdPath := filepath.Join(rootPath, "/etc/passwd")
+	groupPath := filepath.Join(rootPath, "/etc/group")
+
+	if process == nil {
+		return IDName{}, nil, "", errors.New("spec.Process is nil")
+	}
+
+	uid := process.User.UID
+	userIDName := IDName{ID: strconv.FormatUint(uint64(uid), 10), Name: ""}
+	if _, err := os.Stat(passwdPath); err == nil {
+		userInfo, err := getUser(passwdPath, func(user user.User) bool {
+			return uint32(user.Uid) == uid
+		})
+
+		if err != nil {
+			return userIDName, nil, "", err
+		}
+
+		userIDName.Name = userInfo.Name
+	}
+
+	gid := process.User.GID
+	groupIDName := IDName{ID: strconv.FormatUint(uint64(gid), 10), Name: ""}
+
+	checkGroup := true
+	if _, err := os.Stat(groupPath); err == nil {
+		groupInfo, err := getGroup(groupPath, func(group user.Group) bool {
+			return uint32(group.Gid) == gid
+		})
+
+		if err != nil {
+			return userIDName, nil, "", err
+		}
+		groupIDName.Name = groupInfo.Name
+	} else {
+		checkGroup = false
+	}
+
+	groupIDNames := []IDName{groupIDName}
+	additionalGIDs := process.User.AdditionalGids
+	if len(additionalGIDs) > 0 {
+		for _, gid := range additionalGIDs {
+			groupIDName = IDName{ID: strconv.FormatUint(uint64(gid), 10), Name: ""}
+			if checkGroup {
+				groupInfo, err := getGroup(groupPath, func(group user.Group) bool {
+					return uint32(group.Gid) == gid
+				})
+				if err != nil {
+					return userIDName, nil, "", err
+				}
+				groupIDName.Name = groupInfo.Name
+			}
+			groupIDNames = append(groupIDNames, groupIDName)
+		}
+	}
+
+	// this default value is used in the Linux kernel if no umask is specified
+	umask := "0022"
+	if process.User.Umask != nil {
+		umask = fmt.Sprintf("%04o", *process.User.Umask)
+	}
+
+	return userIDName, groupIDNames, umask, nil
 }

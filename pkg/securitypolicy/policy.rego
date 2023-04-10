@@ -1,7 +1,7 @@
 package policy
 
-api_svn := "@@API_SVN@@"
-framework_svn := "@@FRAMEWORK_SVN@@"
+api_version := "@@API_VERSION@@"
+framework_version := "@@FRAMEWORK_VERSION@@"
 
 @@OBJECTS@@
 
@@ -22,4 +22,7 @@ runtime_logging := data.framework.runtime_logging
 load_fragment := data.framework.load_fragment
 scratch_mount := data.framework.scratch_mount
 scratch_unmount := data.framework.scratch_unmount
-reason := {"errors": data.framework.errors}
+reason := {
+    "errors": data.framework.errors,
+    "error_objects": data.framework.error_objects,
+}

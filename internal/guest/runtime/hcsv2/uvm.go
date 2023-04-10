@@ -360,6 +360,16 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 			if err := setupWorkloadContainerSpec(ctx, sid, id, settings.OCISpecification); err != nil {
 				return nil, err
 			}
+
+			// Add SEV device when security policy is not empty, except when privileged annotation is
+			// set to "true", in which case all UVMs devices are added.
+			if len(h.securityPolicyEnforcer.EncodedSecurityPolicy()) > 0 && !oci.ParseAnnotationsBool(ctx,
+				settings.OCISpecification.Annotations, annotations.LCOWPrivileged, false) {
+				if err := addDevSev(ctx, settings.OCISpecification); err != nil {
+					log.G(ctx).WithError(err).Debug("failed to add SEV device")
+				}
+			}
+
 			defer func() {
 				if err != nil {
 					_ = os.RemoveAll(settings.OCIBundlePath)
@@ -384,7 +394,17 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		}()
 	}
 
-	envToKeep, allowStdio, err := h.securityPolicyEnforcer.EnforceCreateContainerPolicy(
+	user, groups, umask, err := h.securityPolicyEnforcer.GetUserInfo(id, settings.OCISpecification.Process)
+	if err != nil {
+		return nil, err
+	}
+
+	seccomp, err := securitypolicy.MeasureSeccompProfile(settings.OCISpecification.Linux.Seccomp)
+	if err != nil {
+		return nil, err
+	}
+
+	envToKeep, capsToKeep, allowStdio, err := h.securityPolicyEnforcer.EnforceCreateContainerPolicy(
 		sandboxID,
 		id,
 		settings.OCISpecification.Process.Args,
@@ -393,6 +413,11 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		settings.OCISpecification.Mounts,
 		isPrivilegedContainerCreationRequest(ctx, settings.OCISpecification),
 		settings.OCISpecification.Process.NoNewPrivileges,
+		user,
+		groups,
+		umask,
+		settings.OCISpecification.Process.Capabilities,
+		seccomp,
 	)
 	if err != nil {
 		return nil, errors.Wrapf(err, "container creation denied due to policy")
@@ -408,32 +433,51 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		settings.OCISpecification.Process.Env = []string(envToKeep)
 	}
 
-	// Export security policy and signed UVM reference info as one of the
-	// process's environment variables so that application and sidecar
-	// containers can have access to it. The security policy is required
-	// by containers which need to extract init-time claims found in the
-	// security policy.
-	//
-	// We append the variable after the security policy enforcing logic
-	// completes to bypass it; the security policy variable cannot be included
-	// in the security policy as its value is not available security policy
-	// construction time.
+	if capsToKeep != nil {
+		settings.OCISpecification.Process.Capabilities = capsToKeep
+	}
 
-	// It may be an error to have a security policy but not expose it to the container as
-	// in that case it can never be checked as correct by a verifier.
+	// Write security policy, signed UVM reference and host AMD certificate to
+	// container's rootfs, so that application and sidecar containers can have
+	// access to it. The security policy is required by containers which need to
+	// extract init-time claims found in the security policy. The directory path
+	// containing the files is exposed via UVM_SECURITY_CONTEXT_DIR env var.
+	// It may be an error to have a security policy but not expose it to the
+	// container as in that case it can never be checked as correct by a verifier.
 	if oci.ParseAnnotationsBool(ctx, settings.OCISpecification.Annotations, annotations.UVMSecurityPolicyEnv, true) {
 		encodedPolicy := h.securityPolicyEnforcer.EncodedSecurityPolicy()
-		if len(encodedPolicy) > 0 {
-			secPolicyEnv := fmt.Sprintf("UVM_SECURITY_POLICY=%s", encodedPolicy)
-			settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, secPolicyEnv)
-		}
-		if len(h.uvmReferenceInfo) > 0 {
-			uvmReferenceInfo := fmt.Sprintf("UVM_REFERENCE_INFO=%s", h.uvmReferenceInfo)
-			settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, uvmReferenceInfo)
-		}
-		if len(settings.OCISpecification.Annotations[annotations.HostAMDCertificate]) > 0 {
-			amdCertEnv := fmt.Sprintf("UVM_HOST_AMD_CERTIFICATE=%s", settings.OCISpecification.Annotations[annotations.HostAMDCertificate])
-			settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, amdCertEnv)
+		hostAMDCert := settings.OCISpecification.Annotations[annotations.HostAMDCertificate]
+		if len(encodedPolicy) > 0 || len(hostAMDCert) > 0 || len(h.uvmReferenceInfo) > 0 {
+			// Use os.MkdirTemp to make sure that the directory is unique.
+			securityContextDir, err := os.MkdirTemp(settings.OCISpecification.Root.Path, securitypolicy.SecurityContextDirTemplate)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create security context directory: %w", err)
+			}
+			// Make sure it's readable
+			if err := os.Chmod(securityContextDir, 0744); err != nil {
+				return nil, fmt.Errorf("failed to chmod security context directory: %w", err)
+			}
+
+			if len(encodedPolicy) > 0 {
+				if err := writeFileInDir(securityContextDir, securitypolicy.PolicyFilename, []byte(encodedPolicy), 0744); err != nil {
+					return nil, fmt.Errorf("failed to write security policy: %w", err)
+				}
+			}
+			if len(h.uvmReferenceInfo) > 0 {
+				if err := writeFileInDir(securityContextDir, securitypolicy.ReferenceInfoFilename, []byte(h.uvmReferenceInfo), 0744); err != nil {
+					return nil, fmt.Errorf("failed to write UVM reference info: %w", err)
+				}
+			}
+
+			if len(hostAMDCert) > 0 {
+				if err := writeFileInDir(securityContextDir, securitypolicy.HostAMDCertFilename, []byte(hostAMDCert), 0744); err != nil {
+					return nil, fmt.Errorf("failed to write host AMD certificate: %w", err)
+				}
+			}
+
+			containerCtxDir := fmt.Sprintf("/%s", filepath.Base(securityContextDir))
+			secCtxEnv := fmt.Sprintf("UVM_SECURITY_CONTEXT_DIR=%s", containerCtxDir)
+			settings.OCISpecification.Process.Env = append(settings.OCISpecification.Process.Env, secCtxEnv)
 		}
 	}
 
@@ -647,8 +691,9 @@ func (h *Host) SignalContainerProcess(ctx context.Context, containerID string, p
 func (h *Host) ExecProcess(ctx context.Context, containerID string, params prot.ProcessParameters, conSettings stdio.ConnectionSettings) (_ int, err error) {
 	var pid int
 	var c *Container
-	var envToKeep securitypolicy.EnvList
+
 	if params.IsExternal || containerID == UVMContainerID {
+		var envToKeep securitypolicy.EnvList
 		var allowStdioAccess bool
 		envToKeep, allowStdioAccess, err = h.securityPolicyEnforcer.EnforceExecExternalProcessPolicy(
 			params.CommandArgs,
@@ -681,15 +726,32 @@ func (h *Host) ExecProcess(ctx context.Context, containerID string, params prot.
 			// there's no policy enforcement to do for starting
 			pid, err = c.Start(ctx, conSettings)
 		} else {
-			var allowStdioAccess bool
 			// Windows uses a different field for command, there's no enforcement
 			// around this yet for Windows so this is Linux specific at the moment.
-			envToKeep, allowStdioAccess, err = h.securityPolicyEnforcer.EnforceExecInContainerPolicy(
+
+			var envToKeep securitypolicy.EnvList
+			var capsToKeep *specs.LinuxCapabilities
+			var user securitypolicy.IDName
+			var groups []securitypolicy.IDName
+			var umask string
+			var allowStdioAccess bool
+
+			user, groups, umask, err = h.securityPolicyEnforcer.GetUserInfo(containerID, params.OCIProcess)
+			if err != nil {
+				return 0, err
+			}
+
+			envToKeep, capsToKeep, allowStdioAccess, err = h.securityPolicyEnforcer.EnforceExecInContainerPolicy(
 				containerID,
 				params.OCIProcess.Args,
 				params.OCIProcess.Env,
 				params.OCIProcess.Cwd,
-				params.OCIProcess.NoNewPrivileges)
+				params.OCIProcess.NoNewPrivileges,
+				user,
+				groups,
+				umask,
+				params.OCIProcess.Capabilities,
+			)
 			if err != nil {
 				return pid, errors.Wrapf(err, "exec in container denied due to policy")
 			}
@@ -702,6 +764,10 @@ func (h *Host) ExecProcess(ctx context.Context, containerID string, params prot.
 
 			if envToKeep != nil {
 				params.OCIProcess.Env = envToKeep
+			}
+
+			if capsToKeep != nil {
+				params.OCIProcess.Capabilities = capsToKeep
 			}
 
 			pid, err = c.ExecProcess(ctx, params.OCIProcess, conSettings)
@@ -1079,4 +1145,18 @@ func processOCIEnvToParam(envs []string) map[string]string {
 // creation request would create a privileged container
 func isPrivilegedContainerCreationRequest(ctx context.Context, spec *specs.Spec) bool {
 	return oci.ParseAnnotationsBool(ctx, spec.Annotations, annotations.LCOWPrivileged, false)
+}
+
+func writeFileInDir(dir string, filename string, data []byte, perm os.FileMode) error {
+	st, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+
+	if !st.IsDir() {
+		return fmt.Errorf("not a directory %q", dir)
+	}
+
+	targetFilename := filepath.Join(dir, filename)
+	return os.WriteFile(targetFilename, data, perm)
 }

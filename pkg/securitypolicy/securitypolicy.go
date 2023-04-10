@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/Microsoft/hcsshim/internal/guestpath"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
 
@@ -21,12 +22,8 @@ var frameworkCodeTemplate string
 //go:embed api.rego
 var apiCodeTemplate string
 
-//go:embed framework_objects.json
-var frameworkObjectsTemplate string
-
-var APICode = strings.Replace(apiCodeTemplate, "@@API_SVN@@", apiSVN, 1)
-var FrameworkCode = strings.Replace(frameworkCodeTemplate, "@@FRAMEWORK_SVN@@", frameworkSVN, 1)
-var FrameworkObjects = strings.Replace(frameworkObjectsTemplate, "@@FRAMEWORK_SVN@@", frameworkSVN, 1)
+var APICode = strings.Replace(apiCodeTemplate, "@@API_VERSION@@", apiVersion, 1)
+var FrameworkCode = strings.Replace(frameworkCodeTemplate, "@@FRAMEWORK_VERSION@@", frameworkVersion, 1)
 
 var ErrInvalidOpenDoorPolicy = errors.New("allow_all cannot be set to 'true' when Containers are non-empty")
 
@@ -37,7 +34,23 @@ const (
 	EnvVarRuleRegex  EnvVarRule = "re2"
 )
 
+type IDNameStrategy string
+
+const (
+	IDNameStrategyName  IDNameStrategy = "name"
+	IDNameStrategyID    IDNameStrategy = "id"
+	IDNameStrategyRegex IDNameStrategy = "re2"
+	IDNameStrategyAny   IDNameStrategy = "any"
+)
+
 const plan9Prefix = "plan9://"
+
+const (
+	SecurityContextDirTemplate = "security-context-*"
+	PolicyFilename             = "security-policy-base64"
+	HostAMDCertFilename        = "host-amd-cert-base64"
+	ReferenceInfoFilename      = "reference-info-base64"
+)
 
 // PolicyConfig contains toml or JSON config for security policy.
 type PolicyConfig struct {
@@ -52,6 +65,7 @@ type PolicyConfig struct {
 	// AllowUnencryptedScratch is a global policy configuration that allows
 	// all containers within a pod to be run without scratch encryption.
 	AllowUnencryptedScratch bool `json:"allow_unencrypted_scratch" toml:"allow_unencrypted_scratch"`
+	AllowCapabilityDropping bool `json:"allow_capability_dropping" toml:"allow_capability_dropping"`
 }
 
 func NewPolicyConfig(opts ...PolicyConfigOpt) (*PolicyConfig, error) {
@@ -93,6 +107,36 @@ type EnvRuleConfig struct {
 	Required bool       `json:"required" toml:"required"`
 }
 
+type IDNameConfig struct {
+	Strategy IDNameStrategy `json:"strategy" toml:"strategy"`
+	Rule     string         `json:"rule" toml:"rule"`
+}
+
+type UserConfig struct {
+	UserIDName   IDNameConfig   `json:"user_idname" toml:"user_idname"`
+	GroupIDNames []IDNameConfig `json:"group_idnames" toml:"group_idname"`
+	Umask        string         `json:"umask" toml:"umask"`
+}
+
+type IDName struct {
+	ID   string
+	Name string
+}
+
+func MeasureSeccompProfile(seccomp *specs.LinuxSeccomp) (string, error) {
+	if seccomp == nil {
+		return "", nil
+	}
+
+	buf, err := json.Marshal(seccomp)
+	if err != nil {
+		return "", err
+	}
+
+	profileSHA256 := sha256.Sum256(buf)
+	return fmt.Sprintf("%x", profileSHA256), nil
+}
+
 // ContainerConfig contains toml or JSON config for container described
 // in security policy.
 type ContainerConfig struct {
@@ -107,6 +151,9 @@ type ContainerConfig struct {
 	Signals                  []syscall.Signal    `json:"signals" toml:"signals"`
 	AllowStdioAccess         bool                `json:"allow_stdio_access" toml:"allow_stdio_access"`
 	AllowPrivilegeEscalation bool                `json:"allow_privilege_escalation" toml:"allow_privilege_escalation"`
+	User                     *UserConfig         `json:"user" toml:"user"`
+	Capabilities             *CapabilitiesConfig `json:"capabilities" toml:"capabilities"`
+	SeccompProfilePath       string              `json:"seccomp_profile_path" toml:"seccomp_profile_path"`
 }
 
 // MountConfig contains toml or JSON config for mount security policy
@@ -124,11 +171,21 @@ type ExecProcessConfig struct {
 	Signals []syscall.Signal `json:"signals" toml:"signals"`
 }
 
-//go:embed svn_api
-var apiSVN string
+// CapabilitiesConfig contains the toml or JSON config for capabilies security
+// polict constraint description
+type CapabilitiesConfig struct {
+	Bounding    []string `json:"bounding" toml:"bounding"`
+	Effective   []string `json:"effective" toml:"effective"`
+	Inheritable []string `json:"inheritable" toml:"inheritable"`
+	Permitted   []string `json:"permitted" toml:"permitted"`
+	Ambient     []string `json:"ambient" toml:"ambient"`
+}
 
-//go:embed svn_framework
-var frameworkSVN string
+//go:embed version_api
+var apiVersion string
+
+//go:embed version_framework
+var frameworkVersion string
 
 // NewEnvVarRules creates slice of EnvRuleConfig's from environment variables
 // strings slice.
@@ -199,16 +256,19 @@ type Containers struct {
 }
 
 type Container struct {
-	Command          CommandArgs         `json:"command"`
-	EnvRules         EnvRules            `json:"env_rules"`
-	Layers           Layers              `json:"layers"`
-	WorkingDir       string              `json:"working_dir"`
-	Mounts           Mounts              `json:"mounts"`
-	AllowElevated    bool                `json:"allow_elevated"`
-	ExecProcesses    []ExecProcessConfig `json:"-"`
-	Signals          []syscall.Signal    `json:"-"`
-	AllowStdioAccess bool                `json:"-"`
-	NoNewPrivileges  bool                `json:"-"`
+	Command              CommandArgs         `json:"command"`
+	EnvRules             EnvRules            `json:"env_rules"`
+	Layers               Layers              `json:"layers"`
+	WorkingDir           string              `json:"working_dir"`
+	Mounts               Mounts              `json:"mounts"`
+	AllowElevated        bool                `json:"allow_elevated"`
+	ExecProcesses        []ExecProcessConfig `json:"-"`
+	Signals              []syscall.Signal    `json:"-"`
+	AllowStdioAccess     bool                `json:"-"`
+	NoNewPrivileges      bool                `json:"-"`
+	User                 UserConfig          `json:"-"`
+	Capabilities         *CapabilitiesConfig `json:"-"`
+	SeccompProfileSHA256 string              `json:"-"`
 }
 
 // StringArrayMap wraps an array of strings as a string map.
@@ -252,6 +312,9 @@ func CreateContainerPolicy(
 	signals []syscall.Signal,
 	allowStdioAccess bool,
 	noNewPrivileges bool,
+	user UserConfig,
+	capabilities *CapabilitiesConfig,
+	seccompProfileSHA256 string,
 ) (*Container, error) {
 	if err := validateEnvRules(envRules); err != nil {
 		return nil, err
@@ -260,16 +323,19 @@ func CreateContainerPolicy(
 		return nil, err
 	}
 	return &Container{
-		Command:          newCommandArgs(command),
-		Layers:           newLayers(layers),
-		EnvRules:         newEnvRules(envRules),
-		WorkingDir:       workingDir,
-		Mounts:           newMountConstraints(mounts),
-		AllowElevated:    allowElevated,
-		ExecProcesses:    execProcesses,
-		Signals:          signals,
-		AllowStdioAccess: allowStdioAccess,
-		NoNewPrivileges:  noNewPrivileges,
+		Command:              newCommandArgs(command),
+		Layers:               newLayers(layers),
+		EnvRules:             newEnvRules(envRules),
+		WorkingDir:           workingDir,
+		Mounts:               newMountConstraints(mounts),
+		AllowElevated:        allowElevated,
+		ExecProcesses:        execProcesses,
+		Signals:              signals,
+		AllowStdioAccess:     allowStdioAccess,
+		NoNewPrivileges:      noNewPrivileges,
+		User:                 user,
+		Capabilities:         capabilities,
+		SeccompProfileSHA256: seccompProfileSHA256,
 	}, nil
 }
 
@@ -404,5 +470,72 @@ func newMountConstraints(mountConfigs []MountConfig) Mounts {
 	}
 	return Mounts{
 		Elements: mounts,
+	}
+}
+
+func EmptyCapabiltiesSet() []string {
+	return make([]string, 0)
+}
+
+func DefaultUnprivilegedCapabilities() []string {
+	return []string{"CAP_CHOWN",
+		"CAP_DAC_OVERRIDE",
+		"CAP_FSETID",
+		"CAP_FOWNER",
+		"CAP_MKNOD",
+		"CAP_NET_RAW",
+		"CAP_SETGID",
+		"CAP_SETUID",
+		"CAP_SETFCAP",
+		"CAP_SETPCAP",
+		"CAP_NET_BIND_SERVICE",
+		"CAP_SYS_CHROOT",
+		"CAP_KILL",
+		"CAP_AUDIT_WRITE",
+	}
+}
+
+func DefaultPrivilegedCapabilities() []string {
+	return []string{"CAP_CHOWN",
+		"CAP_DAC_OVERRIDE",
+		"CAP_DAC_READ_SEARCH",
+		"CAP_FOWNER",
+		"CAP_FSETID",
+		"CAP_KILL",
+		"CAP_SETGID",
+		"CAP_SETUID",
+		"CAP_SETPCAP",
+		"CAP_LINUX_IMMUTABLE",
+		"CAP_NET_BIND_SERVICE",
+		"CAP_NET_BROADCAST",
+		"CAP_NET_ADMIN",
+		"CAP_NET_RAW",
+		"CAP_IPC_LOCK",
+		"CAP_IPC_OWNER",
+		"CAP_SYS_MODULE",
+		"CAP_SYS_RAWIO",
+		"CAP_SYS_CHROOT",
+		"CAP_SYS_PTRACE",
+		"CAP_SYS_PACCT",
+		"CAP_SYS_ADMIN",
+		"CAP_SYS_BOOT",
+		"CAP_SYS_NICE",
+		"CAP_SYS_RESOURCE",
+		"CAP_SYS_TIME",
+		"CAP_SYS_TTY_CONFIG",
+		"CAP_MKNOD",
+		"CAP_LEASE",
+		"CAP_AUDIT_WRITE",
+		"CAP_AUDIT_CONTROL",
+		"CAP_SETFCAP",
+		"CAP_MAC_OVERRIDE",
+		"CAP_MAC_ADMIN",
+		"CAP_SYSLOG",
+		"CAP_WAKE_ALARM",
+		"CAP_BLOCK_SUSPEND",
+		"CAP_AUDIT_READ",
+		"CAP_PERFMON",
+		"CAP_BPF",
+		"CAP_CHECKPOINT_RESTORE",
 	}
 }

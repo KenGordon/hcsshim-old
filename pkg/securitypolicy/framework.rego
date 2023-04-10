@@ -3,7 +3,7 @@ package framework
 import future.keywords.every
 import future.keywords.in
 
-svn := "@@FRAMEWORK_SVN@@"
+version := "@@FRAMEWORK_VERSION@@"
 
 device_mounted(target) {
     data.metadata.devices[target]
@@ -70,7 +70,7 @@ overlay_mounted(target) {
 default candidate_containers := []
 
 candidate_containers := containers {
-    semver.compare(data.policy.framework_svn, svn) == 0
+    semver.compare(policy_framework_version, version) == 0
 
     policy_containers := [c | c := data.policy.containers[_]]
     fragment_containers := [c |
@@ -83,9 +83,9 @@ candidate_containers := containers {
 }
 
 candidate_containers := containers {
-    semver.compare(data.policy.framework_svn, svn) < 0
+    semver.compare(policy_framework_version, version) < 0
 
-    policy_containers := apply_defaults("container", data.policy.containers, data.policy.framework_svn)
+    policy_containers := apply_defaults("container", data.policy.containers, policy_framework_version)
     fragment_containers := [c |
         feed := data.metadata.issuers[_].feeds[_]
         fragment := feed[_]
@@ -177,7 +177,7 @@ valid_envs_subset(env_rules) := envs {
 }
 
 valid_envs_for_all(items) := envs {
-    data.policy.allow_environment_variable_dropping
+    allow_environment_variable_dropping
 
     # for each item, find a subset of the environment rules
     # that are valid
@@ -212,7 +212,7 @@ valid_envs_for_all(items) := envs {
 }
 
 valid_envs_for_all(items) := envs {
-    not data.policy.allow_environment_variable_dropping
+    not allow_environment_variable_dropping
 
     # no dropping allowed, so we just return the input
     envs := input.envList
@@ -232,7 +232,41 @@ privileged_ok(elevation_allowed) {
 }
 
 noNewPrivileges_ok(no_new_privileges) {
-    input.noNewPrivileges == no_new_privileges
+    no_new_privileges
+    input.noNewPrivileges
+}
+
+noNewPrivileges_ok(no_new_privileges) {
+    no_new_privileges == false
+}
+
+idName_ok(pattern, "any", value) {
+    true
+}
+
+idName_ok(pattern, "id", value) {
+    pattern == value.id
+}
+
+idName_ok(pattern, "name", value) {
+    pattern == value.name
+}
+
+idName_ok(pattern, "re2", value) {
+    regex.match(pattern, value.name)
+}
+
+user_ok(user) {
+    user.umask == input.umask
+    idName_ok(user.user_idname.pattern, user.user_idname.strategy, input.user)
+    every group in input.groups {
+        some group_idname in user.group_idnames
+        idName_ok(group_idname.pattern, group_idname.strategy, group)
+    }
+}
+
+seccomp_ok(seccomp_profile_sha256) {
+    input.seccompProfileSHA256 == seccomp_profile_sha256
 }
 
 default container_started := false
@@ -241,39 +275,228 @@ container_started {
     data.metadata.started[input.containerID]
 }
 
+default container_privileged := false
+
+container_privileged {
+    data.metadata.started[input.containerID].privileged
+}
+
+capsList_ok(allowed_caps_list, requested_caps_list) {
+    count(allowed_caps_list) == count(requested_caps_list)
+
+    every cap in requested_caps_list {
+        some allowed in allowed_caps_list
+        cap == allowed
+    }
+
+    every allowed in allowed_caps_list {
+        some cap in requested_caps_list
+        allowed == cap
+    }
+}
+
+filter_capsList_by_allowed(allowed_caps_list, requested_caps_list) := caps {
+    # find a subset of the capabilities that are valid
+    caps := {cap |
+        some cap in requested_caps_list
+        some allowed in allowed_caps_list
+        cap == allowed
+    }
+}
+
+filter_capsList_for_single_container(allowed_caps) := caps {
+    bounding := filter_capsList_by_allowed(allowed_caps.bounding, input.capabilities.bounding)
+    effective := filter_capsList_by_allowed(allowed_caps.effective, input.capabilities.effective)
+    inheritable := filter_capsList_by_allowed(allowed_caps.inheritable, input.capabilities.inheritable)
+    permitted := filter_capsList_by_allowed(allowed_caps.permitted, input.capabilities.permitted)
+    ambient := filter_capsList_by_allowed(allowed_caps.ambient, input.capabilities.ambient)
+
+    caps := {
+        "bounding": bounding,
+        "effective": effective,
+        "inheritable": inheritable,
+        "permitted": permitted,
+        "ambient": ambient
+    }
+}
+
+largest_caps_sets_for_all(containers, privileged) := largest_caps_sets {
+    filtered := [caps |
+        container := containers[_]
+        capabilities := get_capabilities(container, privileged)
+        caps := filter_capsList_for_single_container(capabilities)
+    ]
+
+    # we want to select the most specific matches, which in this
+    # case consists of those matches which require dropping the
+    # fewest capabilities (i.e. the longest lists)
+    counts := [num_caps |
+        caps := filtered[_]
+        num_caps := count(caps.bounding) + count(caps.effective) +
+            count(caps.inheritable) + count(caps.permitted) +
+            count(caps.ambient)
+    ]
+    max_count := max(counts)
+
+    largest_caps_sets := [caps |
+        some i
+        counts[i] == max_count
+        caps := filtered[i]
+    ]
+}
+
+all_caps_sets_are_equal(sets) := caps {
+    # if there is more than one set with the same size, we
+    # can only proceed if they are all the same, so we verify
+    # that the intersection is equal to the union. For a single
+    # set this is trivially true.
+    bounding_i := intersection({caps.bounding | caps := sets[_]})
+    effective_i := intersection({caps.effective | caps := sets[_]})
+    inheritable_i := intersection({caps.inheritable | caps := sets[_]})
+    permitted_i := intersection({caps.permitted | caps := sets[_]})
+    ambient_i := intersection({caps.ambient | caps := sets[_]})
+
+    bounding_u := union({caps.bounding | caps := sets[_]})
+    effective_u := union({caps.effective | caps := sets[_]})
+    inheritable_u := union({caps.inheritable | caps := sets[_]})
+    permitted_u := union({caps.permitted | caps := sets[_]})
+    ambient_u := union({caps.ambient | caps := sets[_]})
+
+    bounding_i == bounding_u
+    effective_i == effective_u
+    inheritable_i == inheritable_u
+    permitted_i == permitted_u
+    ambient_i == ambient_u
+
+    caps := {
+        "bounding": bounding_i,
+        "effective": effective_i,
+        "inheritable": inheritable_i,
+        "permitted": permitted_i,
+        "ambient": ambient_i,
+    }
+}
+
+valid_caps_for_all(containers, privileged) := caps {
+    allow_capability_dropping
+
+    # find largest matching capabilities sets aka "the most specific"
+    largest_caps_sets := largest_caps_sets_for_all(containers, privileged)
+
+    # if there is more than one set with the same size, we
+    # can only proceed if they are all the same
+    caps := all_caps_sets_are_equal(largest_caps_sets)
+}
+
+valid_caps_for_all(containers, privileged) := caps {
+    not allow_capability_dropping
+
+    # no dropping allowed, so we just return the input
+    caps := input.capabilities
+}
+
+caps_ok(allowed_caps, requested_caps) {
+    capsList_ok(allowed_caps.bounding, requested_caps.bounding)
+    capsList_ok(allowed_caps.effective, requested_caps.effective)
+    capsList_ok(allowed_caps.inheritable, requested_caps.inheritable)
+    capsList_ok(allowed_caps.permitted, requested_caps.permitted)
+    capsList_ok(allowed_caps.ambient, requested_caps.ambient)
+}
+
+get_capabilities(container, privileged) := capabilities {
+    container.capabilities != null
+    capabilities := container.capabilities
+}
+
+default_privileged_capabilities := capabilities {
+    caps := {cap | cap := data.defaultPrivilegedCapabilities[_]}
+    capabilities := {
+        "bounding": caps,
+        "effective": caps,
+        "inheritable": caps,
+        "permitted": caps,
+        "ambient": set(),
+    }
+}
+
+get_capabilities(container, true) := capabilities {
+    container.capabilities == null
+    container.allow_elevated
+    capabilities := default_privileged_capabilities
+}
+
+default_unprivileged_capabilities := capabilities {
+    caps := {cap | cap := data.defaultUnprivilegedCapabilities[_]}
+    capabilities := {
+        "bounding": caps,
+        "effective": caps,
+        "inheritable": set(),
+        "permitted": caps,
+        "ambient": set(),
+    }
+}
+
+get_capabilities(container, false) := capabilities {
+    container.capabilities == null
+    container.allow_elevated
+    capabilities := default_unprivileged_capabilities
+}
+
+get_capabilities(container, privileged) := capabilities {
+    container.capabilities == null
+    not container.allow_elevated
+    capabilities := default_unprivileged_capabilities
+}
+
 default create_container := {"allowed": false}
 
 create_container := {"metadata": [updateMatches, addStarted],
                      "env_list": env_list,
+                     "caps_list": caps_list,
                      "allow_stdio_access": allow_stdio_access,
                      "allowed": true} {
     not container_started
 
     # narrow the matches based upon command, working directory, and
     # mount list
-    possible_containers := [container |
+    possible_after_initial_containers := [container |
         container := data.metadata.matches[input.containerID][_]
         # NB any change to these narrowing conditions should be reflected in
         # the error handling, such that error messaging correctly reflects
         # the narrowing process.
         noNewPrivileges_ok(container.no_new_privileges)
+        user_ok(container.user)
         privileged_ok(container.allow_elevated)
         workingDirectory_ok(container.working_dir)
         command_ok(container.command)
         mountList_ok(container.mounts, container.allow_elevated)
+        seccomp_ok(container.seccomp_profile_sha256)
     ]
 
-    count(possible_containers) > 0
+    count(possible_after_initial_containers) > 0
 
     # check to see if the environment variables match, dropping
     # them if allowed (and necessary)
-    env_list := valid_envs_for_all(possible_containers)
-    containers := [container |
-        container := possible_containers[_]
+    env_list := valid_envs_for_all(possible_after_initial_containers)
+    possible_after_env_containers := [container |
+        container := possible_after_initial_containers[_]
         envList_ok(container.env_rules, env_list)
     ]
 
-    count(containers) > 0
+    count(possible_after_env_containers) > 0
+
+    # check to see if the capabilities variables match, dropping
+    # them if allowed (and necessary)
+    caps_list := valid_caps_for_all(possible_after_env_containers, input.privileged)
+    possible_after_caps_containers := [container |
+        container := possible_after_env_containers[_]
+        caps_ok(get_capabilities(container, input.privileged), caps_list)
+    ]
+
+    count(possible_after_caps_containers) > 0
+
+    # set final container list
+    containers := possible_after_caps_containers
 
     # we can't do narrowing based on allowing stdio access so at this point
     # every container from the policy that might match this create request
@@ -295,7 +518,9 @@ create_container := {"metadata": [updateMatches, addStarted],
         "name": "started",
         "action": "add",
         "key": input.containerID,
-        "value": true,
+        "value": {
+            "privileged": input.privileged,
+        },
     }
 }
 
@@ -369,32 +594,48 @@ default exec_in_container := {"allowed": false}
 
 exec_in_container := {"metadata": [updateMatches],
                       "env_list": env_list,
+                      "caps_list": caps_list,
                       "allowed": true} {
     container_started
 
     # narrow our matches based upon the process requested
-    possible_containers := [container |
+    possible_after_initial_containers := [container |
         container := data.metadata.matches[input.containerID][_]
         # NB any change to these narrowing conditions should be reflected in
         # the error handling, such that error messaging correctly reflects
         # the narrowing process.
         workingDirectory_ok(container.working_dir)
         noNewPrivileges_ok(container.no_new_privileges)
+        user_ok(container.user)
         some process in container.exec_processes
         command_ok(process.command)
     ]
 
-    count(possible_containers) > 0
+    count(possible_after_initial_containers) > 0
 
     # check to see if the environment variables match, dropping
     # them if allowed (and necessary)
-    env_list := valid_envs_for_all(possible_containers)
-    containers := [container |
-        container := possible_containers[_]
+    env_list := valid_envs_for_all(possible_after_initial_containers)
+    possible_after_env_containers := [container |
+        container := possible_after_initial_containers[_]
         envList_ok(container.env_rules, env_list)
     ]
 
-    count(containers) > 0
+    count(possible_after_env_containers) > 0
+
+    # check to see if the capabilities variables match, dropping
+    # them if allowed (and necessary)
+    caps_list := valid_caps_for_all(possible_after_env_containers, container_privileged)
+    possible_after_caps_containers := [container |
+        container := possible_after_env_containers[_]
+        caps_ok(get_capabilities(container, container_privileged), caps_list)
+    ]
+
+    count(possible_after_caps_containers) > 0
+
+    # set final container list
+    containers := possible_after_caps_containers
+
     updateMatches := {
         "name": "matches",
         "action": "update",
@@ -492,20 +733,20 @@ default enforcement_point_info := {"available": false, "default_results": {"allo
 
 enforcement_point_info := {"available": available, "default_results": default_results, "unknown": false, "invalid": false} {
     enforcement_point := data.api.enforcement_points[input.name]
-    semver.compare(data.api.svn, enforcement_point.introducedVersion) >= 0
-    available := semver.compare(data.policy.api_svn, enforcement_point.introducedVersion) >= 0
+    semver.compare(data.api.version, enforcement_point.introducedVersion) >= 0
+    available := semver.compare(policy_api_version, enforcement_point.introducedVersion) >= 0
     default_results := enforcement_point.default_results
 }
 
 enforcement_point_info := {"available": false, "default_results": {"allow": false}, "unknown": false, "invalid": true} {
     enforcement_point := data.api.enforcement_points[input.name]
-    semver.compare(data.api.svn, enforcement_point.introducedVersion) < 0
+    semver.compare(data.api.version, enforcement_point.introducedVersion) < 0
 }
 
 default candidate_external_processes := []
 
 candidate_external_processes := external_processes {
-    semver.compare(data.policy.framework_svn, svn) == 0
+    semver.compare(policy_framework_version, version) == 0
 
     policy_external_processes := [e | e := data.policy.external_processes[_]]
     fragment_external_processes := [e |
@@ -518,9 +759,9 @@ candidate_external_processes := external_processes {
 }
 
 candidate_external_processes := external_processes {
-    semver.compare(data.policy.framework_svn, svn) < 0
+    semver.compare(policy_framework_version, version) < 0
 
-    policy_external_processes := apply_defaults("external_process", data.policy.external_processes, data.policy.framework_svn)
+    policy_external_processes := apply_defaults("external_process", data.policy.external_processes, policy_framework_version)
     fragment_external_processes := [e |
         feed := data.metadata.issuers[_].feeds[_]
         fragment := feed[_]
@@ -571,19 +812,19 @@ exec_external := {"allowed": true,
 default get_properties := {"allowed": false}
 
 get_properties := {"allowed": true} {
-    data.policy.allow_properties_access
+    allow_properties_access
 }
 
 default dump_stacks := {"allowed": false}
 
 dump_stacks := {"allowed": true} {
-    data.policy.allow_dump_stacks
+    allow_dump_stacks
 }
 
 default runtime_logging := {"allowed": false}
 
 runtime_logging := {"allowed": true} {
-    data.policy.allow_runtime_logging
+    allow_runtime_logging
 }
 
 default fragment_containers := []
@@ -598,32 +839,44 @@ default fragment_external_processes := []
 
 fragment_external_processes := data[input.namespace].external_processes
 
-apply_defaults(name, raw_values, framework_svn) := values {
-    semver.compare(framework_svn, svn) == 0
+apply_defaults(name, raw_values, framework_version) := values {
+    semver.compare(framework_version, version) == 0
     values := raw_values
 }
 
-apply_defaults(name, raw_values, framework_svn) := values {
-    semver.compare(framework_svn, svn) < 0
-    template := load_defaults(name, framework_svn)
-    values := [updated |
+apply_defaults("container", raw_values, framework_version) := values {
+    semver.compare(framework_version, version) < 0
+    values := [checked |
         raw := raw_values[_]
-        flat := object.union(template, raw)
-        arrays := {key: values |
-            template[key]["__array__"]
-            item_template := template[key]["item"]
-            values := [object.union(item_template, raw) | raw := raw[key][_]]
-        }
-        updated := object.union(flat, arrays)
+        checked := check_container(raw, framework_version)
     ]
 }
 
+apply_defaults("external_process", raw_values, framework_version) := values {
+    semver.compare(framework_version, version) < 0
+    values := [checked |
+        raw := raw_values[_]
+        checked := check_external_process(raw, framework_version)
+    ]
+}
+
+apply_defaults("fragment", raw_values, framework_version) := values {
+    semver.compare(framework_version, version) < 0
+    values := [checked |
+        raw := raw_values[_]
+        checked := check_fragment(raw, framework_version)
+    ]
+}
+
+default fragment_framework_version := null
+fragment_framework_version := data[input.namespace].framework_version
+
 extract_fragment_includes(includes) := fragment {
-    framework_svn := data[input.namespace].framework_svn
+    framework_version := fragment_framework_version
     objects := {
-        "containers": apply_defaults("container", fragment_containers, framework_svn),
-        "fragments": apply_defaults("fragment", fragment_fragments, framework_svn),
-        "external_processes": apply_defaults("external_process", fragment_external_processes, framework_svn)
+        "containers": apply_defaults("container", fragment_containers, framework_version),
+        "fragments": apply_defaults("fragment", fragment_fragments, framework_version),
+        "external_processes": apply_defaults("external_process", fragment_external_processes, framework_version)
     }
 
     fragment := {
@@ -664,22 +917,22 @@ update_issuer(includes) := issuer {
 default candidate_fragments := []
 
 candidate_fragments := fragments {
-    semver.compare(data.policy.framework_svn, svn) == 0
+    semver.compare(policy_framework_version, version) == 0
 
-    policy_fragmemnts := [f | f := data.policy.fragments[_]]
+    policy_fragments := [f | f := data.policy.fragments[_]]
     fragment_fragments := [f |
         feed := data.metadata.issuers[_].feeds[_]
         fragment := feed[_]
         f := fragment.fragments[_]
     ]
 
-    fragments := array.concat(policy_fragmemnts, fragment_fragments)
+    fragments := array.concat(policy_fragments, fragment_fragments)
 }
 
 candidate_fragments := fragments {
-    semver.compare(data.policy.framework_svn, svn) < 0
+    semver.compare(policy_framework_version, version) < 0
 
-    policy_fragments := apply_defaults("fragment", data.policy.fragments, data.policy.framework_svn)
+    policy_fragments := apply_defaults("fragment", data.policy.fragments, policy_framework_version)
     fragment_fragments := [f |
         feed := data.metadata.issuers[_].feeds[_]
         fragment := feed[_]
@@ -691,10 +944,21 @@ candidate_fragments := fragments {
 
 default load_fragment := {"allowed": false}
 
+svn_ok(svn, minimum_svn) {
+    # deprecated
+    semver.is_valid(svn)
+    semver.is_valid(minimum_svn)
+    semver.compare(svn, minimum_svn) >= 0
+}
+
+svn_ok(svn, minimum_svn) {
+    to_number(svn) >= to_number(minimum_svn)
+}
+
 fragment_ok(fragment) {
     input.issuer == fragment.issuer
     input.feed == fragment.feed
-    semver.compare(data[input.namespace].svn, fragment.minimum_svn) >= 0
+    svn_ok(data[input.namespace].svn, fragment.minimum_svn)
 }
 
 load_fragment := {"metadata": [updateIssuer], "add_module": add_module, "allowed": true} {
@@ -720,7 +984,7 @@ scratch_mounted(target) {
 
 scratch_mount := {"metadata": [add_scratch_mount], "allowed": true} {
     not scratch_mounted(input.target)
-    data.policy.allow_unencrypted_scratch
+    allow_unencrypted_scratch
     add_scratch_mount := {
         "name": "scratch_mounts",
         "action": "add",
@@ -731,7 +995,7 @@ scratch_mount := {"metadata": [add_scratch_mount], "allowed": true} {
 
 scratch_mount := {"metadata": [add_scratch_mount], "allowed": true} {
     not scratch_mounted(input.target)
-    not data.policy.allow_unencrypted_scratch
+    not allow_unencrypted_scratch
     input.encrypted
     add_scratch_mount := {
         "name": "scratch_mounts",
@@ -752,42 +1016,9 @@ scratch_unmount := {"metadata": [remove_scratch_mount], "allowed": true} {
     }
 }
 
-object_default(info, svn) := value {
-    not info["item"]
-    semver.compare(svn, info.introduced_version) >= 0
-    value := null
-}
-
-object_default(info, svn) := value {
-    not info["item"]
-    semver.compare(svn, info.introduced_version) < 0
-    value := info.default_value
-}
-
-item_default(info, svn) := value {
-    semver.compare(svn, info.introduced_version) >= 0
-    value := null
-}
-
-item_default(info, svn) := value {
-    semver.compare(svn, info.introduced_version) < 0
-    value := info.default_value
-}
-
-object_default(info, svn) := value {
-    info["item"]
-    value := {
-        "__array__": true,
-        "item": {key: value | value := item_default(info["item"][key], svn)}
-    }
-}
-
-load_defaults(name, svn) := defaults {
-    version_info := data.objectDefaults[name]
-    defaults := {key: value | value := object_default(version_info[key], svn)}
-}
-
-# error messages
+################################################################
+# Error messages
+################################################################
 
 errors["deviceHash not found"] {
     input.rule == "mount_device"
@@ -822,14 +1053,7 @@ errors["overlay has already been mounted"] {
 default overlay_matches := false
 
 overlay_matches {
-    some container in data.policy.containers
-    layerPaths_ok(container.layers)
-}
-
-overlay_matches {
-    feed := data.metadata.issuers[_].feeds[_]
-    some fragment in feed
-    some container in fragment.containers
+    some container in candidate_containers
     layerPaths_ok(container.layers)
 }
 
@@ -873,7 +1097,7 @@ command_matches {
 
 command_matches {
     input.rule == "exec_external"
-    some process in data.policy.external_processes
+    some process in candidate_external_processes
     command_ok(process.command)
 }
 
@@ -891,7 +1115,7 @@ env_matches(env) {
 
 env_matches(env) {
     input.rule in ["exec_external"]
-    some process in data.policy.external_processes
+    some process in candidate_external_processes
     some rule in process.env_rules
     env_ok(rule.pattern, rule.strategy, env)
 }
@@ -921,6 +1145,7 @@ errors["missing required environment variable"] {
     possible_containers := [container |
         container := data.metadata.matches[input.containerID][_]
         noNewPrivileges_ok(container.no_new_privileges)
+        user_ok(container.user)
         privileged_ok(container.allow_elevated)
         workingDirectory_ok(container.working_dir)
         command_ok(container.command)
@@ -952,6 +1177,7 @@ errors["missing required environment variable"] {
     possible_containers := [container |
         container := data.metadata.matches[input.containerID][_]
         noNewPrivileges_ok(container.no_new_privileges)
+        user_ok(container.user)
         workingDirectory_ok(container.working_dir)
         some process in container.exec_processes
         command_ok(process.command)
@@ -1012,7 +1238,7 @@ workingDirectory_matches {
 
 workingDirectory_matches {
     input.rule == "exec_external"
-    some process in data.policy.external_processes
+    some process in candidate_external_processes
     workingDirectory_ok(process.working_dir)
 }
 
@@ -1069,12 +1295,8 @@ errors["no device at path to unmount"] {
 default fragment_issuer_matches := false
 
 fragment_issuer_matches {
-    some fragment in data.policy.fragments
+    some fragment in candidate_fragments
     fragment.issuer == input.issuer
-}
-
-fragment_issuer_matches {
-    input.issuer in data.metadata.issuers
 }
 
 errors["invalid fragment issuer"] {
@@ -1085,7 +1307,7 @@ errors["invalid fragment issuer"] {
 default fragment_feed_matches := false
 
 fragment_feed_matches {
-    some fragment in data.policy.fragments
+    some fragment in candidate_fragments
     fragment.issuer == input.issuer
     fragment.feed == input.feed
 }
@@ -1103,21 +1325,41 @@ errors["invalid fragment feed"] {
 default fragment_version_is_valid := false
 
 fragment_version_is_valid {
-    some fragment in data.policy.fragments
+    some fragment in candidate_fragments
     fragment.issuer == input.issuer
     fragment.feed == input.feed
-    semver.compare(data[input.namespace].svn, fragment.minimum_svn) >= 0
+    svn_ok(data[input.namespace].svn, fragment.minimum_svn)
 }
 
-fragment_version_is_valid {
-    some fragment in data.metadata.issuers[input.issuer][input.feed]
-    semver.compare(data[input.namespace].svn, fragment.minimum_svn) >= 0
+default svn_mismatch := false
+
+svn_mismatch {
+    some fragment in candidate_fragments
+    fragment.issuer == input.issuer
+    fragment.feed == input.feed
+    to_number(data[input.namespace].svn)
+    semver.is_valid(fragment.minimum_svn)
 }
 
-errors["fragment version is below the specified minimum"] {
+svn_mismatch {
+    some fragment in candidate_fragments
+    fragment.issuer == input.issuer
+    fragment.feed == input.feed
+    semver.is_valid(data[input.namespace].svn)
+    to_number(fragment.minimum_svn)
+}
+
+errors["fragment svn is below the specified minimum"] {
     input.rule == "load_fragment"
     fragment_feed_matches
+    not svn_mismatch
     not fragment_version_is_valid
+}
+
+errors["fragment svn and the specified minimum are different types"] {
+    input.rule == "load_fragment"
+    fragment_feed_matches
+    svn_mismatch
 }
 
 errors["scratch already mounted at path"] {
@@ -1127,7 +1369,7 @@ errors["scratch already mounted at path"] {
 
 errors["unencrypted scratch not allowed"] {
     input.rule == "scratch_mount"
-    not data.policy.allow_unencrypted_scratch
+    not allow_unencrypted_scratch
     not input.encrypted
 }
 
@@ -1136,50 +1378,65 @@ errors["no scratch at path to unmount"] {
     not scratch_mounted(input.unmountTarget)
 }
 
-errors[framework_svn_error] {
-    not data.policy.framework_svn
-    framework_svn_error := concat(" ", ["framework_svn is missing. Current svn:", svn])
+errors[framework_version_error] {
+    policy_framework_version == null
+    framework_version_error := concat(" ", ["framework_version is missing. Current version:", version])
 }
 
-errors[framework_svn_error] {
-    semver.compare(data.policy.framework_svn, svn) > 0
-    framework_svn_error := concat(" ", ["framework_svn is ahead of the current svn:", data.policy.framework_svn, ">", svn])
+errors[framework_version_error] {
+    semver.compare(policy_framework_version, version) > 0
+    framework_version_error := concat(" ", ["framework_version is ahead of the current version:", policy_framework_version, ">", version])
 }
 
-errors[fragment_framework_svn_error] {
-    not data[input.namespace].framework_svn
-    fragment_framework_svn_error := concat(" ", ["fragment framework_svn is missing. Current svn:", svn])
+errors[fragment_framework_version_error] {
+    fragment_framework_version == null
+    fragment_framework_version_error := concat(" ", ["fragment framework_version is missing. Current version:", version])
 }
 
-errors[fragment_framework_svn_error] {
-    semver.compare(data[input.namespace].framework_svn, svn) > 0
-    fragment_framework_svn_error := concat(" ", ["fragment framework_svn is ahead of the current svn:", data[input.namespace].framework_svn, ">", svn])
+errors[fragment_framework_version_error] {
+    semver.compare(fragment_framework_version, version) > 0
+    fragment_framework_version_error := concat(" ", ["fragment framework_version is ahead of the current version:", fragment_framework_version, ">", version])
 }
 
 errors["containers only distinguishable by allow_stdio_access"] {
     input.rule == "create_container"
 
     not container_started
-    possible_containers := [container |
+    possible_after_initial_containers := [container |
         container := data.metadata.matches[input.containerID][_]
         noNewPrivileges_ok(container.no_new_privileges)
+        user_ok(container.user)
         privileged_ok(container.allow_elevated)
         workingDirectory_ok(container.working_dir)
         command_ok(container.command)
         mountList_ok(container.mounts, container.allow_elevated)
+        seccomp_ok(container.seccomp_profile_sha256)
     ]
 
-    count(possible_containers) > 0
+    count(possible_after_initial_containers) > 0
 
     # check to see if the environment variables match, dropping
     # them if allowed (and necessary)
-    env_list := valid_envs_for_all(possible_containers)
-    containers := [container |
-        container := possible_containers[_]
+    env_list := valid_envs_for_all(possible_after_initial_containers)
+    possible_after_env_containers := [container |
+        container := possible_after_initial_containers[_]
         envList_ok(container.env_rules, env_list)
     ]
 
-    count(containers) > 0
+    count(possible_after_env_containers) > 0
+
+    # check to see if the capabilities variables match, dropping
+    # them if allowed (and necessary)
+    caps_list := valid_caps_for_all(possible_after_env_containers, input.privileged)
+    possible_after_caps_containers := [container |
+        container := possible_after_env_containers[_]
+        caps_ok(get_capabilities(container, input.privileged), caps_list)
+    ]
+
+    count(possible_after_caps_containers) > 0
+
+    # set final container list
+    containers := possible_after_caps_containers
 
     allow_stdio_access := containers[0].allow_stdio_access
     some c in containers
@@ -1234,3 +1491,327 @@ errors["invalid noNewPrivileges"] {
     input.rule in ["create_container", "exec_in_container"]
     not noNewPrivileges_matches
 }
+
+default user_matches := false
+
+user_matches {
+    input.rule == "create_container"
+    some container in data.metadata.matches[input.containerID]
+    user_ok(container.user)
+}
+
+user_matches {
+    input.rule == "exec_in_container"
+    some container in data.metadata.matches[input.containerID]
+    some process in container.exec_processes
+    command_ok(process.command)
+    workingDirectory_ok(process.working_dir)
+    user_ok(process.user)
+}
+
+errors["invalid user"] {
+    input.rule in ["create_container", "exec_in_container"]
+    not user_matches
+}
+
+errors["capabilities don't match"] {
+    input.rule == "create_container"
+
+    not container_started
+
+    possible_after_initial_containers := [container |
+        container := data.metadata.matches[input.containerID][_]
+        privileged_ok(container.allow_elevated)
+        noNewPrivileges_ok(container.no_new_privileges)
+        user_ok(container.user)
+        workingDirectory_ok(container.working_dir)
+        command_ok(container.command)
+        mountList_ok(container.mounts, container.allow_elevated)
+        seccomp_ok(container.seccomp_profile_sha256)
+    ]
+
+    count(possible_after_initial_containers) > 0
+
+    # check to see if the environment variables match, dropping
+    # them if allowed (and necessary)
+    env_list := valid_envs_for_all(possible_after_initial_containers)
+    possible_after_env_containers := [container |
+        container := possible_after_initial_containers[_]
+        envList_ok(container.env_rules, env_list)
+    ]
+
+    count(possible_after_env_containers) > 0
+
+    # check to see if the capabilities variables match, dropping
+    # them if allowed (and necessary)
+    caps_list := valid_caps_for_all(possible_after_env_containers, input.privileged)
+    possible_after_caps_containers := [container |
+        container := possible_after_env_containers[_]
+        caps_ok(get_capabilities(container, input.privileged), caps_list)
+    ]
+
+    count(possible_after_caps_containers) == 0
+}
+
+errors["capabilities don't match"] {
+    input.rule == "exec_in_container"
+
+    container_started
+
+    possible_after_initial_containers := [container |
+        container := data.metadata.matches[input.containerID][_]
+        workingDirectory_ok(container.working_dir)
+        noNewPrivileges_ok(container.no_new_privileges)
+        user_ok(container.user)
+        some process in container.exec_processes
+        command_ok(process.command)
+    ]
+
+    count(possible_after_initial_containers) > 0
+
+    # check to see if the environment variables match, dropping
+    # them if allowed (and necessary)
+    env_list := valid_envs_for_all(possible_after_initial_containers)
+    possible_after_env_containers := [container |
+        container := possible_after_initial_containers[_]
+        envList_ok(container.env_rules, env_list)
+    ]
+
+    count(possible_after_env_containers) > 0
+
+    # check to see if the capabilities variables match, dropping
+    # them if allowed (and necessary)
+    caps_list := valid_caps_for_all(possible_after_env_containers, container_privileged)
+    possible_after_caps_containers := [container |
+        container := possible_after_env_containers[_]
+        caps_ok(get_capabilities(container, container_privileged), caps_list)
+    ]
+
+    count(possible_after_caps_containers) == 0
+}
+
+# covers exec_in_container as well. it shouldn't be possible to ever get
+# an exec_in_container as it "inherits" capabilities rules from create_container
+errors["containers only distinguishable by capabilties"] {
+    input.rule == "create_container"
+
+    allow_capability_dropping
+    not container_started
+
+    # narrow the matches based upon command, working directory, and
+    # mount list
+    possible_after_initial_containers := [container |
+        container := data.metadata.matches[input.containerID][_]
+        # NB any change to these narrowing conditions should be reflected in
+        # the error handling, such that error messaging correctly reflects
+        # the narrowing process.
+        noNewPrivileges_ok(container.no_new_privileges)
+        user_ok(container.user)
+        privileged_ok(container.allow_elevated)
+        workingDirectory_ok(container.working_dir)
+        command_ok(container.command)
+        mountList_ok(container.mounts, container.allow_elevated)
+    ]
+
+    count(possible_after_initial_containers) > 0
+
+    # check to see if the environment variables match, dropping
+    # them if allowed (and necessary)
+    env_list := valid_envs_for_all(possible_after_initial_containers)
+    possible_after_env_containers := [container |
+        container := possible_after_initial_containers[_]
+        envList_ok(container.env_rules, env_list)
+    ]
+
+    count(possible_after_env_containers) > 0
+
+    largest := largest_caps_sets_for_all(possible_after_env_containers, input.privileged)
+    not all_caps_sets_are_equal(largest)
+}
+
+default seccomp_matches := false
+
+seccomp_matches {
+    input.rule == "create_container"
+    some container in data.metadata.matches[input.containerID]
+    seccomp_ok(container.seccomp_profile_sha256)
+}
+
+errors["invalid seccomp"] {
+    input.rule == "create_container"
+    not seccomp_matches
+}
+
+default error_objects := null
+
+error_objects := containers {
+    input.rule == "create_container"
+    containers := data.metadata.matches[input.containerID]
+}
+
+error_objects := processes {
+    input.rule == "exec_in_container"
+    processes := [process |
+        container := data.metadata.matches[input.containerID][_]
+        process := container.exec_processes[_]
+    ]
+}
+
+error_objects := processes {
+    input.rule == "exec_external"
+    processes := candidate_external_processes
+}
+
+error_objects := fragments {
+    input.rule == "load_fragment"
+    fragments := candidate_fragments
+}
+
+
+################################################################################
+# Logic for providing backwards compatibility for framework data objects
+################################################################################
+
+
+check_container(raw_container, framework_version) := container {
+    semver.compare(framework_version, version) == 0
+    container := raw_container
+}
+
+check_container(raw_container, framework_version) := container {
+    semver.compare(framework_version, version) < 0
+    container := {
+        # Base fields
+        "command": raw_container.command,
+        "env_rules": raw_container.env_rules,
+        "layers": raw_container.layers,
+        "mounts": raw_container.mounts,
+        "allow_elevated": raw_container.allow_elevated,
+        "working_dir": raw_container.working_dir,
+        "exec_processes": raw_container.exec_processes,
+        "signals": raw_container.signals,
+        "allow_stdio_access": raw_container.allow_stdio_access,
+        # Additional fields need to have default logic applied
+        "no_new_privileges": check_no_new_privileges(raw_container, framework_version),
+        "user": check_user(raw_container, framework_version),
+        "capabilities": check_capabilities(raw_container, framework_version),
+        "seccomp_profile_sha256": check_seccomp_profile_sha256(raw_container, framework_version),
+    }
+}
+
+check_no_new_privileges(raw_container, framework_version) := no_new_privileges {
+    semver.compare(framework_version, "0.2.0") >= 0
+    no_new_privileges := raw_container.no_new_privileges
+}
+
+check_no_new_privileges(raw_container, framework_version) := no_new_privileges {
+    semver.compare(framework_version, "0.2.0") < 0
+    no_new_privileges := false
+}
+
+check_user(raw_container, framework_version) := user {
+    semver.compare(framework_version, "0.2.1") >= 0
+    user := raw_container.user
+}
+
+check_user(raw_container, framework_version) := user {
+    semver.compare(framework_version, "0.2.1") < 0
+    user := {
+        "umask": "0022",
+        "user_idname": {
+            "pattern": "",
+            "strategy": "any"
+        },
+        "group_idnames": [
+            {
+                "pattern": "",
+                "strategy": "any"
+            }
+        ]
+    }
+}
+
+check_capabilities(raw_container, framework_version) := capabilities {
+    semver.compare(framework_version, "0.2.2") >= 0
+    capabilities := raw_container.capabilities
+}
+
+check_capabilities(raw_container, framework_version) := capabilities {
+    semver.compare(framework_version, "0.2.2") < 0
+    # we cannot determine a reasonable default at the time this is called,
+    # which is either during `mount_overlay` or `load_fragment`, and so
+    # we set it to `null`, which indicates that the capabilities should
+    # be determined dynamically when needed.
+    capabilities := null
+}
+
+check_seccomp_profile_sha256(raw_container, framework_version) := seccomp_profile_sha256 {
+    semver.compare(framework_version, "0.2.3") >= 0
+    seccomp_profile_sha256 := raw_container.seccomp_profile_sha256
+}
+
+check_seccomp_profile_sha256(raw_container, framework_version) := seccomp_profile_sha256 {
+    semver.compare(framework_version, "0.2.3") < 0
+    seccomp_profile_sha256 := ""
+}
+
+check_external_process(raw_process, framework_version) := process {
+    semver.compare(framework_version, version) == 0
+    process := raw_process
+}
+
+check_external_process(raw_process, framework_version) := process {
+    semver.compare(framework_version, version) < 0
+    process := {
+        # Base fields
+        "command": raw_process.command,
+        "env_rules": raw_process.env_rules,
+        "working_dir": raw_process.working_dir,
+        "allow_stdio_access": raw_process.allow_stdio_access,
+        # Additional fields need to have default logic applied
+    }
+}
+
+check_fragment(raw_fragment, framework_version) := fragment {
+    semver.compare(framework_version, version) == 0
+    fragment := raw_fragment
+}
+
+check_fragment(raw_fragment, framework_version) := fragment {
+    semver.compare(framework_version, version) < 0
+    fragment := {
+        # Base fields
+        "issuer": raw_fragment.issuer,
+        "feed": raw_fragment.feed,
+        "minimum_svn": raw_fragment.minimum_svn,
+        "includes": raw_fragment.includes,
+        # Additional fields need to have default logic applied
+    }
+}
+
+# base policy-level flags
+allow_properties_access := data.policy.allow_properties_access
+allow_dump_stacks := data.policy.allow_dump_stacks
+allow_runtime_logging := data.policy.allow_runtime_logging
+allow_environment_variable_dropping := data.policy.allow_environment_variable_dropping
+allow_unencrypted_scratch := data.policy.allow_unencrypted_scratch
+
+# all flags not in the base set need to have default logic applied
+
+default allow_capability_dropping := false
+
+allow_capability_dropping := flag {
+    semver.compare(policy_framework_version, "0.2.2") >= 0
+    flag := data.policy.allow_capability_dropping
+}
+
+default policy_framework_version := null
+default policy_api_version := null
+
+policy_framework_version := data.policy.framework_version
+policy_api_version := data.policy.api_version
+
+# deprecated
+policy_framework_version := data.policy.framework_svn
+policy_api_version := data.policy.api_svn
+fragment_framework_version := data[input.namespace].framework_svn
