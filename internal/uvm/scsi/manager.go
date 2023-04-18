@@ -64,6 +64,7 @@ func NewManager(
 // MountConfig specifies the options to apply for mounting a SCSI device in
 // the guest OS.
 type MountConfig struct {
+	Partition uint64
 	Encrypted bool
 	Options   []string
 }

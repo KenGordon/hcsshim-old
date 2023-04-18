@@ -200,6 +200,7 @@ func mountRequest(controller, lun uint, path string, config *mountConfig, osType
 			MountPath:  path,
 			Controller: uint8(controller),
 			Lun:        uint8(lun),
+			Partition:  config.partition,
 			ReadOnly:   config.readOnly,
 			Encrypted:  config.encrypted,
 			Options:    config.options,
@@ -226,6 +227,7 @@ func unmountRequest(controller, lun uint, path string, config *mountConfig, osTy
 		req.Settings = guestresource.LCOWMappedVirtualDisk{
 			MountPath:  path,
 			Lun:        uint8(lun),
+			Partition:  config.partition,
 			Controller: uint8(controller),
 			VerityInfo: config.verity,
 		}
