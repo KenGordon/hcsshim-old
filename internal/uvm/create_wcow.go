@@ -278,6 +278,8 @@ func CreateWCOW(ctx context.Context, opts *OptionsWCOW) (_ *UtilityVM, err error
 		devicesPhysicallyBacked: opts.FullyPhysicallyBacked,
 		vsmbNoDirectMap:         opts.NoDirectMap,
 		noWritableFileShares:    opts.NoWritableFileShares,
+		hrmCPUJob:               opts.HRMCPUJob,
+		hrmMemoryJob:            opts.HRMMemoryJob,
 		createOpts:              *opts,
 	}
 

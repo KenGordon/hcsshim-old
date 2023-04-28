@@ -78,7 +78,7 @@ func CreateContainer(id string, c *ContainerConfig) (Container, error) {
 		return nil, fmt.Errorf("failed to merge additional JSON '%s': %s", createContainerAdditionalJSON, err)
 	}
 
-	system, err := hcs.CreateComputeSystem(context.Background(), id, fullConfig)
+	system, err := hcs.CreateComputeSystem(context.Background(), id, fullConfig, "", "")
 	if err != nil {
 		return nil, err
 	}

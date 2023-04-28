@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync/atomic"
+	"os"
 
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 )
@@ -38,6 +39,15 @@ func SetScrubbing(enable bool) {
 func IsScrubbingEnabled() bool {
 	v := atomic.LoadInt32(&_scrub)
 	return v != 0
+}
+
+// FileDump dumps to file
+// A quick hack for logging
+func FileDump(s string) {
+    f, _ := os.OpenFile("C:\\users\\administrator\\desktop\\data.txt", os.O_APPEND|os.O_CREATE, 0777)
+    f.WriteString(s)
+    f.WriteString("\r\n");
+    f.Close()
 }
 
 // ScrubProcessParameters scrubs HCS Create Process requests with config parameters of

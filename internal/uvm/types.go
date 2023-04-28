@@ -149,4 +149,10 @@ type UtilityVM struct {
 
 	// confidentialUVMOptions hold confidential UVM specific options
 	confidentialUVMOptions *ConfidentialOptions
+
+	// HRMCPUJob the name of the HRM CPU job object that the underying HCS system should be bound to
+	hrmCPUJob string
+
+	// HRMMemoryJob the name of the HRM memory job object that the underying HCS system should be bound to
+	hrmMemoryJob string
 }

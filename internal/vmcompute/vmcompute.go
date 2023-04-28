@@ -7,6 +7,8 @@ import (
 	"syscall"
 	"time"
 
+    "fmt"
+
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
 
@@ -143,7 +145,7 @@ func HcsEnumerateComputeSystems(ctx gcontext.Context, query string) (computeSyst
 	})
 }
 
-func HcsCreateComputeSystem(ctx gcontext.Context, id string, configuration string, identity syscall.Handle) (computeSystem HcsSystem, result string, hr error) {
+func HcsCreateComputeSystem(ctx gcontext.Context, id string, configuration string, identity syscall.Handle, hrmMemoryJob string, hrmCPUJob string) (computeSystem HcsSystem, result string, hr error) {
 	ctx, span := oc.StartSpan(ctx, "HcsCreateComputeSystem")
 	defer span.End()
 	defer func() {
@@ -158,9 +160,53 @@ func HcsCreateComputeSystem(ctx gcontext.Context, id string, configuration strin
 		trace.StringAttribute("id", id),
 		trace.StringAttribute("configuration", configuration))
 
+	hr, hcsOperation := hcsCreateOperation(nil, nil);
+	if hr != nil {
+		result = fmt.Sprintf("Failed to create HCS operation, hr: %v", hr);
+		return;
+	}
+
+	defer hcsCloseOperation(hcsOperation)
+
+	if hrmMemoryJob != "" {
+		var memoryPoolHandle syscall.Handle
+		hr, memoryPoolHandle = openJobObject(JOB_OBJECT_ALL_ACCESS, true, hrmMemoryJob);
+		if hr!=nil {
+			result = fmt.Sprintf("Failed to open HRM memory job object %v, hr: %v", hrmMemoryJob, hr)
+			return
+		}
+		
+		hr = hcsAddResourceToOperation(hcsOperation, HcsResourceTypeJob, HCS_MEM_JOB_URI, memoryPoolHandle)
+		
+		if hr != nil {
+			result = fmt.Sprintf("Failed to add memory pool handle as a resource to HCS operation, hr: %v", hr)
+		}
+	}
+
+	if hrmCPUJob != "" {
+		var cpuPoolHandle syscall.Handle
+		hr, cpuPoolHandle = openJobObject(JOB_OBJECT_ALL_ACCESS, true, hrmCPUJob);
+		if hr!=nil {
+			result = fmt.Sprintf("Failed to open HRM CPU job object %v, hr: %v", hrmCPUJob, hr)
+			return
+		}
+		
+		hr = hcsAddResourceToOperation(hcsOperation, HcsResourceTypeJob, HCS_CPU_JOB_URI, cpuPoolHandle)
+		
+		if hr != nil {
+			result = fmt.Sprintf("Failed to add CPU pool handle as a resource to HCS operation, hr: %v", hr)
+		}
+	}
+    
 	return computeSystem, result, execute(ctx, timeout.SystemCreate, func() error {
 		var resultp *uint16
-		err := hcsCreateComputeSystem(id, configuration, identity, &computeSystem, &resultp)
+		err := hcsCreateComputeSystemV2(id, configuration, hcsOperation, nil, &computeSystem);
+
+        if err != nil {
+            return err
+        }
+        err = hcsWaitForOperationResult(hcsOperation, INFINITE_OPERATION_TIMEOUT, &resultp);
+
 		if resultp != nil {
 			result = interop.ConvertAndFreeCoTaskMemString(resultp)
 		}

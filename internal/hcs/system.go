@@ -55,7 +55,7 @@ func siloNameFmt(containerID string) string {
 }
 
 // CreateComputeSystem creates a new compute system with the given configuration but does not start it.
-func CreateComputeSystem(ctx context.Context, id string, hcsDocumentInterface interface{}) (_ *System, err error) {
+func CreateComputeSystem(ctx context.Context, id string, hcsDocumentInterface interface{}, hrmMemoryJob string, hrmCPUJob string) (_ *System, err error) {
 	operation := "hcs::CreateComputeSystem"
 
 	// hcsCreateComputeSystemContext is an async operation. Start the outer span
@@ -79,7 +79,7 @@ func CreateComputeSystem(ctx context.Context, id string, hcsDocumentInterface in
 		resultJSON  string
 		createError error
 	)
-	computeSystem.handle, resultJSON, createError = vmcompute.HcsCreateComputeSystem(ctx, id, hcsDocument, identity)
+	computeSystem.handle, resultJSON, createError = vmcompute.HcsCreateComputeSystem(ctx, id, hcsDocument, identity, hrmMemoryJob, hrmCPUJob)
 	if createError == nil || IsPending(createError) {
 		defer func() {
 			if err != nil {

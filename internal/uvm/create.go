@@ -102,6 +102,12 @@ type Options struct {
 
 	// DumpDirectoryPath is the path of the directory inside which all debug dumps etc are stored.
 	DumpDirectoryPath string
+
+	// HRMCPUJob the name of the HRM CPU job object that the underying HCS system should be bound to
+	HRMCPUJob string
+
+	// HRMMemoryJob the name of the HRM memory job object that the underying HCS system should be bound to
+	HRMMemoryJob string
 }
 
 // compares the create opts used during template creation with the create opts
@@ -217,7 +223,7 @@ func (uvm *UtilityVM) OS() string {
 
 func (uvm *UtilityVM) create(ctx context.Context, doc interface{}) error {
 	uvm.exitCh = make(chan struct{})
-	system, err := hcs.CreateComputeSystem(ctx, uvm.id, doc)
+	system, err := hcs.CreateComputeSystem(ctx, uvm.id, doc, uvm.hrmMemoryJob, uvm.hrmCPUJob)
 	if err != nil {
 		return err
 	}
@@ -302,7 +308,7 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, settings i
 		ShouldTerminateOnLastHandleClosed: true,
 		HostedSystem:                      settings,
 	}
-	c, err := hcs.CreateComputeSystem(ctx, id, &doc)
+	c, err := hcs.CreateComputeSystem(ctx, id, &doc, "", "")
 	if err != nil {
 		return nil, err
 	}
