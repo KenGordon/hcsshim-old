@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package pandora.v1;
+option go_package = "github.com/Microsoft/hcsshim/cmd/pandora/api;pandoraapi";
+
+service Pandora {
+    rpc ConnectVM(ConnectVMRequest) returns (ConnectVMResponse) {}
+    rpc CreateContainer(CreateContainerRequest) returns (CreateContainerResponse) {}
+}
+
+message ConnectVMRequest {
+    string vm_id = 1;
+    string hvsocket_endpoint = 2;
+}
+
+message ConnectVMResponse {}
+
+message CreateContainerRequest {
+    string id = 1;
+    Image image = 2;
+    SCSIDiskPartition scratch = 3;
+}
+
+message CreateContainerResponse {}
+
+message Image {
+    FileOffset config = 1;
+    repeated Layer layers = 2;
+}
+
+message FileOffset {
+    string path = 1;
+    uint64 offset = 2;
+    uint64 size = 3;
+}
+
+message Layer {
+    oneof layer {
+        SCSIDiskPartition scsi_partition_layer = 1;
+    }
+}
+
+message SCSIDiskPartition {
+    uint64 controller = 1;
+    uint64 lun = 2;
+    uint64 partition_index = 3;
+}
