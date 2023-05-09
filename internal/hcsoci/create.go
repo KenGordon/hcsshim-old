@@ -381,7 +381,18 @@ func CreateContainer(ctx context.Context, createOptions *CreateOptions) (_ cow.C
 		return c, r, nil
 	}
 
-	system, err := hcs.CreateComputeSystem(ctx, coi.actualID, hcsDocument, "", "")
+	var cpuJob = "";
+	var memoryJob = ""
+	
+	if v, ok := coi.Spec.Annotations[annotations.HRMCPUJob]; ok {
+		cpuJob = v
+	}
+
+	if v, ok := coi.Spec.Annotations[annotations.HRMMemoryJob]; ok {
+		memoryJob = v
+	}
+
+	system, err := hcs.CreateComputeSystem(ctx, coi.actualID, hcsDocument, memoryJob, cpuJob)
 	if err != nil {
 		return nil, r, err
 	}

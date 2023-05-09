@@ -308,7 +308,7 @@ func (uvm *UtilityVM) CreateContainer(ctx context.Context, id string, settings i
 		ShouldTerminateOnLastHandleClosed: true,
 		HostedSystem:                      settings,
 	}
-	c, err := hcs.CreateComputeSystem(ctx, id, &doc, "", "")
+	c, err := hcs.CreateComputeSystem(ctx, id, &doc, uvm.hrmMemoryJob, uvm.hrmCPUJob)
 	if err != nil {
 		return nil, err
 	}
