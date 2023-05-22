@@ -780,6 +780,8 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 		encryptScratch:          opts.EnableScratchEncryption,
 		noWritableFileShares:    opts.NoWritableFileShares,
 		confidentialUVMOptions:  opts.ConfidentialOptions,
+		hrmCPUJob:               opts.HRMCPUJob,
+		hrmMemoryJob:            opts.HRMMemoryJob,
 	}
 
 	defer func() {
