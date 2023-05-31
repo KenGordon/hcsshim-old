@@ -1,0 +1,57 @@
+# This pipeline creates a PR that merges in the latest changes from the source branch
+# at https://github.com/microsoft/hcsshim.git with the destination branch in this ADO repo.
+#
+# The PR does not automatically succeed, and still needs to be approved before it is merged.
+
+trigger: none
+
+# schedules:
+#   - cron: "0 7 * * Mon-Fri" # 7AM UTC (Monday PST) on Weekdays
+#     displayName: Weekly Sync with Upstream Github
+#     branches:
+#       include:
+#         - main
+#     always: true
+
+parameters:
+  - name: upstream_branch
+    displayName: Source branch
+    type: string
+    default: main
+
+  - name: branch
+    displayName: Destination branch
+    type: string
+    default: main
+
+  - name: auto_complete
+    displayName: Enable PR auto-complete
+    type: boolean
+    default: false
+
+  - name: delete_merge_branch
+    displayName: Delete merge branch on PR completion
+    type: boolean
+    default: true
+
+  - name: squash_merge_pr
+    displayName: Squash commits in merge PR
+    type: boolean
+    default: false
+
+resources:
+  repositories:
+    - repository: cplat
+      type: git
+      name: ContainerPlatform/ContainerPlatform
+
+extends:
+  template: .pipelines/templates/common/sync-with-upstream.yml@cplat
+  parameters:
+    upstream_repo: https://github.com/microsoft/hcsshim.git
+    upstream_branch: ${{ parameters.upstream_branch }}
+    branch: ${{ parameters.branch }}
+    create_pr: true
+    squash_merge_pr: ${{ parameters.squash_merge_pr }}
+    auto_complete: ${{ parameters.auto_complete }}
+    delete_merge_branch: ${{ parameters.delete_merge_branch }}
