@@ -8,6 +8,7 @@ env:
   GOTESTSUM_VERSION: "latest"
 
 jobs:
+
   lint:
     runs-on: "windows-2022"
     strategy:
@@ -25,15 +26,18 @@ jobs:
               ./internal/tools/...
               ./pkg/...
               ./ext4/...
+
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install go
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
-      - name: Clean mod cache
-        shell: Powershell
-        run: |
-          go clean -modcache
+          # sometimes go cache causes issues with lint
+          cache: false
+
       - uses: golangci/golangci-lint-action@v3
         with:
           version: v1.52
@@ -42,6 +46,7 @@ jobs:
             --max-issues-per-linter=0
             --max-same-issues=0
             --modules-download-mode=readonly
+            --timeout=10m
             ${{ matrix.dirs }}
           working-directory: ${{ matrix.root }}
         env:
@@ -55,14 +60,16 @@ jobs:
       GOPATH: '${{ github.workspace }}\go'
 
     steps:
-      - uses: actions/setup-go@v4
+      - name: Checkout hcsshim
+        uses: actions/checkout@v3
+        with:
+          path: go/src/github.com/Microsoft/hcsshim
+
+      - name: Install go
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
-
-      - uses: actions/checkout@v3
-        with:
-          path: "go/src/github.com/Microsoft/hcsshim"
-        name: Checkout hcsshim
+          cache-dependency-path: go/src/github.com/Microsoft/hcsshim/go.sum
 
       - name: Get containerd ref
         shell: powershell
@@ -77,12 +84,12 @@ jobs:
           "containerd_ref=$v" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         working-directory: go/src/github.com/Microsoft/hcsshim
 
-      - uses: actions/checkout@v3
+      - name: Checkout containerd
+        uses: actions/checkout@v3
         with:
           repository: containerd/containerd
           path: "containerd"
           ref: "${{ env.containerd_ref }}"
-        name: Checkout containerd
 
       - name: Install protobuild and protoc-gen-gogoctrd
         shell: powershell
@@ -143,9 +150,11 @@ jobs:
     env:
       GOPROXY: "https://proxy.golang.org,direct"
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
-      - uses: actions/setup-go@v4
+      - name: Install go
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -181,10 +190,14 @@ jobs:
     name: Go Generate
     runs-on: "windows-2022"
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install go
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
+
       - name: Validate go generate
         shell: powershell
         run: |
@@ -243,8 +256,11 @@ jobs:
       matrix:
         os: [windows-2019, windows-2022]
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install go
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -304,10 +320,17 @@ jobs:
         os: [windows-2019, windows-2022]
 
     steps:
-      - uses: actions/setup-go@v4
+      - name: Checkout hcsshim
+        uses: actions/checkout@v3
+        with:
+          path: src/github.com/Microsoft/hcsshim
+
+      - name: Install go
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
+          cache-dependency-path: src/github.com/Microsoft/hcsshim/go.sum
 
       - name: Set env
         shell: bash
@@ -316,11 +339,6 @@ jobs:
           echo "GOPATH=${{ github.workspace }}" >> $GITHUB_ENV
           echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
           echo "${{ github.workspace }}/src/github.com/containerd/containerd/bin" >> $GITHUB_PATH
-
-      - uses: actions/checkout@v3
-        with:
-          path: src/github.com/Microsoft/hcsshim
-        name: Checkout hcsshim
 
       - name: Get containerd ref
         shell: powershell
@@ -355,20 +373,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # needs to be a separate step since terminal reload is required to bring in new env variables and PATH
+      - name: Upgrade Chocolaty
+        shell: powershell
+        run: |
+          choco upgrade -y chocolatey 2>&1
+
       - name: Install mingw
         shell: powershell
         run: |
           $VerbosePreference = 'Continue'
           # dont set $ErrorActionPreference since we want to allow choco install to fail later on
-
-          Write-Output '::group::Update chocolaty'
-          choco upgrade -y chocolatey
-          Write-Output '::endgroup::'
-
-          if ( $LASTEXITCODE ) {
-            Write-Output '::error::Could not update chocolatey.'
-            exit $LASTEXITCODE
-          }
 
           Write-Output 'Install mingw'
           # Install sometimes fails when downloading mingw zip from source-forge with:
@@ -386,7 +401,7 @@ jobs:
               Sleep -Seconds 60
             }
 
-            choco install -y --no-progress --stop-on-first-failure --force mingw --allow-downgrade --version 10.2.0
+            choco install -y --no-progress --stop-on-first-failure --force mingw --allow-downgrade --version 10.3.0
             Write-Output '::endgroup::'
             if ( -not $LASTEXITCODE ) {
               Write-Output "Attempt $i succeeded (exit code: $LASTEXITCODE)"
@@ -399,6 +414,9 @@ jobs:
             Write-Output "::error::Could not install mingw after $i attempts."
             exit $LASTEXITCODE
           }
+
+          # verify mingw32-make was installed
+          Get-Command -CommandType Application -ErrorAction Stop mingw32-make.exe
 
       - name: Build binaries
         shell: bash
@@ -500,8 +518,11 @@ jobs:
     needs: [test-windows, test-linux]
     runs-on: "windows-2022"
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install go
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}
 
