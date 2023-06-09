@@ -218,12 +218,8 @@ func createLCOWOptions(_ context.Context, c *cli.Context, id string) (*uvm.Optio
 		if c.IsSet(execCommandLineArgName) {
 			options.ExecCommandLine = c.String(execCommandLineArgName)
 		}
-		if c.IsSet(forwardStdoutArgName) {
-			options.ForwardStdout = c.Bool(forwardStdoutArgName)
-		}
-		if c.IsSet(forwardStderrArgName) {
-			options.ForwardStderr = c.Bool(forwardStderrArgName)
-		}
+		options.ForwardStdout = c.Bool(forwardStdoutArgName)
+		options.ForwardStderr = c.Bool(forwardStderrArgName)
 		if c.IsSet(outputHandlingArgName) {
 			switch strings.ToLower(c.String(outputHandlingArgName)) {
 			case "stdout":

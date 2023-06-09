@@ -85,9 +85,9 @@ int main(int argc, char **argv)
             }
 
             if (j == i) {
-                int s = tcpmode ? opentcp(ports[i]) : openvsock(VMADDR_CID_HOST, ports[i]);
+                int s = tcpmode ? opentcp(ports[i]) : listenacceptvsock(VMADDR_CID_ANY, ports[i]);
                 if (s < 0) {
-                    fprintf(stderr, "connect: port %u: %s", ports[i], strerror(errno));
+                    fprintf(stderr, "listenacceptvsock: port %u: %s", ports[i], strerror(errno));
                     return 1;
                 }
                 sockets[i] = s;

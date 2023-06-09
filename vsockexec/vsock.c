@@ -1,5 +1,6 @@
 #include "vsock.h"
 #include <sys/socket.h>
+#include <unistd.h>
 
 struct sockaddr_vm {
 	unsigned short svm_family;
@@ -27,4 +28,30 @@ int openvsock(unsigned int cid, unsigned int port) {
     }
 
     return s;
+}
+
+int listenacceptvsock(unsigned int cid, unsigned int port) {    
+    int s = socket(AF_VSOCK, SOCK_STREAM, 0);
+    int l;
+
+    if (s < 0) {
+        return -1;
+    }
+
+    struct sockaddr_vm addr = {0};
+    addr.svm_family = AF_VSOCK;
+    addr.svm_port = port;
+    addr.svm_cid = cid;
+    socklen_t len = sizeof(addr);
+    if(bind(s, (struct sockaddr *)&addr, len)) {
+        return -1;
+    }
+    if (listen(s, 1)) {
+        return -1;
+    }
+    if ((l = accept(s, (struct sockaddr *)&addr, &len)) < 0) {
+        return -1;
+    }
+    close(s);
+    return l;
 }
