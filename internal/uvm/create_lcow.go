@@ -690,13 +690,9 @@ func makeLCOWDoc(ctx context.Context, opts *OptionsLCOW, uvm *UtilityVM) (_ *hcs
 	// created below in order to forward guest logs to logrus.
 	execCmdArgs := "/bin/vsockexec"
 
-	if opts.ForwardStdout {
-		execCmdArgs += fmt.Sprintf(" -o %d", linuxLogVsockPort)
-	}
+	execCmdArgs += fmt.Sprintf(" -o %d", linuxLogVsockPort)
 
-	if opts.ForwardStderr {
-		execCmdArgs += fmt.Sprintf(" -e %d", linuxLogVsockPort)
-	}
+	execCmdArgs += fmt.Sprintf(" -e %d", linuxLogVsockPort)
 
 	if opts.DisableTimeSyncService {
 		opts.ExecCommandLine = fmt.Sprintf("%s -disable-time-sync", opts.ExecCommandLine)
@@ -828,19 +824,19 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 	if opts.ForwardStdout || opts.ForwardStderr {
 		uvm.outputHandler = opts.OutputHandler
 		uvm.outputProcessingDone = make(chan struct{})
-		uvm.outputListener, err = uvm.listenVsock(linuxLogVsockPort)
+		/* uvm.outputListener, err = uvm.listenVsock(linuxLogVsockPort)
 		if err != nil {
 			return nil, err
-		}
+		} */
 	}
 
 	if opts.UseGuestConnection {
 		log.G(ctx).WithField("vmID", uvm.runtimeID).Debug("Using external GCS bridge")
-		l, err := uvm.listenVsock(gcs.LinuxGcsVsockPort)
+		/* l, err := uvm.listenVsock(gcs.LinuxGcsVsockPort)
 		if err != nil {
 			return nil, err
 		}
-		uvm.gcListener = l
+		uvm.gcListener = l */
 	}
 
 	uvm.ncProxyClientAddress = opts.NetworkConfigProxy
