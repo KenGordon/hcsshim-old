@@ -9,6 +9,7 @@ import (
 
 	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/go-winio/pkg/guid"
+	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/gcs"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
@@ -189,7 +190,7 @@ func run(cCtx *cli.Context) {
 					UID: 0,
 					GID: 0,
 				},
-				Args: []string{"/bin/ash", "-c", "\"for i in $(seq 1 5); do echo $i; sleep 1; done\""},
+				Args: []string{"/bin/ash", "-c", "for i in $(seq 1 5); do echo $i; sleep 1; done"},
 				Cwd:  "/",
 				Env:  []string{"TERM=xterm", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 			},
@@ -243,11 +244,18 @@ func run(cCtx *cli.Context) {
 		logrus.Fatal(err)
 	}
 	defer c.Close()
-	println("Starting container\n\n\n\n")
+	logrus.Info("Starting container")
 	err = c.Start(context.Background())
 	if err != nil {
 		logrus.Fatal(err)
 	}
+	cmd := cmd.Cmd{
+		Host:   c,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	}
+	cmd.Run()
 	/* command := cmd.Command(c, "ash", "-c", "for i in $(seq 1 5); do echo $i; sleep 1; done")
 	buf, err := command.Output()
 	if err != nil {
