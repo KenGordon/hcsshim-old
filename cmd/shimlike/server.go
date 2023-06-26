@@ -23,12 +23,17 @@ const (
 	logPort uint32 = 1090       // The port on which the UVM's forwards std streams
 )
 
+type Container struct {
+	Container   *p.Container
+	ProcessHost *gcs.Container
+}
+
 type RuntimeServer struct {
 	VMID         string
 	gc           *gcs.GuestConnection // GCS connection
 	lc           *winio.HvsockConn    // log connection
 	mountmanager *MountManager
-	containers   map[string]*gcs.Container // map of container ID to container
+	containers   map[string]*Container // map of container ID to container
 }
 
 // connectLog connects to the UVM's log port and returns the connection
@@ -122,14 +127,20 @@ func (s *RuntimeServer) StartContainer(ctx context.Context, req *p.StartContaine
 	logrus.Info("shimlike::StartContainer")
 	return &p.StartContainerResponse{}, s.startContainer(ctx, req.ContainerId)
 }
-func (*RuntimeServer) StopContainer(ctx context.Context, req *p.StopContainerRequest) (*p.StopContainerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method StopContainer not implemented")
+func (s *RuntimeServer) StopContainer(ctx context.Context, req *p.StopContainerRequest) (*p.StopContainerResponse, error) {
+	logrus.Info("shimlike::StopContainer")
+	return &p.StopContainerResponse{}, s.stopContainer(ctx, req.ContainerId, req.Timeout)
 }
-func (*RuntimeServer) RemoveContainer(ctx context.Context, req *p.RemoveContainerRequest) (*p.RemoveContainerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RemoveContainer not implemented")
+func (s *RuntimeServer) RemoveContainer(ctx context.Context, req *p.RemoveContainerRequest) (*p.RemoveContainerResponse, error) {
+	return &p.RemoveContainerResponse{}, s.removeContainer(ctx, req.ContainerId)
 }
-func (*RuntimeServer) ListContainers(ctx context.Context, req *p.ListContainersRequest) (*p.ListContainersResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListContainers not implemented")
+func (s *RuntimeServer) ListContainers(ctx context.Context, req *p.ListContainersRequest) (*p.ListContainersResponse, error) {
+	containers := s.listContainers(ctx, req.Filter)
+	containersData := make([]*p.Container, len(containers))
+	for i, c := range containers {
+		containersData[i] = c.Container
+	}
+	return &p.ListContainersResponse{Containers: containersData}, nil
 }
 func (*RuntimeServer) ContainerStatus(ctx context.Context, req *p.ContainerStatusRequest) (*p.ContainerStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ContainerStatus not implemented")

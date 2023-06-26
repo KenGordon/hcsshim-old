@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	p "github.com/Microsoft/hcsshim/cmd/shimlike/proto"
 	"github.com/Microsoft/hcsshim/internal/cmd"
@@ -178,26 +179,96 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	if err != nil {
 		return "", err
 	}
-	s.containers[id] = container
+	s.containers[id] = &Container{
+		Container: &p.Container{
+			Id: id,
+			Metadata: &p.ContainerMetadata{
+				Name:    c.Metadata.Name,
+				Attempt: c.Metadata.Attempt,
+			},
+			Image: &p.ImageSpec{
+				Image:       c.Image.Image,
+				Annotations: c.Image.Annotations,
+			},
+			ImageRef:    "", //TODO: What is this?
+			State:       p.ContainerState_CONTAINER_CREATED,
+			CreatedAt:   time.Now().UnixNano(),
+			Labels:      c.Labels,
+			Annotations: c.Annotations,
+		},
+		ProcessHost: container,
+	}
 	return id, nil
 }
 
+// startContainer starts a created container in the UVM
 func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) error {
 	c := s.containers[containerID]
 	if c == nil {
 		return status.Error(codes.NotFound, "container not found")
 	}
-	err := c.Start(ctx)
+	err := c.ProcessHost.Start(ctx)
 	if err != nil {
 		return err
 	}
 	cmd := cmd.Cmd{
-		Host:   c,
+		Host:   c.ProcessHost,
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 	}
 	cmd.Start()
+	c.Container.State = p.ContainerState_CONTAINER_RUNNING
 	go cmd.Wait()
 	return nil
+}
+
+func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, timeout int64) error {
+	c := s.containers[containerID]
+	if c == nil {
+		return status.Error(codes.NotFound, "container not found")
+	}
+	err := c.ProcessHost.Shutdown(ctx)
+	if err != nil {
+		return err
+	}
+	go func() {
+		time.Sleep(time.Duration(timeout) * time.Second)
+		c.ProcessHost.Terminate(ctx)
+	}()
+	c.Container.State = p.ContainerState_CONTAINER_EXITED
+	return nil
+}
+
+func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string) error {
+	c := s.containers[containerID]
+	if c == nil {
+		return status.Error(codes.NotFound, "container not found")
+	}
+	err := c.ProcessHost.Close()
+	if err != nil {
+		return err
+	}
+	delete(s.containers, containerID)
+	return nil
+}
+
+func (s *RuntimeServer) listContainers(ctx context.Context, filter *p.ContainerFilter) []*Container {
+	containers := make([]*Container, 0, len(s.containers))
+	skipID := filter.Id == ""
+	skipState := filter.State == nil
+
+	for _, c := range s.containers {
+		if (c.ProcessHost.ID() == filter.Id || skipID) &&
+			(c.Container.State == filter.State.State || skipState) {
+			for k, v := range filter.LabelSelector {
+				if c.Container.Labels[k] != v {
+					continue
+				}
+			}
+			containers = append(containers, c)
+		}
+	}
+
+	return containers
 }
