@@ -23,11 +23,6 @@ const (
 	logPort uint32 = 1090       // The port on which the UVM's forwards std streams
 )
 
-type Container struct {
-	Container   *p.Container
-	ProcessHost *gcs.Container
-}
-
 type RuntimeServer struct {
 	VMID         string
 	gc           *gcs.GuestConnection // GCS connection
@@ -132,9 +127,11 @@ func (s *RuntimeServer) StopContainer(ctx context.Context, req *p.StopContainerR
 	return &p.StopContainerResponse{}, s.stopContainer(ctx, req.ContainerId, req.Timeout)
 }
 func (s *RuntimeServer) RemoveContainer(ctx context.Context, req *p.RemoveContainerRequest) (*p.RemoveContainerResponse, error) {
+	logrus.Info("shimlike::RemoveContainer")
 	return &p.RemoveContainerResponse{}, s.removeContainer(ctx, req.ContainerId)
 }
 func (s *RuntimeServer) ListContainers(ctx context.Context, req *p.ListContainersRequest) (*p.ListContainersResponse, error) {
+	logrus.Info("shimlike::ListContainers")
 	containers := s.listContainers(ctx, req.Filter)
 	containersData := make([]*p.Container, len(containers))
 	for i, c := range containers {
@@ -142,8 +139,13 @@ func (s *RuntimeServer) ListContainers(ctx context.Context, req *p.ListContainer
 	}
 	return &p.ListContainersResponse{Containers: containersData}, nil
 }
-func (*RuntimeServer) ContainerStatus(ctx context.Context, req *p.ContainerStatusRequest) (*p.ContainerStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ContainerStatus not implemented")
+func (s *RuntimeServer) ContainerStatus(ctx context.Context, req *p.ContainerStatusRequest) (*p.ContainerStatusResponse, error) {
+	logrus.Info("shimlike::ContainerStatus")
+	status, err := s.containerStatus(ctx, req.ContainerId)
+	if err != nil {
+		return nil, err
+	}
+	return &p.ContainerStatusResponse{Status: status}, nil
 }
 func (*RuntimeServer) UpdateContainerResources(ctx context.Context, req *p.UpdateContainerResourcesRequest) (*p.UpdateContainerResourcesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateContainerResources not implemented")

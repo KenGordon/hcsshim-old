@@ -8,6 +8,7 @@ import (
 
 	p "github.com/Microsoft/hcsshim/cmd/shimlike/proto"
 	"github.com/Microsoft/hcsshim/internal/cmd"
+	"github.com/Microsoft/hcsshim/internal/gcs"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
@@ -19,6 +20,23 @@ const (
 	bundlePath       = "/run/gcs/c/%s" // path to the OCI bundle given the container ID
 	scratchDirSuffix = "/scratch/%s"   // path to a scratch dir relative to a mounted scsi disk
 )
+
+type ContainerStatus struct {
+	StartedAt  int64
+	FinishedAt int64
+	ExitCode   int32
+	Reason     string // Unused
+	Message    string // Unused
+}
+
+type Container struct {
+	Container          *p.Container
+	ProcessHost        *gcs.Container
+	Status             *ContainerStatus
+	LogPath            string
+	Mounts             []*p.Mount
+	ContainerResources *p.ContainerResources
+}
 
 type linuxHostedSystem struct {
 	SchemaVersion    *hcsschema.Version
@@ -69,6 +87,8 @@ func validateContainerConfig(c *p.ContainerConfig) error {
 // createDefaultContainerDoc creates a default container document for a container.
 // All required arguments will be set except the ones checked in validateContainerConfig
 // and OciBundlePath.
+//
+// TODO: This could be put into a json file or something similar to avoid hardcoding these values
 func createDefaultContainerDoc() linuxHostedSystem {
 	l := linuxHostedSystem{
 		SchemaVersion: &hcsschema.Version{Major: 2, Minor: 1},
@@ -117,7 +137,32 @@ func createDefaultContainerDoc() linuxHostedSystem {
 	return l
 }
 
+// assignLinuxResources assigns the linux resources from the container config to the oci specification
+func (d *linuxHostedSystem) assignLinuxResources(c *p.LinuxContainerResources) {
+	d.OciSpecification.Linux.Resources.CPU = &specs.LinuxCPU{
+		Cpus: c.CpusetCpus,
+		Mems: c.CpusetMems,
+	}
+	if shares := uint64(c.CpuShares); shares != 0 {
+		d.OciSpecification.Linux.Resources.CPU.Shares = &shares
+	}
+	if quota := int64(c.CpuQuota); quota != 0 {
+		d.OciSpecification.Linux.Resources.CPU.Quota = &quota
+	}
+	if period := uint64(c.CpuPeriod); period != 0 {
+		d.OciSpecification.Linux.Resources.CPU.Period = &period
+	}
+
+	if memory := int64(c.MemoryLimitInBytes); memory != 0 {
+		d.OciSpecification.Linux.Resources.Memory = &specs.LinuxMemory{
+			Limit: &memory,
+		}
+	}
+}
+
 // createContainer creates a container in the UVM and returns the newly created container's ID
+//
+// TODO: Non-layer devices are not supported yet
 func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfig) (string, error) {
 	err := validateContainerConfig(c)
 	if err != nil {
@@ -133,6 +178,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	doc.OciBundlePath = fmt.Sprintf(bundlePath, id)
 	doc.OciSpecification.Process.Args = append(c.Command, c.Args...)
 	doc.OciSpecification.Process.Cwd = c.WorkingDir
+	doc.assignLinuxResources(c.Linux.Resources)
 
 	doc.OciSpecification.Process.Env = make([]string, 0, len(c.Envs))
 	for i, v := range c.Envs {
@@ -197,6 +243,11 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 			Annotations: c.Annotations,
 		},
 		ProcessHost: container,
+		LogPath:     c.LogPath,
+		Mounts:      c.Mounts,
+		ContainerResources: &p.ContainerResources{
+			Linux: c.Linux.Resources,
+		},
 	}
 	return id, nil
 }
@@ -219,7 +270,8 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	}
 	cmd.Start()
 	c.Container.State = p.ContainerState_CONTAINER_RUNNING
-	go cmd.Wait()
+	c.Status.StartedAt = time.Now().UnixNano()
+	go cmd.Wait() // TODO: leaking non-zero exit codes
 	return nil
 }
 
@@ -237,6 +289,7 @@ func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, t
 		c.ProcessHost.Terminate(ctx)
 	}()
 	c.Container.State = p.ContainerState_CONTAINER_EXITED
+	c.Status.FinishedAt = time.Now().UnixNano()
 	return nil
 }
 
@@ -271,4 +324,30 @@ func (s *RuntimeServer) listContainers(ctx context.Context, filter *p.ContainerF
 	}
 
 	return containers
+}
+
+func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string) (*p.ContainerStatus, error) {
+	c := s.containers[containerID]
+	if c == nil {
+		return nil, status.Error(codes.NotFound, "container not found")
+	}
+	status := &p.ContainerStatus{
+		Id:          c.Container.Id,
+		Metadata:    c.Container.Metadata,
+		State:       c.Container.State,
+		CreatedAt:   c.Container.CreatedAt,
+		StartedAt:   c.Status.StartedAt,
+		FinishedAt:  c.Status.FinishedAt,
+		ExitCode:    c.Status.ExitCode,
+		Image:       c.Container.Image,
+		ImageRef:    c.Container.ImageRef,
+		Reason:      c.Status.Reason,
+		Message:     c.Status.Message,
+		Labels:      c.Container.Labels,
+		Annotations: c.Container.Annotations,
+		Mounts:      c.Mounts,
+		LogPath:     c.LogPath,
+		Resources:   c.ContainerResources,
+	}
+	return status, nil
 }
