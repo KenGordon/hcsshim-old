@@ -20,11 +20,12 @@ type ScsiDisk struct {
 	Controller uint8
 	Lun        uint8
 	Partition  uint64
-	Readonly   bool // False if scratch disk
+	Readonly   bool   // False if scratch disk
+	MountPath  string // Populated by mountScsi
 }
 
 type MountManager struct {
-	// A list of mounts. If an index is nil, then that index is available to be mounted on
+	// A list of mounts for the UVM. If an index is nil, then that index is available to be mounted on
 	mounts []*ScsiDisk
 	gc     *gcs.GuestConnection
 }
@@ -39,8 +40,9 @@ func firstEmptyIndex(mounts []*ScsiDisk) int {
 }
 
 // TODO: Add some kind of validation of mounts
-// mountLayer mounts a layer on the UVM and returns its mounted path
-func (m *MountManager) mountScsi(ctx context.Context, disk ScsiDisk, containerID string) (string, error) {
+// mountLayer mounts a layer on the UVM and returns its mounted path.
+// Modifies disk.MountPath
+func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk, containerID string) (string, error) {
 	req := guestrequest.ModificationRequest{
 		ResourceType: guestresource.ResourceTypeMappedVirtualDisk,
 		RequestType:  guestrequest.RequestTypeAdd,
@@ -72,11 +74,11 @@ func (m *MountManager) mountScsi(ctx context.Context, disk ScsiDisk, containerID
 	}
 
 	if index == -1 {
-		m.mounts = append(m.mounts, &disk)
+		m.mounts = append(m.mounts, disk)
 	} else {
-		m.mounts[index] = &disk
+		m.mounts[index] = disk
 	}
-
+	disk.MountPath = mountPath
 	return mountPath, nil
 }
 
@@ -85,12 +87,13 @@ func (m *MountManager) combineLayers(ctx context.Context, layerPaths []string, c
 	// Validate that we have a max of one scratch disk
 	foundScratch := false
 	scratchPath := ""
-	for _, m := range m.mounts {
+	for i, m := range m.mounts {
 		if m != nil && !m.Readonly {
 			if foundScratch {
 				return "", fmt.Errorf("found more than one scratch disk")
 			}
 			foundScratch = true
+			scratchPath = fmt.Sprintf(mountPath, i)
 		}
 	}
 	hcsLayers := make([]hcsschema.Layer, len(layerPaths))
@@ -115,4 +118,37 @@ func (m *MountManager) combineLayers(ctx context.Context, layerPaths []string, c
 		return "", err
 	}
 	return path, nil
+}
+
+func (m *MountManager) removeLayers(ctx context.Context, containerID string) error {
+	req := guestrequest.ModificationRequest{
+		ResourceType: guestresource.ResourceTypeCombinedLayers,
+		RequestType:  guestrequest.RequestTypeRemove,
+		Settings: guestresource.LCOWCombinedLayers{
+			ContainerRootPath: fmt.Sprintf(rootfsPath, containerID),
+		},
+	}
+	m.gc.Modify(ctx, req)
+	return nil
+}
+
+// unmountLayer unmounts a layer from the UVM
+// Modifies disk.MountPath
+func (m *MountManager) unmountScsi(ctx context.Context, disk *ScsiDisk) error {
+	req := guestrequest.ModificationRequest{
+		ResourceType: guestresource.ResourceTypeMappedVirtualDisk,
+		RequestType:  guestrequest.RequestTypeRemove,
+	}
+	req.Settings = guestresource.LCOWMappedVirtualDisk{
+		MountPath:  disk.MountPath,
+		Lun:        disk.Lun,
+		Partition:  disk.Partition,
+		Controller: disk.Controller,
+	}
+	err := m.gc.Modify(ctx, req)
+	if err != nil {
+		return err
+	}
+	disk.MountPath = ""
+	return nil
 }

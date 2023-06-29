@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"time"
@@ -34,8 +36,8 @@ type Container struct {
 	ProcessHost        *gcs.Container
 	Status             *ContainerStatus
 	LogPath            string
-	Mounts             []*p.Mount
-	ContainerResources *p.ContainerResources
+	Disks              []*ScsiDisk
+	ContainerResources *p.ContainerResources // Container's resources. May be nil.
 }
 
 type linuxHostedSystem struct {
@@ -43,6 +45,12 @@ type linuxHostedSystem struct {
 	OciBundlePath    string
 	OciSpecification *specs.Spec
 	ScratchDirPath   string
+}
+
+func generateID() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // validateContainerConfig validates a container config received from the ContainerController
@@ -102,7 +110,9 @@ func createDefaultContainerDoc() linuxHostedSystem {
 			},
 			Linux: &specs.Linux{
 				CgroupsPath: "/sys/fs/cgroup",
-				// Namespaces?
+				Namespaces: []specs.LinuxNamespace{
+					{Type: "mount"},
+				},
 				MaskedPaths: []string{
 					"/proc/acpi",
 					"/proc/asound",
@@ -174,13 +184,16 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 
 	// create the container document
 	doc := createDefaultContainerDoc()
-	id := c.Metadata.Name + "-" + fmt.Sprint(c.Metadata.Attempt)
+	id := generateID()
 	doc.OciBundlePath = fmt.Sprintf(bundlePath, id)
 	doc.OciSpecification.Process.Args = append(c.Command, c.Args...)
 	doc.OciSpecification.Process.Cwd = c.WorkingDir
-	doc.assignLinuxResources(c.Linux.Resources)
 
-	doc.OciSpecification.Process.Env = make([]string, 0, len(c.Envs))
+	if c.Linux != nil {
+		doc.assignLinuxResources(c.Linux.Resources)
+	}
+
+	doc.OciSpecification.Process.Env = make([]string, len(c.Envs))
 	for i, v := range c.Envs {
 		doc.OciSpecification.Process.Env[i] = v.Key + "=" + v.Value
 	}
@@ -189,6 +202,8 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	mountPaths := make([]string, 0, len(c.Mounts))
 	scratchDiskPath := ""
 	scratchDirPath := ""
+
+	disks := make([]*ScsiDisk, 0, len(c.Mounts))
 	for _, m := range c.Mounts {
 		disk := ScsiDisk{
 			Controller: uint8(m.Controller),
@@ -196,9 +211,9 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 			Partition:  uint64(m.Partition),
 			Readonly:   m.Readonly,
 		}
-		mountPath, err := s.mountmanager.mountScsi(ctx, disk, id)
+		mountPath, err := s.mountmanager.mountScsi(ctx, &disk, id)
 		logrus.WithFields(logrus.Fields{
-			"disk": disk,
+			"disk": fmt.Sprintf("%+v", disk),
 		}).Info("Mounted disk")
 		if err != nil {
 			return "", err
@@ -207,6 +222,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 			scratchDiskPath = mountPath
 		}
 		mountPaths = append(mountPaths, mountPath)
+		disks = append(disks, &disk)
 	}
 	scratchDirPath = fmt.Sprintf(scratchDiskPath+scratchDirSuffix, id)
 
@@ -224,6 +240,10 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	container, err := s.gc.CreateContainer(ctx, id, doc)
 	if err != nil {
 		return "", err
+	}
+
+	if s.containers == nil {
+		s.containers = make(map[string]*Container)
 	}
 	s.containers[id] = &Container{
 		Container: &p.Container{
@@ -244,10 +264,12 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 		},
 		ProcessHost: container,
 		LogPath:     c.LogPath,
-		Mounts:      c.Mounts,
-		ContainerResources: &p.ContainerResources{
+		Disks:       disks,
+	}
+	if c.Linux != nil {
+		s.containers[id].ContainerResources = &p.ContainerResources{
 			Linux: c.Linux.Resources,
-		},
+		}
 	}
 	return id, nil
 }
@@ -258,11 +280,14 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	if c == nil {
 		return status.Error(codes.NotFound, "container not found")
 	}
+	if c.Container.State != p.ContainerState_CONTAINER_CREATED {
+		return status.Error(codes.FailedPrecondition, "cannot start container: container must be in a created state")
+	}
 	err := c.ProcessHost.Start(ctx)
 	if err != nil {
 		return err
 	}
-	cmd := cmd.Cmd{
+	cmd := cmd.Cmd{ // TODO: custom log paths/stream settings
 		Host:   c.ProcessHost,
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
@@ -270,7 +295,10 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	}
 	cmd.Start()
 	c.Container.State = p.ContainerState_CONTAINER_RUNNING
-	c.Status.StartedAt = time.Now().UnixNano()
+	c.Status = &ContainerStatus{
+		StartedAt: time.Now().UnixNano(),
+	}
+
 	go cmd.Wait() // TODO: leaking non-zero exit codes
 	return nil
 }
@@ -279,6 +307,9 @@ func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, t
 	c := s.containers[containerID]
 	if c == nil {
 		return status.Error(codes.NotFound, "container not found")
+	}
+	if c.Container.State != p.ContainerState_CONTAINER_RUNNING {
+		return status.Error(codes.FailedPrecondition, "cannot stop container: container must be in a running state")
 	}
 	err := c.ProcessHost.Shutdown(ctx)
 	if err != nil {
@@ -298,10 +329,27 @@ func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string)
 	if c == nil {
 		return status.Error(codes.NotFound, "container not found")
 	}
+	if c.Container.State != p.ContainerState_CONTAINER_EXITED {
+		return status.Error(codes.FailedPrecondition, "cannot delete container: container must be in a stopped state")
+	}
+
 	err := c.ProcessHost.Close()
 	if err != nil {
 		return err
 	}
+
+	err = s.mountmanager.removeLayers(ctx, containerID)
+	if err != nil {
+		return err
+	}
+
+	for _, d := range c.Disks {
+		err = s.mountmanager.unmountScsi(ctx, d)
+		if err != nil {
+			return err
+		}
+	}
+
 	delete(s.containers, containerID)
 	return nil
 }
@@ -331,6 +379,16 @@ func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string)
 	if c == nil {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
+
+	mounts := make([]*p.Mount, 0, len(c.Disks))
+	for _, d := range c.Disks {
+		mounts = append(mounts, &p.Mount{
+			Controller: int32(d.Controller),
+			Lun:        int32(d.Lun),
+			Partition:  int32(d.Partition),
+			Readonly:   d.Readonly,
+		})
+	}
 	status := &p.ContainerStatus{
 		Id:          c.Container.Id,
 		Metadata:    c.Container.Metadata,
@@ -345,7 +403,7 @@ func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string)
 		Message:     c.Status.Message,
 		Labels:      c.Container.Labels,
 		Annotations: c.Container.Annotations,
-		Mounts:      c.Mounts,
+		Mounts:      mounts,
 		LogPath:     c.LogPath,
 		Resources:   c.ContainerResources,
 	}

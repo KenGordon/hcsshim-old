@@ -20,7 +20,7 @@ const (
 	runtimeApiVersion = "0.0.1"
 
 	gcsPort uint32 = 0x40000000 // The port on which the UVM's GCS server listens
-	logPort uint32 = 1090       // The port on which the UVM's forwards std streams
+	logPort uint32 = 109        // The port on which the UVM's forwards std streams
 )
 
 type RuntimeServer struct {
@@ -31,7 +31,10 @@ type RuntimeServer struct {
 	containers   map[string]*Container // map of container ID to container
 }
 
-// connectLog connects to the UVM's log port and returns the connection
+// connectLog connects to the UVM's log port and stores the connection
+// in the RuntimeServer instance
+//
+// s.VMID must be set before calling this function
 func (s *RuntimeServer) connectLog() error {
 	ID, err := guid.FromString(s.VMID)
 	if err != nil {
@@ -53,7 +56,10 @@ func (s *RuntimeServer) connectLog() error {
 	return nil
 }
 
-// acceptGcs accepts and returns a connection from the UVM's GCS port
+// acceptGcs accepts a connection from the UVM's GCS port and stores the connection
+// in the RuntimeServer instance
+//
+// s.VMID must be set before calling this function
 func (s *RuntimeServer) acceptGcs() error {
 	ID, err := guid.FromString(s.VMID)
 	if err != nil {
@@ -111,7 +117,7 @@ func (*RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandboxR
 	return nil, status.Errorf(codes.Unimplemented, "method StopPodSandbox not implemented")
 }
 func (s *RuntimeServer) CreateContainer(ctx context.Context, req *p.CreateContainerRequest) (*p.CreateContainerResponse, error) {
-	logrus.Info("shimlike::CreateContainer")
+	logrus.WithField("request", req).Info("shimlike::CreateContainer")
 	id, err := s.createContainer(ctx, req.Config)
 	if err != nil {
 		return nil, err
@@ -119,19 +125,19 @@ func (s *RuntimeServer) CreateContainer(ctx context.Context, req *p.CreateContai
 	return &p.CreateContainerResponse{ContainerId: id}, nil
 }
 func (s *RuntimeServer) StartContainer(ctx context.Context, req *p.StartContainerRequest) (*p.StartContainerResponse, error) {
-	logrus.Info("shimlike::StartContainer")
+	logrus.WithField("request", req).Info("shimlike::StartContainer")
 	return &p.StartContainerResponse{}, s.startContainer(ctx, req.ContainerId)
 }
 func (s *RuntimeServer) StopContainer(ctx context.Context, req *p.StopContainerRequest) (*p.StopContainerResponse, error) {
-	logrus.Info("shimlike::StopContainer")
+	logrus.WithField("request", req).Info("shimlike::StopContainer")
 	return &p.StopContainerResponse{}, s.stopContainer(ctx, req.ContainerId, req.Timeout)
 }
 func (s *RuntimeServer) RemoveContainer(ctx context.Context, req *p.RemoveContainerRequest) (*p.RemoveContainerResponse, error) {
-	logrus.Info("shimlike::RemoveContainer")
+	logrus.WithField("request", req).Info("shimlike::RemoveContainer")
 	return &p.RemoveContainerResponse{}, s.removeContainer(ctx, req.ContainerId)
 }
 func (s *RuntimeServer) ListContainers(ctx context.Context, req *p.ListContainersRequest) (*p.ListContainersResponse, error) {
-	logrus.Info("shimlike::ListContainers")
+	logrus.WithField("request", req).Info("shimlike::ListContainers")
 	containers := s.listContainers(ctx, req.Filter)
 	containersData := make([]*p.Container, len(containers))
 	for i, c := range containers {
@@ -140,7 +146,7 @@ func (s *RuntimeServer) ListContainers(ctx context.Context, req *p.ListContainer
 	return &p.ListContainersResponse{Containers: containersData}, nil
 }
 func (s *RuntimeServer) ContainerStatus(ctx context.Context, req *p.ContainerStatusRequest) (*p.ContainerStatusResponse, error) {
-	logrus.Info("shimlike::ContainerStatus")
+	logrus.WithField("request", req).Info("shimlike::ContainerStatus")
 	status, err := s.containerStatus(ctx, req.ContainerId)
 	if err != nil {
 		return nil, err

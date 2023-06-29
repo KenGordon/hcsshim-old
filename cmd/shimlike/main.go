@@ -14,7 +14,7 @@ var (
 	usage = "shimlike <pipe address> <UVM ID>"
 )
 
-func run(cCtx cli.Context) {
+func run(cCtx *cli.Context) {
 	if cCtx.NArg() != 2 {
 		logrus.Fatalf("Usage: %s", usage)
 	}
@@ -24,17 +24,26 @@ func run(cCtx cli.Context) {
 		logrus.Fatal(err)
 	}
 	defer pipe.Close()
-	rs := RuntimeServer{VMID: cCtx.Args().Get(2)}
+	rs := RuntimeServer{VMID: cCtx.Args().Get(1)}
 	proto.RegisterRuntimeServiceServer(s, &rs)
 
 	// Connect to the UVM
 	logrus.Info("Connecting to UVM")
-	rs.connectLog()
+	err = rs.connectLog()
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
+	// Accept the GCS
 	logrus.Info("Accepting GCS")
-	rs.acceptGcs()
+	err = rs.acceptGcs()
+	if err != nil {
+		logrus.Fatal(err)
+	}
 
 	// Create the gRPC server and listen on the pipe.
 	// This blocks until the pipe is closed or Stop() is called.
+	logrus.Info("Starting gRPC server...")
 	err = s.Serve(pipe)
 	if err != nil {
 		logrus.Fatal(err)
