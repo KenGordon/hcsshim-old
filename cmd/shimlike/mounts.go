@@ -20,8 +20,8 @@ type ScsiDisk struct {
 	Controller uint8
 	Lun        uint8
 	Partition  uint64
-	Readonly   bool   // False if scratch disk
-	MountPath  string // Populated by mountScsi
+	Readonly   bool // False if scratch disk
+	MountIndex *int // Populated by mountScsi
 }
 
 type MountManager struct {
@@ -78,7 +78,7 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk, containerI
 	} else {
 		m.mounts[index] = disk
 	}
-	disk.MountPath = mountPath
+	disk.MountIndex = &mountIndex
 	return mountPath, nil
 }
 
@@ -140,7 +140,7 @@ func (m *MountManager) unmountScsi(ctx context.Context, disk *ScsiDisk) error {
 		RequestType:  guestrequest.RequestTypeRemove,
 	}
 	req.Settings = guestresource.LCOWMappedVirtualDisk{
-		MountPath:  disk.MountPath,
+		MountPath:  fmt.Sprintf(mountPath, *disk.MountIndex),
 		Lun:        disk.Lun,
 		Partition:  disk.Partition,
 		Controller: disk.Controller,
@@ -149,6 +149,8 @@ func (m *MountManager) unmountScsi(ctx context.Context, disk *ScsiDisk) error {
 	if err != nil {
 		return err
 	}
-	disk.MountPath = ""
+	m.mounts[*disk.MountIndex] = nil
+	disk.MountIndex = nil
+
 	return nil
 }
