@@ -111,7 +111,21 @@ func createDefaultContainerDoc() linuxHostedSystem {
 			Linux: &specs.Linux{
 				CgroupsPath: "/sys/fs/cgroup",
 				Namespaces: []specs.LinuxNamespace{
-					{Type: "mount"},
+					{
+						Type: "pid",
+					},
+					{
+						Type: "ipc",
+					},
+					{
+						Type: "uts",
+					},
+					{
+						Type: "mount",
+					},
+					{
+						Type: "network",
+					},
 				},
 				MaskedPaths: []string{
 					"/proc/acpi",
@@ -199,7 +213,6 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	}
 
 	// mount the SCSI disks
-	mountPaths := make([]string, 0, len(c.Mounts))
 	scratchDiskPath := ""
 	scratchDirPath := ""
 
@@ -214,20 +227,20 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 		mountPath, err := s.mountmanager.mountScsi(ctx, &disk, id)
 		logrus.WithFields(logrus.Fields{
 			"disk": fmt.Sprintf("%+v", disk),
+			"path": mountPath,
 		}).Info("Mounted disk")
 		if err != nil {
 			return "", err
 		}
 		if !m.Readonly {
 			scratchDiskPath = mountPath
+			scratchDirPath = fmt.Sprintf(scratchDiskPath+scratchDirSuffix, id)
 		}
-		mountPaths = append(mountPaths, mountPath)
 		disks = append(disks, &disk)
 	}
-	scratchDirPath = fmt.Sprintf(scratchDiskPath+scratchDirSuffix, id)
 
 	// create the rootfs
-	rootPath, err := s.mountmanager.combineLayers(ctx, mountPaths, id)
+	rootPath, err := s.mountmanager.combineLayers(ctx, disks, id)
 	if err != nil {
 		return "", err
 	}

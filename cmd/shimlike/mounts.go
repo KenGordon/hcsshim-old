@@ -8,6 +8,7 @@ import (
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -82,25 +83,31 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk, containerI
 	return mountPath, nil
 }
 
-// combineLayers combines all mounted layers to create a rootfs for a container and return its path
-func (m *MountManager) combineLayers(ctx context.Context, layerPaths []string, containerID string) (string, error) {
+// combineLayers combines all mounted layers to create a rootfs for a container and return its path.
+// Uses the non-read only mount as the scratch disk.
+func (m *MountManager) combineLayers(ctx context.Context, mounts []*ScsiDisk, containerID string) (string, error) {
 	// Validate that we have a max of one scratch disk
 	foundScratch := false
 	scratchPath := ""
-	for i, m := range m.mounts {
-		if m != nil && !m.Readonly {
-			if foundScratch {
-				return "", fmt.Errorf("found more than one scratch disk")
+	layers := make([]*ScsiDisk, 0, len(mounts))
+	for i, m := range mounts {
+		if m != nil {
+			if !m.Readonly {
+				if foundScratch {
+					return "", fmt.Errorf("found more than one scratch disk")
+				}
+				foundScratch = true
+				scratchPath = fmt.Sprintf(mountPath, i)
+			} else {
+				layers = append(layers, m)
 			}
-			foundScratch = true
-			scratchPath = fmt.Sprintf(mountPath, i)
 		}
 	}
-	hcsLayers := make([]hcsschema.Layer, len(layerPaths))
-	for i, l := range layerPaths {
-		hcsLayers[i] = hcsschema.Layer{
-			Path: l,
-		}
+	hcsLayers := make([]hcsschema.Layer, 0, len(mounts))
+	for _, m := range layers {
+		hcsLayers = append(hcsLayers, hcsschema.Layer{
+			Path: fmt.Sprintf(mountPath, *m.MountIndex),
+		})
 	}
 	path := fmt.Sprintf(rootfsPath, containerID)
 	req := guestrequest.ModificationRequest{
@@ -113,6 +120,7 @@ func (m *MountManager) combineLayers(ctx context.Context, layerPaths []string, c
 			ScratchPath:       scratchPath,
 		},
 	}
+	logrus.WithField("request", fmt.Sprintf("%+v", req)).Infof("Combining layers for container %s", containerID)
 	err := m.gc.Modify(ctx, req)
 	if err != nil {
 		return "", err
