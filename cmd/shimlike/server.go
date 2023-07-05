@@ -9,6 +9,7 @@ import (
 	p "github.com/Microsoft/hcsshim/cmd/shimlike/proto"
 	"github.com/Microsoft/hcsshim/internal/gcs"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -29,6 +30,7 @@ type RuntimeServer struct {
 	lc           *winio.HvsockConn    // log connection
 	mountmanager *MountManager
 	containers   map[string]*Container // map of container ID to container
+	grpcServer   *grpc.Server
 }
 
 // connectLog connects to the UVM's log port and stores the connection
@@ -117,8 +119,12 @@ func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandbo
 	for i := range s.containers {
 		s.removeContainer(ctx, i)
 	}
-	s.gc.Close()
-	s.lc.Close()
+	go func() { // Goroutune so we can still send the response
+		time.Sleep(1 * time.Second)
+		s.grpcServer.Stop()
+		s.gc.Close()
+		s.lc.Close()
+	}()
 	return &p.StopPodSandboxResponse{}, nil
 }
 func (s *RuntimeServer) CreateContainer(ctx context.Context, req *p.CreateContainerRequest) (*p.CreateContainerResponse, error) {

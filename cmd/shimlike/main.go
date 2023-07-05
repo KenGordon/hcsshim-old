@@ -24,7 +24,10 @@ func run(cCtx *cli.Context) {
 		logrus.Fatal(err)
 	}
 	defer pipe.Close()
-	rs := RuntimeServer{VMID: cCtx.Args().Get(1)}
+	rs := RuntimeServer{
+		VMID:       cCtx.Args().Get(1),
+		grpcServer: s,
+	}
 	proto.RegisterRuntimeServiceServer(s, &rs)
 
 	// Connect to the UVM
