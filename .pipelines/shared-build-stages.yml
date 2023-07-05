@@ -8,19 +8,28 @@ parameters:
 
 stages:
   - stage: build_repo
-    jobs:
-      # Nightly builds use different versioning scheme
-      - ${{ if not(eq(parameters.Nightly, true))}}:
-          - template: .pipelines/templates/build/version.yml@cplat
 
+    variables:
+    jobs:
       - job: build
         pool:
           type: linux
 
+        # codeql can take a while
+        # https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/codeql/snippets/codeql-3000-other-issues#timeouts
+        timeoutInMinutes: 360
+
         variables:
+          # prevent results from this job from being over-ridden elsewhere (eg, in sign)
+          Codeql.BuildIdentifier: hcsshim
+
           ob_outputDirectory: "$(Build.StagingDirectory)"
 
         steps:
+          # Nightly builds use different versioning scheme
+          - ${{ if not(eq(parameters.Nightly, true))}}:
+              - template: .pipelines/templates/build/steps/version.yml@cplat
+
           - script: |
               echo "image: $(LinuxContainerImage)"
 
@@ -119,7 +128,7 @@ stages:
                 ncproxygrpc/v1/networkconfigproxy.proto
               targetFolder: "$(Build.StagingDirectory)/out"
             displayName: Copy ncproxygrpc api files
-          
+
           - task: CopyFiles@2
             inputs:
               sourceFolder: "pkg/ncproxy"

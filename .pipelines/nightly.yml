@@ -29,6 +29,14 @@ extends:
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
         suppressionSet: default
+
+      # nightly uses hcsshim code, so skip source analysis
+      codeql:
+        compiled:
+          enabled: false
+      sourcesAnalysisStage:
+        enabled: false
+
     stages:
       - template: shared-build-stages.yml@self
         parameters:

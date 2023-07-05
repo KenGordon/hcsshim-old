@@ -10,6 +10,7 @@ resources:
       type: git
       name: OneBranch.Pipelines/GovernedTemplates
       ref: refs/heads/main
+    # for default OneBranch images and signing stage
     - repository: cplat
       type: git
       name: ContainerPlatform/ContainerPlatform
@@ -18,9 +19,23 @@ resources:
 extends:
   template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
   parameters:
-    globalSdl:
+    globalSdl: # https://aka.ms/obpipelines/sdl
+      # add binary sdl stage
+      runmode: stage
+
+      codeinspector:
+        enabled: true
+
+      # https://aka.ms/codeql
+      # https://onebranch.visualstudio.com/OneBranch/_wiki/wikis/OneBranch.wiki/6249/CodeQL-3000
+      codeql:
+        compiled:
+          enabled: true
+        excludePathPatterns: vendor
+
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
         suppressionSet: default
+
     stages:
       - template: shared-build-stages.yml@self

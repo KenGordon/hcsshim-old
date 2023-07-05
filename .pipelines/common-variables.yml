@@ -16,3 +16,9 @@ variables:
 
   - name: DisableGoCliScan
     value: true
+
+  # recommended in wiki:
+  # https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/codeql/codeql-for-yaml-based-azure-pipelines
+  # https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/codeql/configuring-codeql#configuring-codeql-in-the-build-pipeline-v1x
+  - name: LGTM.UploadSnapshot
+    value: true
