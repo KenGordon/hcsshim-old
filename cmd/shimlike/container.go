@@ -23,6 +23,7 @@ const (
 	scratchDirSuffix = "/scratch/%s"   // path to a scratch dir relative to a mounted scsi disk
 )
 
+// ContainerStatus contains auxilliary information needed to complete a ContainerStatus call
 type ContainerStatus struct {
 	StartedAt  int64
 	FinishedAt int64
@@ -31,6 +32,7 @@ type ContainerStatus struct {
 	Message    string // Unused
 }
 
+// Container represents a container running in the UVM
 type Container struct {
 	Container          *p.Container
 	ProcessHost        *gcs.Container
@@ -38,8 +40,10 @@ type Container struct {
 	LogPath            string
 	Disks              []*ScsiDisk
 	ContainerResources *p.ContainerResources // Container's resources. May be nil.
+	Cmds               []*cmd.Cmd            // All commands running in the container
 }
 
+// linuxHostedSystem is passed to the GCS to create a container
 type linuxHostedSystem struct {
 	SchemaVersion    *hcsschema.Version
 	OciBundlePath    string
@@ -47,6 +51,8 @@ type linuxHostedSystem struct {
 	ScratchDirPath   string
 }
 
+// generateID creates a random ID for a container. This method was copied from
+// containerd
 func generateID() string {
 	b := make([]byte, 32)
 	rand.Read(b)
@@ -161,29 +167,6 @@ func createDefaultContainerDoc() linuxHostedSystem {
 	return l
 }
 
-// assignLinuxResources assigns the linux resources from the container config to the oci specification
-func (d *linuxHostedSystem) assignLinuxResources(c *p.LinuxContainerResources) {
-	d.OciSpecification.Linux.Resources.CPU = &specs.LinuxCPU{
-		Cpus: c.CpusetCpus,
-		Mems: c.CpusetMems,
-	}
-	if shares := uint64(c.CpuShares); shares != 0 {
-		d.OciSpecification.Linux.Resources.CPU.Shares = &shares
-	}
-	if quota := int64(c.CpuQuota); quota != 0 {
-		d.OciSpecification.Linux.Resources.CPU.Quota = &quota
-	}
-	if period := uint64(c.CpuPeriod); period != 0 {
-		d.OciSpecification.Linux.Resources.CPU.Period = &period
-	}
-
-	if memory := int64(c.MemoryLimitInBytes); memory != 0 {
-		d.OciSpecification.Linux.Resources.Memory = &specs.LinuxMemory{
-			Limit: &memory,
-		}
-	}
-}
-
 // createContainer creates a container in the UVM and returns the newly created container's ID
 //
 // TODO: Non-layer devices are not supported yet
@@ -204,7 +187,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	doc.OciSpecification.Process.Cwd = c.WorkingDir
 
 	if c.Linux != nil {
-		doc.assignLinuxResources(c.Linux.Resources)
+		doc.OciSpecification.Linux.Resources = marshalLinuxResources(c.Linux.Resources)
 	}
 
 	doc.OciSpecification.Process.Env = make([]string, len(c.Envs))
@@ -311,11 +294,13 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	c.Status = &ContainerStatus{
 		StartedAt: time.Now().UnixNano(),
 	}
+	c.Cmds = append(c.Cmds, &cmd)
 
 	go cmd.Wait() // TODO: leaking non-zero exit codes
 	return nil
 }
 
+// StopContainer stops a running container.
 func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, timeout int64) error {
 	c := s.containers[containerID]
 	if c == nil {
@@ -331,6 +316,10 @@ func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, t
 	go func() {
 		time.Sleep(time.Duration(timeout) * time.Second)
 		c.ProcessHost.Terminate(ctx)
+		for _, cmd := range c.Cmds { // Kill any running commands in the container
+			cmd.Process.Close()
+			cmd.Process.Kill(ctx)
+		}
 	}()
 	c.Container.State = p.ContainerState_CONTAINER_EXITED
 	c.Status.FinishedAt = time.Now().UnixNano()
@@ -342,8 +331,8 @@ func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string)
 	if c == nil {
 		return status.Error(codes.NotFound, "container not found")
 	}
-	if c.Container.State != p.ContainerState_CONTAINER_EXITED {
-		return status.Error(codes.FailedPrecondition, "cannot delete container: container must be in a stopped state")
+	if c.Container.State == p.ContainerState_CONTAINER_RUNNING {
+		s.stopContainer(ctx, containerID, 0)
 	}
 
 	err := c.ProcessHost.Close()

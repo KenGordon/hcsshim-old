@@ -35,6 +35,7 @@ func run(cCtx *cli.Context) {
 		logrus.Fatal(err)
 	}
 	defer conn.Close()
+	logrus.Info("Connected to Shimlike")
 
 	client := p.NewRuntimeServiceClient(conn)
 	_, err = client.RunPodSandbox(context.Background(), &p.RunPodSandboxRequest{})
@@ -76,15 +77,50 @@ func run(cCtx *cli.Context) {
 	}
 	logrus.Infof("Response: %v", scResp)
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
+
+	csResp, err := client.ContainerStatus(context.Background(), &p.ContainerStatusRequest{
+		ContainerId: ccResp.ContainerId,
+		Verbose:     false,
+	})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %+v", csResp.Status)
+
+	time.Sleep(4 * time.Second)
+
+	ucResp, err := client.UpdateContainerResources(context.Background(), &p.UpdateContainerResourcesRequest{
+		ContainerId: ccResp.ContainerId,
+		Linux: &p.LinuxContainerResources{
+			CpuShares:          50,
+			MemoryLimitInBytes: 512 * 1024 * 1024,
+		},
+	})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %v", ucResp)
+
+	time.Sleep(4 * time.Second)
 
 	stopResp, err := client.StopContainer(context.Background(), &p.StopContainerRequest{
 		ContainerId: ccResp.ContainerId,
+		Timeout:     1,
 	})
 	if err != nil {
 		logrus.Fatal(err)
 	}
 	logrus.Infof("Response: %v", stopResp)
+
+	csResp, err = client.ContainerStatus(context.Background(), &p.ContainerStatusRequest{
+		ContainerId: ccResp.ContainerId,
+		Verbose:     false,
+	})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %+v", csResp.Status)
 
 	rcResp, err := client.RemoveContainer(context.Background(), &p.RemoveContainerRequest{
 		ContainerId: ccResp.ContainerId,
@@ -93,6 +129,12 @@ func run(cCtx *cli.Context) {
 		logrus.Fatal(err)
 	}
 	logrus.Infof("Response: %v", rcResp)
+
+	spResp, err := client.StopPodSandbox(context.Background(), &p.StopPodSandboxRequest{})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %v", spResp)
 }
 
 func main() {

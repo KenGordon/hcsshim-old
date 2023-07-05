@@ -113,8 +113,13 @@ func (*RuntimeServer) Version(ctx context.Context, req *p.VersionRequest) (*p.Ve
 func (s *RuntimeServer) RunPodSandbox(ctx context.Context, req *p.RunPodSandboxRequest) (*p.RunPodSandboxResponse, error) {
 	return &p.RunPodSandboxResponse{}, nil
 }
-func (*RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandboxRequest) (*p.StopPodSandboxResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method StopPodSandbox not implemented")
+func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandboxRequest) (*p.StopPodSandboxResponse, error) {
+	for i := range s.containers {
+		s.removeContainer(ctx, i)
+	}
+	s.gc.Close()
+	s.lc.Close()
+	return &p.StopPodSandboxResponse{}, nil
 }
 func (s *RuntimeServer) CreateContainer(ctx context.Context, req *p.CreateContainerRequest) (*p.CreateContainerResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::CreateContainer")
@@ -153,8 +158,8 @@ func (s *RuntimeServer) ContainerStatus(ctx context.Context, req *p.ContainerSta
 	}
 	return &p.ContainerStatusResponse{Status: status}, nil
 }
-func (*RuntimeServer) UpdateContainerResources(ctx context.Context, req *p.UpdateContainerResourcesRequest) (*p.UpdateContainerResourcesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method UpdateContainerResources not implemented")
+func (s *RuntimeServer) UpdateContainerResources(ctx context.Context, req *p.UpdateContainerResourcesRequest) (*p.UpdateContainerResourcesResponse, error) {
+	return &p.UpdateContainerResourcesResponse{}, s.updateContainerResources(ctx, req.ContainerId, req.Linux, req.Annotations)
 }
 func (*RuntimeServer) ReopenContainerLog(ctx context.Context, req *p.ReopenContainerLogRequest) (*p.ReopenContainerLogResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReopenContainerLog not implemented")
