@@ -98,7 +98,7 @@ func validateContainerConfig(c *p.ContainerConfig) error {
 	return nil
 }
 
-// runPodSandbox creates a sandbox container in the UVM. This function should only be called once
+// runPodSandbox creates and starts a sandbox container in the UVM. This function should only be called once
 // in a UVM's lifecycle.
 func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxRequest) error {
 	doc := createSandboxSpec()
@@ -180,7 +180,11 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxReq
 		LogPath:     "", // TODO: Put this somewhere
 		Disks:       disks,
 	}
-
+	pid, err := s.startContainer(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.sandboxPID = pid
 	return nil
 }
 
@@ -205,7 +209,7 @@ func assignNamespaces(spec *specs.Spec, pid int) {
 			Type: specs.NetworkNamespace,
 			Path: fmt.Sprintf("/proc/%d/ns/net", pid),
 		},
-	},
+	}
 }
 
 // createContainer creates a container in the UVM and returns the newly created container's ID
@@ -228,7 +232,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 		doc.OciSpecification.Linux.Resources = marshalLinuxResources(c.Linux.Resources)
 	}
 
-	assignNamespaces(&doc.OciSpecification, s.sandboxPID)
+	assignNamespaces(doc.OciSpecification, s.sandboxPID)
 
 	doc.OciSpecification.Process.Env = make([]string, len(c.Envs))
 	for i, v := range c.Envs {
@@ -306,18 +310,18 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	return id, nil
 }
 
-// startContainer starts a created container in the UVM
-func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) error {
+// startContainer starts a created container in the UVM and returns its pid
+func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) (int, error) {
 	c := s.containers[containerID]
 	if c == nil {
-		return status.Error(codes.NotFound, "container not found")
+		return -1, status.Error(codes.NotFound, "container not found")
 	}
 	if c.Container.State != p.ContainerState_CONTAINER_CREATED {
-		return status.Error(codes.FailedPrecondition, "cannot start container: container must be in a created state")
+		return -1, status.Error(codes.FailedPrecondition, "cannot start container: container must be in a created state")
 	}
 	err := c.ProcessHost.Start(ctx)
 	if err != nil {
-		return err
+		return -1, err
 	}
 	cmd := cmd.Cmd{ // TODO: custom log paths/stream settings (reference exec_hcs.go)
 		Host:   c.ProcessHost,
@@ -333,7 +337,7 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	c.Cmds = append(c.Cmds, &cmd)
 
 	go cmd.Wait() // TODO: leaking non-zero exit codes
-	return nil
+	return cmd.Process.Pid(), nil
 }
 
 // StopContainer stops a running container.

@@ -139,7 +139,8 @@ func (s *RuntimeServer) CreateContainer(ctx context.Context, req *p.CreateContai
 }
 func (s *RuntimeServer) StartContainer(ctx context.Context, req *p.StartContainerRequest) (*p.StartContainerResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::StartContainer")
-	return &p.StartContainerResponse{}, s.startContainer(ctx, req.ContainerId)
+	_, err := s.startContainer(ctx, req.ContainerId)
+	return &p.StartContainerResponse{}, err
 }
 func (s *RuntimeServer) StopContainer(ctx context.Context, req *p.StopContainerRequest) (*p.StopContainerResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::StopContainer")
