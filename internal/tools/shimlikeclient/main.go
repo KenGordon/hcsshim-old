@@ -38,48 +38,55 @@ func run(cCtx *cli.Context) {
 	logrus.Info("Connected to Shimlike")
 
 	client := p.NewRuntimeServiceClient(conn)
-	_, err = client.RunPodSandbox(context.Background(), &p.RunPodSandboxRequest{})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-
-	ccResp, err := client.CreateContainer(context.Background(), &p.CreateContainerRequest{
-		Config: &p.ContainerConfig{
-			Metadata: &p.ContainerMetadata{
-				Name:    "alpine",
-				Attempt: 1,
-			},
-			Image: &p.ImageSpec{
-				Image: "alpine",
-			},
-			Command:    []string{"ash", "-c", "while true; do echo hello; sleep 1; done"},
-			WorkingDir: "/",
-			Envs: []*p.KeyValue{
-				{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
-				{Key: "TERM", Value: "xterm"},
-			},
-			Mounts: []*p.Mount{
-				{Controller: 0, Lun: 1, Partition: 0, Readonly: true},
-				{Controller: 0, Lun: 2, Partition: 0, Readonly: false},
-			},
-		},
+	_, err = client.RunPodSandbox(context.Background(), &p.RunPodSandboxRequest{
+		PauseController:   0,
+		PauseLun:          1,
+		PausePartition:    0,
+		ScratchController: 0,
+		ScratchLun:        3,
+		ScratchPartition:  0,
 	})
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	logrus.Infof("Response: %v", ccResp)
+	/* for i := 0; i < 3; i++ {
+		ccResp, err := client.CreateContainer(context.Background(), &p.CreateContainerRequest{
+			Config: &p.ContainerConfig{
+				Metadata: &p.ContainerMetadata{
+					Name:    "alpine",
+					Attempt: 1,
+				},
+				Image: &p.ImageSpec{
+					Image: "alpine",
+				},
+				Command:    []string{"ash", "-c", "while true; do echo hello; sleep 1; done"},
+				WorkingDir: "/",
+				Envs: []*p.KeyValue{
+					{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+					{Key: "TERM", Value: "xterm"},
+				},
+				Mounts: []*p.Mount{
+					{Controller: 0, Lun: 2, Partition: 0, Readonly: true},
+				},
+			},
+		})
+		if err != nil {
+			logrus.Fatal(err)
+		}
+		logrus.Infof("Response: %v", ccResp)
 
-	scResp, err := client.StartContainer(context.Background(), &p.StartContainerRequest{
-		ContainerId: ccResp.ContainerId,
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %v", scResp)
+		scResp, err := client.StartContainer(context.Background(), &p.StartContainerRequest{
+			ContainerId: ccResp.ContainerId,
+		})
+		if err != nil {
+			logrus.Fatal(err)
+		}
+		logrus.Infof("Response: %v", scResp)
+	} */
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(10 * time.Second)
 
-	csResp, err := client.ContainerStatus(context.Background(), &p.ContainerStatusRequest{
+	/* csResp, err := client.ContainerStatus(context.Background(), &p.ContainerStatusRequest{
 		ContainerId: ccResp.ContainerId,
 		Verbose:     false,
 	})
@@ -134,7 +141,7 @@ func run(cCtx *cli.Context) {
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	logrus.Infof("Response: %v", spResp)
+	logrus.Infof("Response: %v", spResp) */
 }
 
 func main() {

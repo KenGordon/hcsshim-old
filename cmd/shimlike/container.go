@@ -98,73 +98,114 @@ func validateContainerConfig(c *p.ContainerConfig) error {
 	return nil
 }
 
-// createDefaultContainerDoc creates a default container document for a container.
-// All required arguments will be set except the ones checked in validateContainerConfig
-// and OciBundlePath.
-//
-// TODO: This could be put into a json file or something similar to avoid hardcoding these values
-func createDefaultContainerDoc() linuxHostedSystem {
-	l := linuxHostedSystem{
-		SchemaVersion: &hcsschema.Version{Major: 2, Minor: 1},
-		OciSpecification: &specs.Spec{
-			Version: "1.0.2-dev",
-			Process: &specs.Process{
-				User: specs.User{
-					UID: 0,
-					GID: 0,
-				},
-			},
-			Linux: &specs.Linux{
-				CgroupsPath: "/sys/fs/cgroup",
-				Namespaces: []specs.LinuxNamespace{
-					{
-						Type: "pid",
-					},
-					{
-						Type: "ipc",
-					},
-					{
-						Type: "uts",
-					},
-					{
-						Type: "mount",
-					},
-					{
-						Type: "network",
-					},
-				},
-				MaskedPaths: []string{
-					"/proc/acpi",
-					"/proc/asound",
-					"/proc/kcore",
-					"/proc/keys",
-					"/proc/latency_stats",
-					"/proc/timer_list",
-					"/proc/timer_stats",
-					"/proc/sched_debug",
-					"/sys/firmware",
-					"/proc/scsi",
-				},
-				ReadonlyPaths: []string{
-					"/proc/bus",
-					"/proc/fs",
-					"/proc/irq",
-					"/proc/sys",
-					"/proc/sysrq-trigger",
-				},
-			},
-			Mounts: []specs.Mount{
-				{Destination: "/proc", Type: "proc", Source: "proc", Options: []string{"nosuid", "noexec", "nodev"}},
-				{Destination: "/dev", Type: "tmpfs", Source: "tmpfs", Options: []string{"nosuid", "strictatime", "mode=755", "size=65536k"}},
-				{Destination: "/dev/pts", Type: "devpts", Source: "devpts", Options: []string{"nosuid", "noexec", "newinstance", "ptmxmode=0666", "mode=0620", "gid=5"}},
-				{Destination: "/dev/shm", Type: "tmpfs", Source: "shm", Options: []string{"nosuid", "noexec", "nodev", "mode=1777", "size=65536k"}},
-				{Destination: "/dev/mqueue", Type: "mqueue", Source: "mqueue", Options: []string{"nosuid", "noexec", "nodev"}},
-				{Destination: "/sys", Type: "sysfs", Source: "sysfs", Options: []string{"nosuid", "noexec", "nodev"}},
-				{Destination: "/sys/fs/cgroup", Type: "cgroup", Source: "cgroup", Options: []string{"nosuid", "noexec", "nodev", "relatime", "ro"}},
-			},
-		},
+// runPodSandbox creates a sandbox container in the UVM. This function should only be called once
+// in a UVM's lifecycle.
+func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxRequest) error {
+	doc := createSandboxSpec()
+	id := generateID()
+	doc.OciSpecification.Annotations["io.kubernetes.sandbox.id"] = id
+	s.sandboxID = id
+
+	s.mountmanager = &MountManager{gc: s.gc}
+	doc.OciBundlePath = fmt.Sprintf(bundlePath, id)
+
+	scratchDisk := &ScsiDisk{
+		Controller: uint8(r.ScratchController),
+		Lun:        uint8(r.ScratchLun),
+		Partition:  uint64(r.ScratchPartition),
+		Readonly:   false,
 	}
-	return l
+	scratchDiskPath, err := s.mountmanager.mountScratch(ctx, scratchDisk)
+	logrus.WithFields(logrus.Fields{
+		"disk": fmt.Sprintf("%+v", scratchDisk),
+		"path": scratchDiskPath,
+	}).Info("Mounted scratch disk")
+	if err != nil {
+		return err
+	}
+
+	disk := &ScsiDisk{
+		Controller: uint8(r.PauseController),
+		Lun:        uint8(r.PauseLun),
+		Partition:  uint64(r.PausePartition),
+		Readonly:   true,
+	}
+	layerPath, err := s.mountmanager.mountScsi(ctx, disk, id)
+	logrus.WithFields(logrus.Fields{
+		"disk": fmt.Sprintf("%+v", disk),
+		"path": layerPath,
+	}).Info("Mounted sandbox disk")
+	if err != nil {
+		return err
+	}
+
+	// create the rootfs
+	disks := []*ScsiDisk{disk}
+	rootPath, err := s.mountmanager.combineLayers(ctx, disks, id)
+	if err != nil {
+		return err
+	}
+	doc.OciSpecification.Root = &specs.Root{
+		Path: rootPath,
+	}
+	doc.ScratchDirPath = fmt.Sprintf(scratchDiskPath+scratchDirSuffix, id)
+
+	// create the container
+	container, err := s.gc.CreateContainer(ctx, id, doc)
+	if err != nil {
+		return err
+	}
+
+	if s.containers == nil {
+		s.containers = make(map[string]*Container)
+	}
+	s.containers[id] = &Container{
+		Container: &p.Container{
+			Id: id,
+			Metadata: &p.ContainerMetadata{
+				Name:    "sandbox",
+				Attempt: 1,
+			},
+			Image: &p.ImageSpec{
+				Image:       "pause",
+				Annotations: doc.OciSpecification.Annotations,
+			},
+			ImageRef:    "", //TODO: What is this?
+			State:       p.ContainerState_CONTAINER_CREATED,
+			CreatedAt:   time.Now().UnixNano(),
+			Labels:      nil,
+			Annotations: doc.OciSpecification.Annotations,
+		},
+		ProcessHost: container,
+		LogPath:     "", // TODO: Put this somewhere
+		Disks:       disks,
+	}
+
+	return nil
+}
+
+func assignNamespaces(spec *specs.Spec, pid int) {
+	spec.Linux.Namespaces = []specs.LinuxNamespace{
+		{
+			Type: specs.PIDNamespace,
+			Path: fmt.Sprintf("/proc/%d/ns/pid", pid),
+		},
+		{
+			Type: specs.IPCNamespace,
+			Path: fmt.Sprintf("/proc/%d/ns/ipc", pid),
+		},
+		{
+			Type: specs.UTSNamespace,
+			Path: fmt.Sprintf("/proc/%d/ns/uts", pid),
+		},
+		{
+			Type: specs.MountNamespace,
+		},
+		{
+			Type: specs.NetworkNamespace,
+			Path: fmt.Sprintf("/proc/%d/ns/net", pid),
+		},
+	},
 }
 
 // createContainer creates a container in the UVM and returns the newly created container's ID
@@ -175,12 +216,9 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	if err != nil {
 		return "", err
 	}
-	if s.mountmanager == nil {
-		s.mountmanager = &MountManager{gc: s.gc}
-	}
 
 	// create the container document
-	doc := createDefaultContainerDoc()
+	doc := createContainerSpec()
 	id := generateID()
 	doc.OciBundlePath = fmt.Sprintf(bundlePath, id)
 	doc.OciSpecification.Process.Args = append(c.Command, c.Args...)
@@ -190,14 +228,14 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 		doc.OciSpecification.Linux.Resources = marshalLinuxResources(c.Linux.Resources)
 	}
 
+	assignNamespaces(&doc.OciSpecification, s.sandboxPID)
+
 	doc.OciSpecification.Process.Env = make([]string, len(c.Envs))
 	for i, v := range c.Envs {
 		doc.OciSpecification.Process.Env[i] = v.Key + "=" + v.Value
 	}
 
 	// mount the SCSI disks
-	scratchDiskPath := ""
-	scratchDirPath := ""
 
 	disks := make([]*ScsiDisk, 0, len(c.Mounts))
 	for _, m := range c.Mounts {
@@ -215,10 +253,6 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 		if err != nil {
 			return "", err
 		}
-		if !m.Readonly {
-			scratchDiskPath = mountPath
-			scratchDirPath = fmt.Sprintf(scratchDiskPath+scratchDirSuffix, id)
-		}
 		disks = append(disks, &disk)
 	}
 
@@ -230,7 +264,9 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	doc.OciSpecification.Root = &specs.Root{
 		Path: rootPath,
 	}
-	doc.ScratchDirPath = scratchDirPath
+	doc.ScratchDirPath = fmt.Sprintf(s.mountmanager.scratchDiskPath+scratchDirSuffix, id)
+	doc.OciSpecification.Annotations = c.Annotations
+	doc.OciSpecification.Annotations["io.kubernetes.sandbox.id"] = s.sandboxID
 
 	// create the container
 	container, err := s.gc.CreateContainer(ctx, id, doc)
@@ -256,7 +292,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 			State:       p.ContainerState_CONTAINER_CREATED,
 			CreatedAt:   time.Now().UnixNano(),
 			Labels:      c.Labels,
-			Annotations: c.Annotations,
+			Annotations: doc.OciSpecification.Annotations,
 		},
 		ProcessHost: container,
 		LogPath:     c.LogPath,
@@ -283,7 +319,7 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	if err != nil {
 		return err
 	}
-	cmd := cmd.Cmd{ // TODO: custom log paths/stream settings
+	cmd := cmd.Cmd{ // TODO: custom log paths/stream settings (reference exec_hcs.go)
 		Host:   c.ProcessHost,
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,

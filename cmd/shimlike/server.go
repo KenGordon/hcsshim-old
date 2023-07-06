@@ -31,6 +31,8 @@ type RuntimeServer struct {
 	mountmanager *MountManager
 	containers   map[string]*Container // map of container ID to container
 	grpcServer   *grpc.Server
+	sandboxID    string
+	sandboxPID   int
 }
 
 // connectLog connects to the UVM's log port and stores the connection
@@ -113,7 +115,7 @@ func (*RuntimeServer) Version(ctx context.Context, req *p.VersionRequest) (*p.Ve
 
 // RunPodSandbox is a reserved function for setting up the Shimlike.
 func (s *RuntimeServer) RunPodSandbox(ctx context.Context, req *p.RunPodSandboxRequest) (*p.RunPodSandboxResponse, error) {
-	return &p.RunPodSandboxResponse{}, nil
+	return &p.RunPodSandboxResponse{}, s.runPodSandbox(ctx, req)
 }
 func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandboxRequest) (*p.StopPodSandboxResponse, error) {
 	for i := range s.containers {

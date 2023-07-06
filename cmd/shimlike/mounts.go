@@ -27,10 +27,12 @@ type ScsiDisk struct {
 }
 
 type MountManager struct {
-	// A list of mounts for the UVM. If an index is nil, then that index is available to be mounted on
-	mounts    []*ScsiDisk
-	mountPath map[string]*ScsiDisk // Map of "controller lun partition" to ScsiDisk
-	gc        *gcs.GuestConnection
+	// A list of mounts for the UVM. If an index is nil, then that index is available to be mounted on.
+	// The first index is always the scratch disk for the UVM.
+	mounts          []*ScsiDisk
+	mountPath       map[string]*ScsiDisk // Map of "controller lun partition" to ScsiDisk
+	gc              *gcs.GuestConnection
+	scratchDiskPath string
 }
 
 func firstEmptyIndex(mounts []*ScsiDisk) int {
@@ -40,6 +42,39 @@ func firstEmptyIndex(mounts []*ScsiDisk) int {
 		}
 	}
 	return -1
+}
+
+// mountScratch mounts the scratch disk on the UVM and returns its mounted path.
+// This function must be called before mounting any other SCSI disks.
+func (m *MountManager) mountScratch(ctx context.Context, disk *ScsiDisk) (string, error) {
+	req := guestrequest.ModificationRequest{
+		ResourceType: guestresource.ResourceTypeMappedVirtualDisk,
+		RequestType:  guestrequest.RequestTypeAdd,
+	}
+
+	mountPath := fmt.Sprintf(mountPath, 0)
+
+	req.Settings = guestresource.LCOWMappedVirtualDisk{
+		MountPath:        mountPath,
+		Controller:       disk.Controller,
+		Lun:              disk.Lun,
+		Partition:        disk.Partition,
+		ReadOnly:         false,
+		Encrypted:        false,
+		Options:          []string{},
+		EnsureFilesystem: true,
+		Filesystem:       "ext4",
+	}
+
+	err := m.gc.Modify(ctx, req)
+	if err != nil {
+		return "", err
+	}
+
+	m.mounts = append(m.mounts, disk)
+	disk.MountIndex = new(int)
+	disk.References++
+	return mountPath, nil
 }
 
 // TODO: Add some kind of validation of mounts
@@ -94,26 +129,11 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk, containerI
 }
 
 // combineLayers combines all mounted layers to create a rootfs for a container and return its path.
-// Uses the non-read only mount as the scratch disk.
-func (m *MountManager) combineLayers(ctx context.Context, mounts []*ScsiDisk, containerID string) (string, error) {
+// The scratch path must NOT be passed in as a layer.
+func (m *MountManager) combineLayers(ctx context.Context, layers []*ScsiDisk, containerID string) (string, error) {
 	// Validate that we have a max of one scratch disk
-	foundScratch := false
-	scratchPath := ""
-	layers := make([]*ScsiDisk, 0, len(mounts))
-	for i, m := range mounts {
-		if m != nil {
-			if !m.Readonly {
-				if foundScratch {
-					return "", fmt.Errorf("found more than one scratch disk")
-				}
-				foundScratch = true
-				scratchPath = fmt.Sprintf(mountPath, i)
-			} else {
-				layers = append(layers, m)
-			}
-		}
-	}
-	hcsLayers := make([]hcsschema.Layer, 0, len(mounts))
+	scratchPath := fmt.Sprintf(mountPath, 0)
+	hcsLayers := make([]hcsschema.Layer, 0, len(layers))
 	for _, m := range layers {
 		hcsLayers = append(hcsLayers, hcsschema.Layer{
 			Path: fmt.Sprintf(mountPath, *m.MountIndex),
