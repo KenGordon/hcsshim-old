@@ -23,12 +23,14 @@ type ScsiDisk struct {
 	Partition  uint64
 	Readonly   bool // False if scratch disk
 	MountIndex *int // Populated by mountScsi
+	References int
 }
 
 type MountManager struct {
 	// A list of mounts for the UVM. If an index is nil, then that index is available to be mounted on
-	mounts []*ScsiDisk
-	gc     *gcs.GuestConnection
+	mounts    []*ScsiDisk
+	mountPath map[string]*ScsiDisk // Map of "controller lun partition" to ScsiDisk
+	gc        *gcs.GuestConnection
 }
 
 func firstEmptyIndex(mounts []*ScsiDisk) int {
@@ -42,8 +44,15 @@ func firstEmptyIndex(mounts []*ScsiDisk) int {
 
 // TODO: Add some kind of validation of mounts
 // mountLayer mounts a layer on the UVM and returns its mounted path.
+// If the layer is already mounted, then it returns the existing mount path, and disk is modified to
+// point to the existing disk.
 // Modifies disk.MountPath
 func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk, containerID string) (string, error) {
+	if d, ok := m.mountPath[fmt.Sprintf("%d %d %d", disk.Controller, disk.Lun, disk.Partition)]; ok {
+		disk = d
+		disk.References++
+		return fmt.Sprintf(mountPath, *disk.MountIndex), nil
+	}
 	req := guestrequest.ModificationRequest{
 		ResourceType: guestresource.ResourceTypeMappedVirtualDisk,
 		RequestType:  guestrequest.RequestTypeAdd,
@@ -80,6 +89,7 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk, containerI
 		m.mounts[index] = disk
 	}
 	disk.MountIndex = &mountIndex
+	disk.References++
 	return mountPath, nil
 }
 
@@ -140,9 +150,14 @@ func (m *MountManager) removeLayers(ctx context.Context, containerID string) err
 	return nil
 }
 
-// unmountLayer unmounts a layer from the UVM
+// unmountLayer unmounts a layer from the UVM.
+// If the layer is referenced by another container, then it is not unmounted.
 // Modifies disk.MountPath
 func (m *MountManager) unmountScsi(ctx context.Context, disk *ScsiDisk) error {
+	if disk.References > 1 {
+		disk.References--
+		return nil
+	}
 	req := guestrequest.ModificationRequest{
 		ResourceType: guestresource.ResourceTypeMappedVirtualDisk,
 		RequestType:  guestrequest.RequestTypeRemove,
