@@ -40,9 +40,7 @@ func createContainerSpec() linuxHostedSystem {
 				},
 			},
 			Windows: &specs.Windows{
-				Network: &specs.WindowsNetwork{
-					NetworkNamespace: "",
-				},
+				Network: &specs.WindowsNetwork{},
 			},
 			Mounts: []specs.Mount{
 				{Destination: "/proc", Type: "proc", Source: "proc", Options: []string{"nosuid", "noexec", "nodev"}},
@@ -115,11 +113,9 @@ func createSandboxSpec() linuxHostedSystem {
 					"/proc/sysrq-trigger",
 				},
 			},
-			/* Windows: &specs.Windows{
-				Network: &specs.WindowsNetwork{
-					NetworkNamespace: "",
-				},
-			}, */
+			Windows: &specs.Windows{
+				Network: &specs.WindowsNetwork{},
+			},
 			Mounts: []specs.Mount{
 				{Destination: "/proc", Type: "proc", Source: "proc", Options: []string{"nosuid", "noexec", "nodev"}},
 				{Destination: "/dev", Type: "tmpfs", Source: "tmpfs", Options: []string{"nosuid", "strictatime", "mode=755", "size=65536k"}},
@@ -127,7 +123,7 @@ func createSandboxSpec() linuxHostedSystem {
 				{Destination: "/dev/shm", Type: "tmpfs", Source: "shm", Options: []string{"nosuid", "noexec", "nodev", "mode=1777", "size=65536k"}},
 				{Destination: "/dev/mqueue", Type: "mqueue", Source: "mqueue", Options: []string{"nosuid", "noexec", "nodev"}},
 				{Destination: "/sys", Type: "sysfs", Source: "sysfs", Options: []string{"nosuid", "noexec", "nodev"}},
-				{Destination: "/sys/fs/cgroup", Type: "cgroup", Source: "cgroup", Options: []string{"nosuid", "noexec", "nodev", "relatime", "ro"}},
+				{Destination: "/run", Type: "tmpfs", Source: "tmpfs", Options: []string{"nosuid", "strictatime", "mode=755", "size=65536k"}},
 			},
 			Annotations: map[string]string{
 				"io.kubernetes.cri.container-type": "sandbox",

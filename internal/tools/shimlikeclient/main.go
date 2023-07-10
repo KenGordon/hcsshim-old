@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"time"
@@ -37,19 +38,43 @@ func run(cCtx *cli.Context) {
 	defer conn.Close()
 	logrus.Info("Connected to Shimlike")
 
+	nic := &p.NIC{}
+
+	fmt.Print("Namespace ID: ")
+	fmt.Scan(&nic.NamespaceId)
+
+	fmt.Print("NIC ID: ")
+	fmt.Scan(&nic.Id)
+
+	fmt.Print("MAC Address: ")
+	fmt.Scan(&nic.MacAddress)
+
+	fmt.Print("IP Address: ")
+	fmt.Scan(&nic.IpAddress)
+
+	fmt.Print("DNS Servers: ")
+	fmt.Scan(&nic.DnsServers)
+
 	client := p.NewRuntimeServiceClient(conn)
 	_, err = client.RunPodSandbox(context.Background(), &p.RunPodSandboxRequest{
-		PauseController:   0,
-		PauseLun:          1,
-		PausePartition:    0,
-		ScratchController: 0,
-		ScratchLun:        3,
-		ScratchPartition:  0,
+		PauseDisk: &p.Mount{
+			Controller: 0,
+			Lun:        1,
+			Partition:  0,
+			Readonly:   true,
+		},
+		ScratchDisk: &p.Mount{
+			Controller: 0,
+			Lun:        3,
+			Partition:  0,
+			Readonly:   false,
+		},
+		Nic: nic,
 	})
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	/* for i := 0; i < 3; i++ {
+	for i := 0; i < 3; i++ {
 		ccResp, err := client.CreateContainer(context.Background(), &p.CreateContainerRequest{
 			Config: &p.ContainerConfig{
 				Metadata: &p.ContainerMetadata{
@@ -82,66 +107,15 @@ func run(cCtx *cli.Context) {
 			logrus.Fatal(err)
 		}
 		logrus.Infof("Response: %v", scResp)
-	} */
+	}
 
 	time.Sleep(10 * time.Second)
-
-	/* csResp, err := client.ContainerStatus(context.Background(), &p.ContainerStatusRequest{
-		ContainerId: ccResp.ContainerId,
-		Verbose:     false,
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %+v", csResp.Status)
-
-	time.Sleep(4 * time.Second)
-
-	ucResp, err := client.UpdateContainerResources(context.Background(), &p.UpdateContainerResourcesRequest{
-		ContainerId: ccResp.ContainerId,
-		Linux: &p.LinuxContainerResources{
-			CpuShares:          50,
-			MemoryLimitInBytes: 512 * 1024 * 1024,
-		},
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %v", ucResp)
-
-	time.Sleep(4 * time.Second)
-
-	stopResp, err := client.StopContainer(context.Background(), &p.StopContainerRequest{
-		ContainerId: ccResp.ContainerId,
-		Timeout:     1,
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %v", stopResp)
-
-	csResp, err = client.ContainerStatus(context.Background(), &p.ContainerStatusRequest{
-		ContainerId: ccResp.ContainerId,
-		Verbose:     false,
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %+v", csResp.Status)
-
-	rcResp, err := client.RemoveContainer(context.Background(), &p.RemoveContainerRequest{
-		ContainerId: ccResp.ContainerId,
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %v", rcResp)
 
 	spResp, err := client.StopPodSandbox(context.Background(), &p.StopPodSandboxRequest{})
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	logrus.Infof("Response: %v", spResp) */
+	logrus.Infof("Response: %v", spResp)
 }
 
 func main() {

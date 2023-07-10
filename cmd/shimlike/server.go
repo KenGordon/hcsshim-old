@@ -33,6 +33,7 @@ type RuntimeServer struct {
 	grpcServer   *grpc.Server
 	sandboxID    string
 	sandboxPID   int
+	NIC          *p.NIC
 }
 
 // connectLog connects to the UVM's log port and stores the connection
@@ -122,7 +123,7 @@ func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandbo
 		s.removeContainer(ctx, i)
 	}
 	go func() { // Goroutune so we can still send the response
-		time.Sleep(1 * time.Second)
+		time.Sleep(5 * time.Second)
 		s.grpcServer.Stop()
 		s.gc.Close()
 		s.lc.Close()

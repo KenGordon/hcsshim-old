@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Microsoft/hcsshim/hcn"
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/memory"
@@ -272,6 +273,45 @@ func runLCOW(ctx context.Context, options *uvm.OptionsLCOW, c *cli.Context) erro
 	if err := vm.Start(ctx); err != nil {
 		return err
 	}
+
+	network, err := hcn.GetNetworkByName("ContainerPlat-nat")
+	if err != nil {
+		return err
+	}
+	endpoint, err := network.CreateEndpoint(&hcn.HostComputeEndpoint{
+		Name:               "host_endpoint",
+		HostComputeNetwork: network.Id,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	defer endpoint.Delete()
+
+	ns, err := hcn.NewNamespace("").Create()
+	if err != nil {
+		return err
+	}
+	defer ns.Delete()
+	nsid := ns.Id
+
+	err = endpoint.NamespaceAttach(nsid)
+	defer endpoint.NamespaceDetach(nsid)
+	if err != nil {
+		return err
+	}
+	err = vm.CreateAndAssignNetworkSetup(ctx, "", "")
+	if err != nil {
+		return err
+	}
+	err = vm.SetupNetworkNamespace(ctx, nsid)
+	if err != nil {
+		return err
+	}
+	defer vm.TearDownNetworking(ctx, nsid)
 
 	if err := mountSCSI(ctx, c, vm); err != nil {
 		return err

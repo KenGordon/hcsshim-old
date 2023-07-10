@@ -47,6 +47,10 @@ func firstEmptyIndex(mounts []*ScsiDisk) int {
 // mountScratch mounts the scratch disk on the UVM and returns its mounted path.
 // This function must be called before mounting any other SCSI disks.
 func (m *MountManager) mountScratch(ctx context.Context, disk *ScsiDisk) (string, error) {
+	if disk.Readonly {
+		return "", fmt.Errorf("scratch disk must not be readonly")
+	}
+
 	req := guestrequest.ModificationRequest{
 		ResourceType: guestresource.ResourceTypeMappedVirtualDisk,
 		RequestType:  guestrequest.RequestTypeAdd,
@@ -131,8 +135,9 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk, containerI
 // combineLayers combines all mounted layers to create a rootfs for a container and return its path.
 // The scratch path must NOT be passed in as a layer.
 func (m *MountManager) combineLayers(ctx context.Context, layers []*ScsiDisk, containerID string) (string, error) {
-	// Validate that we have a max of one scratch disk
+	// Scratch disk is index 0, as it is always mounted before any container layers
 	scratchPath := fmt.Sprintf(mountPath, 0)
+
 	hcsLayers := make([]hcsschema.Layer, 0, len(layers))
 	for _, m := range layers {
 		hcsLayers = append(hcsLayers, hcsschema.Layer{

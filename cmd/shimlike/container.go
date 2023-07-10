@@ -12,6 +12,8 @@ import (
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/gcs"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
+	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
+	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
@@ -79,40 +81,49 @@ func validateContainerConfig(c *p.ContainerConfig) error {
 	if len(c.Mounts) == 0 {
 		return status.Error(codes.InvalidArgument, "container config is missing mounts")
 	}
-	hasScratch := false
-	hasRoot := false
-	for _, m := range c.Mounts {
-		if m.Readonly {
-			hasRoot = true
-		}
-		if !m.Readonly {
-			hasScratch = true
-		}
-	}
-	if !hasScratch {
-		return status.Error(codes.InvalidArgument, "container config is missing scratch mount")
-	}
-	if !hasRoot {
-		return status.Error(codes.InvalidArgument, "container config is missing root mount")
-	}
 	return nil
 }
 
 // runPodSandbox creates and starts a sandbox container in the UVM. This function should only be called once
 // in a UVM's lifecycle.
 func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxRequest) error {
+	// Add the network adapter through GCS
+	a := &guestresource.LCOWNetworkAdapter{
+		NamespaceID:     r.Nic.NamespaceId,
+		ID:              r.Nic.Id,
+		MacAddress:      r.Nic.MacAddress,
+		IPAddress:       r.Nic.IpAddress,
+		PrefixLength:    20,
+		GatewayAddress:  "",
+		DNSSuffix:       "",
+		DNSServerList:   r.Nic.DnsServers,
+		EnableLowMetric: false,
+		EncapOverhead:   0,
+	}
+	m := guestrequest.ModificationRequest{
+		ResourceType: guestresource.ResourceTypeNetwork,
+		RequestType:  guestrequest.RequestTypeAdd,
+		Settings:     a,
+	}
+	if err := s.gc.Modify(context.Background(), &m); err != nil {
+		return err
+	}
+	s.NIC = r.Nic
+
 	doc := createSandboxSpec()
 	id := generateID()
-	doc.OciSpecification.Annotations["io.kubernetes.sandbox.id"] = id
+	doc.OciSpecification.Annotations["io.kubernetes.cri.sandbox-id"] = id
 	s.sandboxID = id
+
+	doc.OciSpecification.Windows.Network.NetworkNamespace = s.NIC.NamespaceId
 
 	s.mountmanager = &MountManager{gc: s.gc}
 	doc.OciBundlePath = fmt.Sprintf(bundlePath, id)
 
 	scratchDisk := &ScsiDisk{
-		Controller: uint8(r.ScratchController),
-		Lun:        uint8(r.ScratchLun),
-		Partition:  uint64(r.ScratchPartition),
+		Controller: uint8(r.ScratchDisk.Controller),
+		Lun:        uint8(r.ScratchDisk.Lun),
+		Partition:  uint64(r.ScratchDisk.Partition),
 		Readonly:   false,
 	}
 	scratchDiskPath, err := s.mountmanager.mountScratch(ctx, scratchDisk)
@@ -125,10 +136,10 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxReq
 	}
 
 	disk := &ScsiDisk{
-		Controller: uint8(r.PauseController),
-		Lun:        uint8(r.PauseLun),
-		Partition:  uint64(r.PausePartition),
-		Readonly:   true,
+		Controller: uint8(r.PauseDisk.Controller),
+		Lun:        uint8(r.PauseDisk.Lun),
+		Partition:  uint64(r.PauseDisk.Partition),
+		Readonly:   r.PauseDisk.Readonly,
 	}
 	layerPath, err := s.mountmanager.mountScsi(ctx, disk, id)
 	logrus.WithFields(logrus.Fields{
@@ -184,6 +195,7 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxReq
 	if err != nil {
 		return err
 	}
+	s.sandboxID = id
 	s.sandboxPID = pid
 	return nil
 }
@@ -233,11 +245,19 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	}
 
 	assignNamespaces(doc.OciSpecification, s.sandboxPID)
+	doc.OciSpecification.Windows.Network.NetworkNamespace = s.NIC.NamespaceId
 
 	doc.OciSpecification.Process.Env = make([]string, len(c.Envs))
 	for i, v := range c.Envs {
 		doc.OciSpecification.Process.Env[i] = v.Key + "=" + v.Value
 	}
+
+	for k, v := range c.Annotations {
+		if k != "io.kubernetes.cri.container-type" { // don't let the user make a sandbox container
+			doc.OciSpecification.Annotations[k] = v
+		}
+	}
+	doc.OciSpecification.Annotations["io.kubernetes.cri.sandbox-id"] = s.sandboxID
 
 	// mount the SCSI disks
 
@@ -269,8 +289,6 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 		Path: rootPath,
 	}
 	doc.ScratchDirPath = fmt.Sprintf(s.mountmanager.scratchDiskPath+scratchDirSuffix, id)
-	doc.OciSpecification.Annotations = c.Annotations
-	doc.OciSpecification.Annotations["io.kubernetes.sandbox.id"] = s.sandboxID
 
 	// create the container
 	container, err := s.gc.CreateContainer(ctx, id, doc)
