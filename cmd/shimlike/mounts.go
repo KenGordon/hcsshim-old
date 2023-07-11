@@ -86,7 +86,7 @@ func (m *MountManager) mountScratch(ctx context.Context, disk *ScsiDisk) (string
 // If the layer is already mounted, then it returns the existing mount path, and disk is modified to
 // point to the existing disk.
 // Modifies disk.MountPath
-func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk, containerID string) (string, error) {
+func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk) (string, error) {
 	if d, ok := m.mountPath[fmt.Sprintf("%d %d %d", disk.Controller, disk.Lun, disk.Partition)]; ok {
 		disk = d
 		disk.References++

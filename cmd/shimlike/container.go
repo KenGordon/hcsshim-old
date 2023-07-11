@@ -141,7 +141,7 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxReq
 		Partition:  uint64(r.PauseDisk.Partition),
 		Readonly:   r.PauseDisk.Readonly,
 	}
-	layerPath, err := s.mountmanager.mountScsi(ctx, disk, id)
+	layerPath, err := s.mountmanager.mountScsi(ctx, disk)
 	logrus.WithFields(logrus.Fields{
 		"disk": fmt.Sprintf("%+v", disk),
 		"path": layerPath,
@@ -193,6 +193,10 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxReq
 	}
 	pid, err := s.startContainer(ctx, id)
 	if err != nil {
+		// Attempt to clean up everything
+		s.mountmanager.removeLayers(ctx, id)
+		s.mountmanager.unmountScsi(ctx, disk)
+		s.mountmanager.unmountScsi(ctx, scratchDisk)
 		return err
 	}
 	s.sandboxID = id
@@ -269,7 +273,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 			Partition:  uint64(m.Partition),
 			Readonly:   m.Readonly,
 		}
-		mountPath, err := s.mountmanager.mountScsi(ctx, &disk, id)
+		mountPath, err := s.mountmanager.mountScsi(ctx, &disk)
 		logrus.WithFields(logrus.Fields{
 			"disk": fmt.Sprintf("%+v", disk),
 			"path": mountPath,
@@ -293,6 +297,11 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	// create the container
 	container, err := s.gc.CreateContainer(ctx, id, doc)
 	if err != nil {
+		// Attempt to clean up on error
+		s.mountmanager.removeLayers(ctx, id)
+		for _, disk := range disks {
+			s.mountmanager.unmountScsi(ctx, disk)
+		}
 		return "", err
 	}
 
