@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/Microsoft/go-winio"
@@ -13,6 +14,17 @@ import (
 var (
 	usage = "shimlike <pipe address> <UVM ID>"
 )
+
+func readLog(conn *winio.HvsockConn) {
+	for {
+		buf := make([]byte, 4096)
+		n, err := conn.Read(buf)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+		fmt.Print(string(buf[:n]))
+	}
+}
 
 func run(cCtx *cli.Context) {
 	if cCtx.NArg() != 2 {
@@ -36,6 +48,7 @@ func run(cCtx *cli.Context) {
 	if err != nil {
 		logrus.Fatal(err)
 	}
+	//go readLog(rs.lc)
 
 	// Accept the GCS
 	logrus.Info("Accepting GCS")

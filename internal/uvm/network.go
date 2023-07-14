@@ -404,6 +404,7 @@ func (uvm *UtilityVM) AddEndpointsToNS(ctx context.Context, id string, endpoints
 			if err != nil {
 				return err
 			}
+			logrus.Debugf("Adding NIC with ID %s", nicID)
 			if err := uvm.addNIC(ctx, nicID.String(), endpoint); err != nil {
 				return err
 			}

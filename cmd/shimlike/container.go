@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/gcs"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
+	"github.com/Microsoft/hcsshim/internal/hns"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -87,18 +90,30 @@ func validateContainerConfig(c *p.ContainerConfig) error {
 // runPodSandbox creates and starts a sandbox container in the UVM. This function should only be called once
 // in a UVM's lifecycle.
 func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxRequest) error {
+	endpoints, err := hns.GetNamespaceEndpoints(r.Nic.NamespaceId)
+	if err != nil {
+		return err
+	}
+	if len(endpoints) == 0 {
+		return errors.New("no endpoints found for namespace")
+	}
+	firstEndpoint, err := hns.GetHNSEndpointByID(endpoints[0])
+	if err != nil {
+		return err
+	}
+
 	// Add the network adapter through GCS
 	a := &guestresource.LCOWNetworkAdapter{
 		NamespaceID:     r.Nic.NamespaceId,
 		ID:              r.Nic.Id,
-		MacAddress:      r.Nic.MacAddress,
-		IPAddress:       r.Nic.IpAddress,
-		PrefixLength:    20,
-		GatewayAddress:  "",
-		DNSSuffix:       "",
-		DNSServerList:   r.Nic.DnsServers,
-		EnableLowMetric: false,
-		EncapOverhead:   0,
+		MacAddress:      firstEndpoint.MacAddress,
+		IPAddress:       firstEndpoint.IPAddress.String(),
+		PrefixLength:    firstEndpoint.PrefixLength,
+		GatewayAddress:  firstEndpoint.GatewayAddress,
+		DNSSuffix:       firstEndpoint.DNSSuffix,
+		DNSServerList:   firstEndpoint.DNSServerList,
+		EnableLowMetric: firstEndpoint.EnableLowMetric,
+		EncapOverhead:   firstEndpoint.EncapOverhead,
 	}
 	m := guestrequest.ModificationRequest{
 		ResourceType: guestresource.ResourceTypeNetwork,
@@ -477,4 +492,44 @@ func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string)
 		Resources:   c.ContainerResources,
 	}
 	return status, nil
+}
+
+func (s *RuntimeServer) execSync(context context.Context, req *p.ExecSyncRequest) (*p.ExecSyncResponse, error) {
+	c, ok := s.containers[req.ContainerId]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "container not found")
+	}
+	if c.Container.State != p.ContainerState_CONTAINER_RUNNING {
+		return nil, status.Error(codes.FailedPrecondition, "cannot exec in container: container must be in a running state")
+	}
+	if len(req.Cmd) < 1 {
+		return nil, status.Error(codes.InvalidArgument, "cannot exec in container: no command specified")
+	}
+
+	com := cmd.Command(c.ProcessHost, req.Cmd[0], req.Cmd[1:]...)
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	com.Stdout = stdout
+	com.Stderr = stderr
+	err := com.Run()
+
+	// ExitError is fine, means the command exited with a non-zero exit code
+	var exitErr *cmd.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
+		return nil, err
+	}
+	exitCode, err := com.Process.ExitCode()
+	if err != nil {
+		return nil, err
+	}
+
+	return &p.ExecSyncResponse{
+		Stdout:   stdout.Bytes(),
+		Stderr:   stderr.Bytes(),
+		ExitCode: int32(exitCode),
+	}, nil
+}
+
+func (s *RuntimeServer) exec(context context.Context, req *p.ExecRequest) (*p.ExecResponse, error) {
+	return nil, nil
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Microsoft/hcsshim/hcn"
 	"github.com/Microsoft/hcsshim/internal/cmd"
+	"github.com/Microsoft/hcsshim/internal/hns"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/memory"
 	"github.com/Microsoft/hcsshim/internal/uvm"
@@ -277,6 +278,10 @@ func runLCOW(ctx context.Context, options *uvm.OptionsLCOW, c *cli.Context) erro
 	network, err := hcn.GetNetworkByName("ContainerPlat-nat")
 	if err != nil {
 		return err
+	}
+	e, err := hns.GetHNSEndpointByName("host_endpoint")
+	if err == nil {
+		e.Delete()
 	}
 	endpoint, err := network.CreateEndpoint(&hcn.HostComputeEndpoint{
 		Name:               "host_endpoint",

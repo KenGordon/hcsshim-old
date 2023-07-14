@@ -174,11 +174,14 @@ func (s *RuntimeServer) UpdateContainerResources(ctx context.Context, req *p.Upd
 func (*RuntimeServer) ReopenContainerLog(ctx context.Context, req *p.ReopenContainerLogRequest) (*p.ReopenContainerLogResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReopenContainerLog not implemented")
 }
-func (*RuntimeServer) ExecSync(ctx context.Context, req *p.ExecSyncRequest) (*p.ExecSyncResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ExecSync not implemented")
+func (s *RuntimeServer) ExecSync(ctx context.Context, req *p.ExecSyncRequest) (*p.ExecSyncResponse, error) {
+	logrus.WithField("request", req).Info("shimlike::ExecSync")
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(req.Timeout))
+	defer cancel()
+	return s.execSync(ctx, req)
 }
-func (*RuntimeServer) Exec(ctx context.Context, req *p.ExecRequest) (*p.ExecResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Exec not implemented")
+func (s *RuntimeServer) Exec(ctx context.Context, req *p.ExecRequest) (*p.ExecResponse, error) {
+	return s.exec(ctx, req)
 }
 func (*RuntimeServer) Attach(ctx context.Context, req *p.AttachRequest) (*p.AttachResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Attach not implemented")
@@ -190,7 +193,7 @@ func (*RuntimeServer) ListContainerStats(ctx context.Context, req *p.ListContain
 	return nil, status.Errorf(codes.Unimplemented, "method ListContainerStats not implemented")
 }
 func (*RuntimeServer) Status(ctx context.Context, req *p.StatusRequest) (*p.StatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
+	return &p.StatusResponse{Status: &p.RuntimeStatus{Conditions: []*p.RuntimeCondition{}}}, nil
 }
 func (*RuntimeServer) CheckpointContainer(ctx context.Context, req *p.CheckpointContainerRequest) (*p.CheckpointContainerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckpointContainer not implemented")

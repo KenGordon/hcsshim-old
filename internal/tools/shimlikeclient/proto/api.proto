@@ -424,12 +424,6 @@ message NIC {
     string namespaceId = 1;
     // The ID of the NIC
     string id = 2;
-    // The MAC address of the NIC
-    string macAddress = 3;
-    // The IP address of the NIC
-    string ipAddress = 4;
-    // The DNS server list of the NIC, separated by space
-    string dnsServers = 5;
 }
 
 message StopPodSandboxRequest {}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"time"
 
 	"github.com/Microsoft/go-winio"
 	p "github.com/Microsoft/hcsshim/internal/tools/shimlikeclient/proto"
@@ -46,15 +45,6 @@ func run(cCtx *cli.Context) {
 	fmt.Print("NIC ID: ")
 	fmt.Scan(&nic.Id)
 
-	fmt.Print("MAC Address: ")
-	fmt.Scan(&nic.MacAddress)
-
-	fmt.Print("IP Address: ")
-	fmt.Scan(&nic.IpAddress)
-
-	fmt.Print("DNS Servers: ")
-	fmt.Scan(&nic.DnsServers)
-
 	client := p.NewRuntimeServiceClient(conn)
 	_, err = client.RunPodSandbox(context.Background(), &p.RunPodSandboxRequest{
 		PauseDisk: &p.Mount{
@@ -74,48 +64,67 @@ func run(cCtx *cli.Context) {
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	for i := 0; i < 3; i++ {
-		ccResp, err := client.CreateContainer(context.Background(), &p.CreateContainerRequest{
-			Config: &p.ContainerConfig{
-				Metadata: &p.ContainerMetadata{
-					Name:    "alpine",
-					Attempt: 1,
-				},
-				Image: &p.ImageSpec{
-					Image: "alpine",
-				},
-				Command:    []string{"ash", "-c", "while true; do echo hello; sleep 1; done"},
-				WorkingDir: "/",
-				Envs: []*p.KeyValue{
-					{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
-					{Key: "TERM", Value: "xterm"},
-				},
-				Mounts: []*p.Mount{
-					{Controller: 0, Lun: 2, Partition: 0, Readonly: true},
-				},
+
+	ccResp, err := client.CreateContainer(context.Background(), &p.CreateContainerRequest{
+		Config: &p.ContainerConfig{
+			Metadata: &p.ContainerMetadata{
+				Name:    "alpine",
+				Attempt: 1,
 			},
-		})
-		if err != nil {
-			logrus.Fatal(err)
-		}
-		logrus.Infof("Response: %v", ccResp)
-
-		scResp, err := client.StartContainer(context.Background(), &p.StartContainerRequest{
-			ContainerId: ccResp.ContainerId,
-		})
-		if err != nil {
-			logrus.Fatal(err)
-		}
-		logrus.Infof("Response: %v", scResp)
+			Image: &p.ImageSpec{
+				Image: "alpine",
+			},
+			Command:    []string{"ash", "-c", "apk add iputils && ping google.com"},
+			WorkingDir: "/",
+			Envs: []*p.KeyValue{
+				{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+				{Key: "TERM", Value: "xterm"},
+			},
+			Mounts: []*p.Mount{
+				{Controller: 0, Lun: 2, Partition: 0, Readonly: true},
+			},
+		},
+	})
+	if err != nil {
+		logrus.Fatal(err)
 	}
+	logrus.Infof("Response: %v", ccResp)
 
-	time.Sleep(10 * time.Second)
+	scResp, err := client.StartContainer(context.Background(), &p.StartContainerRequest{
+		ContainerId: ccResp.ContainerId,
+	})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %v", scResp)
+
+	/* time.Sleep(5 * time.Second)
+
+	sResp, err := client.StopContainer(context.Background(), &p.StopContainerRequest{
+		ContainerId: ccResp.ContainerId,
+	})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %v", sResp)
+
+	time.Sleep(2 * time.Second)
+
+	rmResp, err := client.RemoveContainer(context.Background(), &p.RemoveContainerRequest{
+		ContainerId: ccResp.ContainerId,
+	})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %v", rmResp)
+
+	time.Sleep(2 * time.Second)
 
 	spResp, err := client.StopPodSandbox(context.Background(), &p.StopPodSandboxRequest{})
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	logrus.Infof("Response: %v", spResp)
+	logrus.Infof("Response: %v", spResp) */
 }
 
 func main() {
