@@ -48,7 +48,7 @@ func run(cCtx *cli.Context) {
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	//go readLog(rs.lc)
+	go readLog(rs.lc)
 
 	// Accept the GCS
 	logrus.Info("Accepting GCS")
