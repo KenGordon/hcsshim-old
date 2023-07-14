@@ -24,8 +24,7 @@ import (
 )
 
 const (
-	bundlePath       = "/run/gcs/c/%s" // path to the OCI bundle given the container ID
-	scratchDirSuffix = "/scratch/%s"   // path to a scratch dir relative to a mounted scsi disk
+	bundlePath = "/run/gcs/c/%s" // path to the OCI bundle given the container ID
 )
 
 // ContainerStatus contains auxilliary information needed to complete a ContainerStatus call

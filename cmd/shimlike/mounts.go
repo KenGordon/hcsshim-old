@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	mountPath  = "/run/mounts/scsi/m%d" // path to a mounted layer or scratch disk given its index
-	rootfsPath = "/run/gcs/c/%s/rootfs" // path to the rootfs of a container given its ID
+	mountPath        = "/run/mounts/scsi/m%d" // path to a mounted layer or scratch disk given its index
+	rootfsPath       = "/run/gcs/c/%s/rootfs" // path to the rootfs of a container given its ID
+	scratchDirSuffix = "/scratch/%s"          // path to a scratch dir relative to a mounted scsi disk
 )
 
 // Represents an unmounted, attached SCSI disk in the UVM
@@ -152,7 +153,7 @@ func (m *MountManager) combineLayers(ctx context.Context, layers []*ScsiDisk, co
 			ContainerID:       containerID,
 			ContainerRootPath: path,
 			Layers:            hcsLayers,
-			ScratchPath:       scratchPath,
+			ScratchPath:       fmt.Sprintf(scratchPath+scratchDirSuffix, containerID),
 		},
 	}
 	logrus.WithField("request", fmt.Sprintf("%+v", req)).Infof("Combining layers for container %s", containerID)
