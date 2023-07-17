@@ -36,6 +36,7 @@ func marshalLinuxResources(c *p.LinuxContainerResources) *specs.LinuxResources {
 	return resources
 }
 
+// updateContainerResources updates the resources of a container
 func (s *RuntimeServer) updateContainerResources(ctx context.Context, containerID string, resources *p.LinuxContainerResources, annotations map[string]string) error {
 	c := s.containers[containerID]
 	if c == nil {

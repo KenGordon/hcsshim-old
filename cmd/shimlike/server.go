@@ -88,13 +88,11 @@ func (s *RuntimeServer) acceptGcs() error {
 	logrus.Info("Accepted GCS connection from UVM")
 
 	// Start the GCS protocol.
-
-	var initGuestState *gcs.InitialGuestState
 	gcc := &gcs.GuestConnectionConfig{
 		Conn:           conn,
 		Log:            logrus.NewEntry(logrus.StandardLogger()),
 		IoListen:       gcs.HvsockIoListen(ID),
-		InitGuestState: initGuestState,
+		InitGuestState: &gcs.InitialGuestState{},
 	}
 	gc, err := gcc.Connect(context.Background(), true)
 	if err != nil {
@@ -124,9 +122,9 @@ func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandbo
 	}
 	go func() { // Goroutune so we can still send the response
 		time.Sleep(5 * time.Second)
-		s.grpcServer.Stop()
 		s.gc.Close()
 		s.lc.Close()
+		s.grpcServer.Stop()
 	}()
 	return &p.StopPodSandboxResponse{}, nil
 }
@@ -154,11 +152,7 @@ func (s *RuntimeServer) RemoveContainer(ctx context.Context, req *p.RemoveContai
 func (s *RuntimeServer) ListContainers(ctx context.Context, req *p.ListContainersRequest) (*p.ListContainersResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::ListContainers")
 	containers := s.listContainers(ctx, req.Filter)
-	containersData := make([]*p.Container, len(containers))
-	for i, c := range containers {
-		containersData[i] = c.Container
-	}
-	return &p.ListContainersResponse{Containers: containersData}, nil
+	return &p.ListContainersResponse{Containers: containers}, nil
 }
 func (s *RuntimeServer) ContainerStatus(ctx context.Context, req *p.ContainerStatusRequest) (*p.ContainerStatusResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::ContainerStatus")

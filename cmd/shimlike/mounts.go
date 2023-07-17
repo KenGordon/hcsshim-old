@@ -30,10 +30,10 @@ type ScsiDisk struct {
 type MountManager struct {
 	// A list of mounts for the UVM. If an index is nil, then that index is available to be mounted on.
 	// The first index is always the scratch disk for the UVM.
-	mounts          []*ScsiDisk
-	mountPath       map[string]*ScsiDisk // Map of "controller lun partition" to ScsiDisk
-	gc              *gcs.GuestConnection
-	scratchDiskPath string
+	mounts       []*ScsiDisk
+	diskMap      map[string]*ScsiDisk // Map of "controller lun partition" to ScsiDisk
+	gc           *gcs.GuestConnection
+	scratchIndex *int // Populated by mountScratch
 }
 
 func firstEmptyIndex(mounts []*ScsiDisk) int {
@@ -45,52 +45,16 @@ func firstEmptyIndex(mounts []*ScsiDisk) int {
 	return -1
 }
 
-// mountScratch mounts the scratch disk on the UVM and returns its mounted path.
-// This function must be called before mounting any other SCSI disks.
-func (m *MountManager) mountScratch(ctx context.Context, disk *ScsiDisk) (string, error) {
-	if disk.Readonly {
-		return "", fmt.Errorf("scratch disk must not be readonly")
-	}
-
-	req := guestrequest.ModificationRequest{
-		ResourceType: guestresource.ResourceTypeMappedVirtualDisk,
-		RequestType:  guestrequest.RequestTypeAdd,
-	}
-
-	mountPath := fmt.Sprintf(mountPath, 0)
-
-	req.Settings = guestresource.LCOWMappedVirtualDisk{
-		MountPath:        mountPath,
-		Controller:       disk.Controller,
-		Lun:              disk.Lun,
-		Partition:        disk.Partition,
-		ReadOnly:         false,
-		Encrypted:        false,
-		Options:          []string{},
-		EnsureFilesystem: true,
-		Filesystem:       "ext4",
-	}
-
-	err := m.gc.Modify(ctx, req)
-	if err != nil {
-		return "", err
-	}
-
-	m.mounts = append(m.mounts, disk)
-	disk.MountIndex = new(int)
-	disk.References++
-	return mountPath, nil
-}
-
-// TODO: Add some kind of validation of mounts
 // mountLayer mounts a layer on the UVM and returns its mounted path.
 // If the layer is already mounted, then it returns the existing mount path, and disk is modified to
 // point to the existing disk.
-// Modifies disk.MountPath
+// If the disk is not readonly, then it is mounted as a scratch disk.
+// Populates disk.MountPath
 func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk) (string, error) {
-	if d, ok := m.mountPath[fmt.Sprintf("%d %d %d", disk.Controller, disk.Lun, disk.Partition)]; ok {
-		disk = d
-		disk.References++
+	// Check if already mounted
+	if d, ok := m.diskMap[fmt.Sprintf("%d %d %d", disk.Controller, disk.Lun, disk.Partition)]; ok {
+		disk.MountIndex = d.MountIndex
+		d.References++
 		return fmt.Sprintf(mountPath, *disk.MountIndex), nil
 	}
 	req := guestrequest.ModificationRequest{
@@ -100,7 +64,7 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk) (string, e
 
 	index := firstEmptyIndex(m.mounts)
 	mountIndex := index
-	if mountIndex == -1 {
+	if mountIndex == -1 { // No empty index, so append to the end
 		mountIndex = len(m.mounts)
 	}
 
@@ -118,6 +82,7 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk) (string, e
 		Filesystem:       "ext4",
 	}
 
+	logrus.WithField("request", fmt.Sprintf("%+v", req)).Infof("Mounting SCSI disk %d %d %d", disk.Controller, disk.Lun, disk.Partition)
 	err := m.gc.Modify(ctx, req)
 	if err != nil {
 		return "", err
@@ -129,16 +94,22 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk) (string, e
 		m.mounts[index] = disk
 	}
 	disk.MountIndex = &mountIndex
+	if !disk.Readonly {
+		m.scratchIndex = &mountIndex
+	}
 	disk.References++
+	if m.diskMap == nil {
+		m.diskMap = make(map[string]*ScsiDisk)
+	}
+	m.diskMap[fmt.Sprintf("%d %d %d", disk.Controller, disk.Lun, disk.Partition)] = disk
+
 	return mountPath, nil
 }
 
-// combineLayers combines all mounted layers to create a rootfs for a container and return its path.
-// The scratch path must NOT be passed in as a layer.
+// combineLayers combines all mounted layers to create a rootfs for a container and returns its path.
+// The scratch disk must NOT be passed in as a layer.
 func (m *MountManager) combineLayers(ctx context.Context, layers []*ScsiDisk, containerID string) (string, error) {
-	// Scratch disk is index 0, as it is always mounted before any container layers
-	scratchPath := fmt.Sprintf(mountPath, 0)
-
+	scratchPath := fmt.Sprintf(mountPath, *m.scratchIndex)
 	hcsLayers := make([]hcsschema.Layer, 0, len(layers))
 	for _, m := range layers {
 		hcsLayers = append(hcsLayers, hcsschema.Layer{
@@ -146,6 +117,7 @@ func (m *MountManager) combineLayers(ctx context.Context, layers []*ScsiDisk, co
 		})
 	}
 	path := fmt.Sprintf(rootfsPath, containerID)
+
 	req := guestrequest.ModificationRequest{
 		ResourceType: guestresource.ResourceTypeCombinedLayers,
 		RequestType:  guestrequest.RequestTypeAdd,
@@ -164,6 +136,7 @@ func (m *MountManager) combineLayers(ctx context.Context, layers []*ScsiDisk, co
 	return path, nil
 }
 
+// removeLayers removes the rootfs for a container, but doesn't unmount the disks.
 func (m *MountManager) removeLayers(ctx context.Context, containerID string) error {
 	req := guestrequest.ModificationRequest{
 		ResourceType: guestresource.ResourceTypeCombinedLayers,
@@ -172,16 +145,23 @@ func (m *MountManager) removeLayers(ctx context.Context, containerID string) err
 			ContainerRootPath: fmt.Sprintf(rootfsPath, containerID),
 		},
 	}
+	logrus.WithField("request", fmt.Sprintf("%+v", req)).Infof("Removing layers for container %s", containerID)
 	m.gc.Modify(ctx, req)
 	return nil
 }
 
 // unmountLayer unmounts a layer from the UVM.
-// If the layer is referenced by another container, then it is not unmounted.
+// If the layer is referenced by another container, then it is not unmounted, and instead the reference count is decremented.
 // Modifies disk.MountPath
 func (m *MountManager) unmountScsi(ctx context.Context, disk *ScsiDisk) error {
+	if d, ok := m.diskMap[fmt.Sprintf("%d %d %d", disk.Controller, disk.Lun, disk.Partition)]; ok {
+		disk = d
+	} else {
+		return fmt.Errorf("disk is not mounted")
+	}
 	if disk.References > 1 {
 		disk.References--
+		logrus.Infof("Not unmounting SCSI disk %d %d %d, referenced by %d other container(s)", disk.Controller, disk.Lun, disk.Partition, disk.References)
 		return nil
 	}
 	req := guestrequest.ModificationRequest{
@@ -194,6 +174,7 @@ func (m *MountManager) unmountScsi(ctx context.Context, disk *ScsiDisk) error {
 		Partition:  disk.Partition,
 		Controller: disk.Controller,
 	}
+	logrus.WithField("request", fmt.Sprintf("%+v", req)).Infof("Unmounting SCSI disk %d %d %d", disk.Controller, disk.Lun, disk.Partition)
 	err := m.gc.Modify(ctx, req)
 	if err != nil {
 		return err

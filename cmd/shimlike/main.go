@@ -15,6 +15,7 @@ var (
 	usage = "shimlike <pipe address> <UVM ID>"
 )
 
+// ReadLog continuously reads from the log connection and prints to stdout.
 func readLog(conn *winio.HvsockConn) {
 	for {
 		buf := make([]byte, 4096)
@@ -42,7 +43,7 @@ func run(cCtx *cli.Context) {
 	}
 	proto.RegisterRuntimeServiceServer(s, &rs)
 
-	// Connect to the UVM
+	// Connect to the UVM's log port
 	logrus.Info("Connecting to UVM")
 	err = rs.connectLog()
 	if err != nil {
@@ -50,7 +51,7 @@ func run(cCtx *cli.Context) {
 	}
 	go readLog(rs.lc)
 
-	// Accept the GCS
+	// Accept the GCS connection
 	logrus.Info("Accepting GCS")
 	err = rs.acceptGcs()
 	if err != nil {

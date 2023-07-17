@@ -119,11 +119,12 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxReq
 		RequestType:  guestrequest.RequestTypeAdd,
 		Settings:     a,
 	}
-	if err := s.gc.Modify(context.Background(), &m); err != nil {
+	if err := s.gc.Modify(ctx, &m); err != nil {
 		return err
 	}
 	s.NIC = r.Nic
 
+	// Create the sandbox container
 	doc := createSandboxSpec()
 	id := generateID()
 	doc.OciSpecification.Annotations["io.kubernetes.cri.sandbox-id"] = id
@@ -140,7 +141,7 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxReq
 		Partition:  uint64(r.ScratchDisk.Partition),
 		Readonly:   false,
 	}
-	scratchDiskPath, err := s.mountmanager.mountScratch(ctx, scratchDisk)
+	scratchDiskPath, err := s.mountmanager.mountScsi(ctx, scratchDisk)
 	logrus.WithFields(logrus.Fields{
 		"disk": fmt.Sprintf("%+v", scratchDisk),
 		"path": scratchDiskPath,
@@ -278,16 +279,15 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	doc.OciSpecification.Annotations["io.kubernetes.cri.sandbox-id"] = s.sandboxID
 
 	// mount the SCSI disks
-
 	disks := make([]*ScsiDisk, 0, len(c.Mounts))
 	for _, m := range c.Mounts {
-		disk := ScsiDisk{
+		disk := &ScsiDisk{
 			Controller: uint8(m.Controller),
 			Lun:        uint8(m.Lun),
 			Partition:  uint64(m.Partition),
 			Readonly:   m.Readonly,
 		}
-		mountPath, err := s.mountmanager.mountScsi(ctx, &disk)
+		mountPath, err := s.mountmanager.mountScsi(ctx, disk)
 		logrus.WithFields(logrus.Fields{
 			"disk": fmt.Sprintf("%+v", disk),
 			"path": mountPath,
@@ -295,7 +295,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 		if err != nil {
 			return "", err
 		}
-		disks = append(disks, &disk)
+		disks = append(disks, disk)
 	}
 
 	// create the rootfs
@@ -306,7 +306,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 	doc.OciSpecification.Root = &specs.Root{
 		Path: rootPath,
 	}
-	doc.ScratchDirPath = fmt.Sprintf(s.mountmanager.scratchDiskPath+scratchDirSuffix, id)
+	doc.ScratchDirPath = fmt.Sprintf(mountPath+scratchDirSuffix, *s.mountmanager.scratchIndex, id)
 
 	// create the container
 	container, err := s.gc.CreateContainer(ctx, id, doc)
@@ -407,10 +407,11 @@ func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, t
 	return nil
 }
 
+// removeContainer removes a container from the UVM. If the container is not found, this is a no-op
 func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string) error {
 	c := s.containers[containerID]
 	if c == nil {
-		return status.Error(codes.NotFound, "container not found")
+		return nil
 	}
 	if c.Container.State == p.ContainerState_CONTAINER_RUNNING {
 		s.stopContainer(ctx, containerID, 0)
@@ -437,8 +438,9 @@ func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string)
 	return nil
 }
 
-func (s *RuntimeServer) listContainers(ctx context.Context, filter *p.ContainerFilter) []*Container {
-	containers := make([]*Container, 0, len(s.containers))
+// listContainers returns a list of all containers
+func (s *RuntimeServer) listContainers(ctx context.Context, filter *p.ContainerFilter) []*p.Container {
+	containers := make([]*p.Container, 0, len(s.containers))
 	skipID := filter.Id == ""
 	skipState := filter.State == nil
 
@@ -450,13 +452,13 @@ func (s *RuntimeServer) listContainers(ctx context.Context, filter *p.ContainerF
 					continue
 				}
 			}
-			containers = append(containers, c)
+			containers = append(containers, c.Container)
 		}
 	}
-
 	return containers
 }
 
+// containerStatus returns the status of a container. If the container is not present, this returns an error
 func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string) (*p.ContainerStatus, error) {
 	c := s.containers[containerID]
 	if c == nil {
@@ -493,6 +495,7 @@ func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string)
 	return status, nil
 }
 
+// execSync executes a command synchronously in a container
 func (s *RuntimeServer) execSync(context context.Context, req *p.ExecSyncRequest) (*p.ExecSyncResponse, error) {
 	c, ok := s.containers[req.ContainerId]
 	if !ok {
