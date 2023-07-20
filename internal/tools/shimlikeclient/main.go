@@ -22,6 +22,23 @@ func pipeDialer(ctx context.Context, addr string) (net.Conn, error) {
 	return winio.DialPipe(addr, nil)
 }
 
+func acceptPrint(pipe net.Listener) {
+	con, err := pipe.Accept()
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	defer con.Close()
+
+	buf := make([]byte, 1024)
+	for {
+		n, err := con.Read(buf)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+		fmt.Print(string(buf[:n]))
+	}
+}
+
 func run(cCtx *cli.Context) {
 	if cCtx.NArg() != 2 {
 		logrus.Fatalf("Usage: %s", usage)
@@ -66,72 +83,80 @@ func run(cCtx *cli.Context) {
 		logrus.Fatal(err)
 	}
 
-	numContainers := 3
-	containers := make([]string, 0, numContainers)
-	for i := 0; i < numContainers; i++ {
-		ccResp, err := client.CreateContainer(context.Background(), &p.CreateContainerRequest{
-			Config: &p.ContainerConfig{
-				Metadata: &p.ContainerMetadata{
-					Name:    "alpine",
-					Attempt: 1,
-				},
-				Image: &p.ImageSpec{
-					Image: "alpine",
-				},
-				Command:    []string{"ash", "-c", "apk add iputils && ping microsoft.com"},
-				WorkingDir: "/",
-				Envs: []*p.KeyValue{
-					{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
-					{Key: "TERM", Value: "xterm"},
-				},
-				Mounts: []*p.Mount{
-					{Controller: 0, Lun: 2, Partition: 0, Readonly: true},
-				},
+	ccResp, err := client.CreateContainer(context.Background(), &p.CreateContainerRequest{
+		Config: &p.ContainerConfig{
+			Metadata: &p.ContainerMetadata{
+				Name:    "alpine",
+				Attempt: 1,
 			},
-		})
-		if err != nil {
-			logrus.Fatal(err)
-		}
-		containers = append(containers, ccResp.ContainerId)
-		logrus.Infof("Response: %v", ccResp)
-		scResp, err := client.StartContainer(context.Background(), &p.StartContainerRequest{
-			ContainerId: ccResp.ContainerId,
-		})
-		if err != nil {
-			logrus.Fatal(err)
-		}
-		logrus.Infof("Response: %v", scResp)
-	}
-
-	time.Sleep(5 * time.Second)
-
-	for _, container := range containers {
-		sResp, err := client.StopContainer(context.Background(), &p.StopContainerRequest{
-			ContainerId: container,
-		})
-		if err != nil {
-			logrus.Fatal(err)
-		}
-		logrus.Infof("Response: %v", sResp)
-
-		time.Sleep(2 * time.Second)
-
-		rmResp, err := client.RemoveContainer(context.Background(), &p.RemoveContainerRequest{
-			ContainerId: container,
-		})
-		if err != nil {
-			logrus.Fatal(err)
-		}
-		logrus.Infof("Response: %v", rmResp)
-	}
-
-	time.Sleep(2 * time.Second)
-
-	spResp, err := client.StopPodSandbox(context.Background(), &p.StopPodSandboxRequest{})
+			Image: &p.ImageSpec{
+				Image: "alpine",
+			},
+			Command:    []string{"ash", "-c", "apk add iputils && ping microsoft.com"},
+			WorkingDir: "/",
+			Envs: []*p.KeyValue{
+				{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+				{Key: "TERM", Value: "xterm"},
+			},
+			Mounts: []*p.Mount{
+				{Controller: 0, Lun: 2, Partition: 0, Readonly: true},
+			},
+		},
+	})
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	logrus.Infof("Response: %v", spResp)
+	logrus.Infof("Response: %v", ccResp)
+	scResp, err := client.StartContainer(context.Background(), &p.StartContainerRequest{
+		ContainerId: ccResp.ContainerId,
+	})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %v", scResp)
+
+	pipe, err := winio.ListenPipe(`\\.\pipe\slclient\attach`, nil)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	defer pipe.Close()
+
+	go acceptPrint(pipe)
+
+	aResp, err := client.Attach(context.Background(), &p.AttachRequest{
+		ContainerId: ccResp.ContainerId,
+		Stdout:      true,
+		Stderr:      true,
+		Pipe:        pipe.Addr().String(),
+	})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %v", aResp)
+
+	time.Sleep(2 * time.Second)
+
+	pipe2, err := winio.ListenPipe(`\\.\pipe\slclient\exec`, nil)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	defer pipe2.Close()
+
+	go acceptPrint(pipe2)
+
+	eResp, err := client.Exec(context.Background(), &p.ExecRequest{
+		Cmd:         []string{"ash", "-c", "for i in $(seq 1 10); do echo $i; sleep 1; done"},
+		ContainerId: ccResp.ContainerId,
+		Stdout:      true,
+		Stderr:      true,
+		Pipe:        pipe.Addr().String(),
+	})
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.Infof("Response: %v", eResp)
+
+	time.Sleep(30 * time.Second)
 }
 
 func main() {

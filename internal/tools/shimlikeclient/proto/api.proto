@@ -78,9 +78,9 @@ service RuntimeService {
 
     // ExecSync runs a command in a container synchronously.
     rpc ExecSync(ExecSyncRequest) returns (ExecSyncResponse) {}
-    // Exec prepares a streaming endpoint to execute a command in the container.
+    // Exec connects to a named pipe to forward output from an executed command in a container. The pipe must be created before calling this function.
     rpc Exec(ExecRequest) returns (ExecResponse) {}
-    // Attach prepares a streaming endpoint to attach to a running container.
+    // Attach connects to a named pipe and streams output from a running container. The pipe must be created before calling this function.
     rpc Attach(AttachRequest) returns (AttachResponse) {}
 
     // ContainerStats returns stats of the container. If the container does not
@@ -1264,11 +1264,11 @@ message ExecRequest {
     // in this case. The output of stdout and stderr will be combined to a
     // single stream.
     bool stderr = 6;
+    // Address of the named pipe to stream to
+    string pipe = 7;
 }
 
 message ExecResponse {
-    // Fully qualified URL of the exec streaming server.
-    string url = 1;
 }
 
 message AttachRequest {
@@ -1289,11 +1289,11 @@ message AttachRequest {
     // in this case. The output of stdout and stderr will be combined to a
     // single stream.
     bool stderr = 5;
+    // Address of the named pipe to stream to
+    string pipe = 6;
 }
 
 message AttachResponse {
-    // Fully qualified URL of the attach streaming server.
-    string url = 1;
 }
 
 message PortForwardResponse {

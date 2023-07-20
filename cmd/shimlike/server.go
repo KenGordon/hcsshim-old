@@ -120,11 +120,11 @@ func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandbo
 	for i := range s.containers {
 		s.removeContainer(ctx, i)
 	}
-	go func() { // Goroutune so we can still send the response
+	go func() { // Goroutine so we can still send the response
 		time.Sleep(5 * time.Second)
 		s.gc.Close()
 		s.lc.Close()
-		s.grpcServer.Stop()
+		s.grpcServer.GracefulStop()
 	}()
 	return &p.StopPodSandboxResponse{}, nil
 }
@@ -175,10 +175,12 @@ func (s *RuntimeServer) ExecSync(ctx context.Context, req *p.ExecSyncRequest) (*
 	return s.execSync(ctx, req)
 }
 func (s *RuntimeServer) Exec(ctx context.Context, req *p.ExecRequest) (*p.ExecResponse, error) {
+	logrus.WithField("request", req).Info("shimlike::Exec")
 	return s.exec(ctx, req)
 }
-func (*RuntimeServer) Attach(ctx context.Context, req *p.AttachRequest) (*p.AttachResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Attach not implemented")
+func (s *RuntimeServer) Attach(ctx context.Context, req *p.AttachRequest) (*p.AttachResponse, error) {
+	logrus.WithField("request", req).Info("shimlike::Attach")
+	return s.attach(ctx, req)
 }
 func (*RuntimeServer) ContainerStats(ctx context.Context, req *p.ContainerStatsRequest) (*p.ContainerStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ContainerStats not implemented")

@@ -7,9 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
+	"github.com/Microsoft/go-winio"
 	p "github.com/Microsoft/hcsshim/cmd/shimlike/proto"
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/gcs"
@@ -44,7 +44,7 @@ type Container struct {
 	LogPath            string
 	Disks              []*ScsiDisk
 	ContainerResources *p.ContainerResources // Container's resources. May be nil.
-	Cmds               []*cmd.Cmd            // All commands running in the container
+	Cmds               []*cmd.Cmd            // All commands running in the container. The first element is the main process.
 }
 
 // linuxHostedSystem is passed to the GCS to create a container
@@ -364,11 +364,14 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	if err != nil {
 		return -1, err
 	}
+	if err != nil {
+		return -1, err
+	}
 	cmd := cmd.Cmd{ // TODO: custom log paths/stream settings (reference exec_hcs.go)
 		Host:   c.ProcessHost,
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
+		Stdin:  &PipeReader{},
+		Stdout: &PipeWriter{},
+		Stderr: &PipeWriter{},
 	}
 	cmd.Start()
 	c.Container.State = p.ContainerState_CONTAINER_RUNNING
@@ -532,6 +535,86 @@ func (s *RuntimeServer) execSync(context context.Context, req *p.ExecSyncRequest
 	}, nil
 }
 
+// exec connects to a named pipe to forward output from an executed command in a container
 func (s *RuntimeServer) exec(context context.Context, req *p.ExecRequest) (*p.ExecResponse, error) {
-	return nil, nil
+	c, ok := s.containers[req.ContainerId]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "container not found")
+	}
+	if c.Container.State != p.ContainerState_CONTAINER_RUNNING {
+		return nil, status.Error(codes.FailedPrecondition, "cannot exec in container: container must be in a running state")
+	}
+	if len(req.Cmd) < 1 {
+		return nil, status.Error(codes.InvalidArgument, "cannot exec in container: no command specified")
+	}
+	if !req.Stdin && !req.Stdout && !req.Stderr {
+		return nil, status.Error(codes.InvalidArgument, "cannot exec in container: one of stdin, stdout, or stderr must be true")
+	}
+
+	pipe, err := winio.DialPipe(req.Pipe, nil)
+	if err != nil {
+		return nil, err
+	}
+	com := cmd.Command(c.ProcessHost, req.Cmd[0], req.Cmd[1:]...)
+	if req.Stdin {
+		stdin, ok := com.Stdin.(*PipeReader)
+		if ok {
+			stdin.pipe = &pipe
+		}
+	}
+	if req.Stdout {
+		stdout, ok := com.Stdout.(*PipeWriter)
+		if ok {
+			stdout.pipe = &pipe
+		}
+	}
+	if req.Stderr {
+		stderr, ok := com.Stderr.(*PipeWriter)
+		if ok {
+			stderr.pipe = &pipe
+		}
+	}
+	c.Cmds = append(c.Cmds, com)
+
+	return &p.ExecResponse{}, nil
+}
+
+// Attach connects to a named pipe and streams output from a running container
+func (s *RuntimeServer) attach(context context.Context, req *p.AttachRequest) (*p.AttachResponse, error) {
+	c, ok := s.containers[req.ContainerId]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "container not found")
+	}
+	if c.Container.State != p.ContainerState_CONTAINER_RUNNING {
+		return nil, status.Error(codes.FailedPrecondition, "cannot exec in container: container must be in a running state")
+	}
+	if !req.Stdin && !req.Stdout && !req.Stderr {
+		return nil, status.Error(codes.InvalidArgument, "cannot exec in container: one of stdin, stdout, or stderr must be true")
+	}
+
+	pipe, err := winio.DialPipe(req.Pipe, nil)
+	if err != nil {
+		return nil, err
+	}
+	com := c.Cmds[0]
+	if req.Stdin {
+		stdin, ok := com.Stdin.(*PipeReader)
+		if ok {
+			stdin.pipe = &pipe
+		}
+	}
+	if req.Stdout {
+		stdout, ok := com.Stdout.(*PipeWriter)
+		if ok {
+			stdout.pipe = &pipe
+		}
+	}
+	if req.Stderr {
+		stderr, ok := com.Stderr.(*PipeWriter)
+		if ok {
+			stderr.pipe = &pipe
+		}
+	}
+
+	return &p.AttachResponse{}, nil
 }
