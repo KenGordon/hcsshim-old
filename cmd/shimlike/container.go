@@ -245,7 +245,7 @@ func assignNamespaces(spec *specs.Spec, pid int) {
 
 // createContainer creates a container in the UVM and returns the newly created container's ID
 //
-// TODO: Non-layer devices are not supported yet
+// TODO: Non-layer, non-network devices are not supported yet
 func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfig) (string, error) {
 	err := validateContainerConfig(c)
 	if err != nil {
@@ -380,7 +380,7 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	}
 	c.Cmds = append(c.Cmds, &cmd)
 
-	go cmd.Wait() // TODO: leaking non-zero exit codes
+	go cmd.Wait()
 	return cmd.Process.Pid(), nil
 }
 
@@ -448,14 +448,18 @@ func (s *RuntimeServer) listContainers(ctx context.Context, filter *p.ContainerF
 	skipState := filter.State == nil
 
 	for _, c := range s.containers {
+		add := true
 		if (c.ProcessHost.ID() == filter.Id || skipID) &&
 			(c.Container.State == filter.State.State || skipState) {
 			for k, v := range filter.LabelSelector {
 				if c.Container.Labels[k] != v {
-					continue
+					add = false
+					break
 				}
 			}
-			containers = append(containers, c.Container)
+			if add {
+				containers = append(containers, c.Container)
+			}
 		}
 	}
 	return containers
@@ -617,4 +621,64 @@ func (s *RuntimeServer) attach(context context.Context, req *p.AttachRequest) (*
 	}
 
 	return &p.AttachResponse{}, nil
+}
+
+// containerStats returns the stats of a container. If the container is not present, this returns an error
+func (s *RuntimeServer) containerStats(ctx context.Context, containerID string) (*p.ContainerStats, error) {
+	c, ok := s.containers[containerID]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "container not found")
+	}
+	props, err := c.ProcessHost.PropertiesV2(ctx, hcsschema.PTMemory, hcsschema.PTStatistics, hcsschema.PTCPUGroup)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := &p.ContainerStats{
+		Attributes: &p.ContainerAttributes{
+			Id:          c.Container.Id,
+			Metadata:    c.Container.Metadata,
+			Labels:      c.Container.Labels,
+			Annotations: c.Container.Annotations,
+		},
+		Cpu: &p.CpuUsage{
+			Timestamp:            props.Statistics.Timestamp.UnixNano(),
+			UsageCoreNanoSeconds: &p.UInt64Value{Value: props.Metrics.CPU.Usage.Total},
+		},
+		Memory: &p.MemoryUsage{
+			Timestamp:       props.Statistics.Timestamp.UnixNano(),
+			UsageBytes:      &p.UInt64Value{Value: props.Metrics.Memory.Usage.Usage},
+			RssBytes:        &p.UInt64Value{Value: props.Metrics.Memory.RSS},
+			PageFaults:      &p.UInt64Value{Value: props.Metrics.Memory.PgFault},
+			MajorPageFaults: &p.UInt64Value{Value: props.Metrics.Memory.PgMajFault},
+		},
+		WritableLayer: &p.FilesystemUsage{
+			Timestamp: props.Statistics.Timestamp.UnixNano(),
+			UsedBytes: &p.UInt64Value{Value: props.Statistics.Storage.WriteSizeBytes},
+		},
+	}
+	return stats, nil
+}
+
+func (s *RuntimeServer) listContainerStats(ctx context.Context, req *p.ListContainerStatsRequest) (*p.ListContainerStatsResponse, error) {
+	stats := make([]*p.ContainerStats, 0, len(s.containers))
+	for _, c := range s.containers {
+		add := true
+		if req.Filter.Id == "" || c.Container.Id == req.Filter.Id {
+			for k, v := range req.Filter.LabelSelector {
+				if c.Container.Labels[k] != v {
+					add = false
+					break
+				}
+			}
+			if add {
+				stat, err := s.containerStats(ctx, c.Container.Id)
+				if err != nil {
+					return nil, err
+				}
+				stats = append(stats, stat)
+			}
+		}
+	}
+	return &p.ListContainerStatsResponse{Stats: stats}, nil
 }

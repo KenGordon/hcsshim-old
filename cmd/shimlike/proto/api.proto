@@ -1508,12 +1508,10 @@ message ListContainerStatsRequest{
 message ContainerStatsFilter {
     // ID of the container.
     string id = 1;
-    // ID of the PodSandbox.
-    string pod_sandbox_id = 2;
     // LabelSelector to select matches.
     // Only api.MatchLabels is supported for now and the requirements
     // are ANDed. MatchExpressions is not supported yet.
-    map<string, string> label_selector = 3;
+    map<string, string> label_selector = 2;
 }
 
 message ListContainerStatsResponse {

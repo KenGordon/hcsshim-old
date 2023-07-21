@@ -182,11 +182,15 @@ func (s *RuntimeServer) Attach(ctx context.Context, req *p.AttachRequest) (*p.At
 	logrus.WithField("request", req).Info("shimlike::Attach")
 	return s.attach(ctx, req)
 }
-func (*RuntimeServer) ContainerStats(ctx context.Context, req *p.ContainerStatsRequest) (*p.ContainerStatsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ContainerStats not implemented")
+func (s *RuntimeServer) ContainerStats(ctx context.Context, req *p.ContainerStatsRequest) (*p.ContainerStatsResponse, error) {
+	stats, err := s.containerStats(ctx, req.ContainerId)
+	if err != nil {
+		return nil, err
+	}
+	return &p.ContainerStatsResponse{Stats: stats}, nil
 }
-func (*RuntimeServer) ListContainerStats(ctx context.Context, req *p.ListContainerStatsRequest) (*p.ListContainerStatsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListContainerStats not implemented")
+func (s *RuntimeServer) ListContainerStats(ctx context.Context, req *p.ListContainerStatsRequest) (*p.ListContainerStatsResponse, error) {
+	return s.listContainerStats(ctx, req)
 }
 func (*RuntimeServer) Status(ctx context.Context, req *p.StatusRequest) (*p.StatusResponse, error) {
 	return &p.StatusResponse{Status: &p.RuntimeStatus{Conditions: []*p.RuntimeCondition{}}}, nil
