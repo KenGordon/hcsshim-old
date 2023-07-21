@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/go-winio/pkg/guid"
-	p "github.com/Microsoft/hcsshim/cmd/shimlike/proto"
+	shimapi "github.com/Microsoft/hcsshim/cmd/shimlike/proto"
 	"github.com/Microsoft/hcsshim/internal/gcs"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -33,7 +34,7 @@ type RuntimeServer struct {
 	grpcServer   *grpc.Server
 	sandboxID    string
 	sandboxPID   int
-	NIC          *p.NIC
+	NIC          *shimapi.NIC
 }
 
 // connectLog connects to the UVM's log port and stores the connection
@@ -59,6 +60,18 @@ func (s *RuntimeServer) connectLog() error {
 	logrus.Info("Connected to UVM")
 	s.lc = conn
 	return nil
+}
+
+// ReadLog continuously reads from the log connection and prints to stdout.
+func (s *RuntimeServer) readLog() {
+	buf := make([]byte, 4096)
+	for {
+		n, err := s.lc.Read(buf)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+		fmt.Print(string(buf[:n]))
+	}
 }
 
 // acceptGcs accepts a connection from the UVM's GCS port and stores the connection
@@ -102,8 +115,8 @@ func (s *RuntimeServer) acceptGcs() error {
 	return nil
 }
 
-func (*RuntimeServer) Version(ctx context.Context, req *p.VersionRequest) (*p.VersionResponse, error) {
-	r := &p.VersionResponse{
+func (*RuntimeServer) Version(ctx context.Context, req *shimapi.VersionRequest) (*shimapi.VersionResponse, error) {
+	r := &shimapi.VersionResponse{
 		Version:           kubeletApiVersion,
 		RuntimeName:       runtimeName,
 		RuntimeVersion:    runtimeVersion,
@@ -113,10 +126,10 @@ func (*RuntimeServer) Version(ctx context.Context, req *p.VersionRequest) (*p.Ve
 }
 
 // RunPodSandbox is a reserved function for setting up the Shimlike.
-func (s *RuntimeServer) RunPodSandbox(ctx context.Context, req *p.RunPodSandboxRequest) (*p.RunPodSandboxResponse, error) {
-	return &p.RunPodSandboxResponse{}, s.runPodSandbox(ctx, req)
+func (s *RuntimeServer) RunPodSandbox(ctx context.Context, req *shimapi.RunPodSandboxRequest) (*shimapi.RunPodSandboxResponse, error) {
+	return &shimapi.RunPodSandboxResponse{}, s.runPodSandbox(ctx, req)
 }
-func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandboxRequest) (*p.StopPodSandboxResponse, error) {
+func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *shimapi.StopPodSandboxRequest) (*shimapi.StopPodSandboxResponse, error) {
 	for i := range s.containers {
 		s.removeContainer(ctx, i)
 	}
@@ -126,75 +139,75 @@ func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *p.StopPodSandbo
 		s.lc.Close()
 		s.grpcServer.GracefulStop()
 	}()
-	return &p.StopPodSandboxResponse{}, nil
+	return &shimapi.StopPodSandboxResponse{}, nil
 }
-func (s *RuntimeServer) CreateContainer(ctx context.Context, req *p.CreateContainerRequest) (*p.CreateContainerResponse, error) {
+func (s *RuntimeServer) CreateContainer(ctx context.Context, req *shimapi.CreateContainerRequest) (*shimapi.CreateContainerResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::CreateContainer")
 	id, err := s.createContainer(ctx, req.Config)
 	if err != nil {
 		return nil, err
 	}
-	return &p.CreateContainerResponse{ContainerId: id}, nil
+	return &shimapi.CreateContainerResponse{ContainerId: id}, nil
 }
-func (s *RuntimeServer) StartContainer(ctx context.Context, req *p.StartContainerRequest) (*p.StartContainerResponse, error) {
+func (s *RuntimeServer) StartContainer(ctx context.Context, req *shimapi.StartContainerRequest) (*shimapi.StartContainerResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::StartContainer")
 	_, err := s.startContainer(ctx, req.ContainerId)
-	return &p.StartContainerResponse{}, err
+	return &shimapi.StartContainerResponse{}, err
 }
-func (s *RuntimeServer) StopContainer(ctx context.Context, req *p.StopContainerRequest) (*p.StopContainerResponse, error) {
+func (s *RuntimeServer) StopContainer(ctx context.Context, req *shimapi.StopContainerRequest) (*shimapi.StopContainerResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::StopContainer")
-	return &p.StopContainerResponse{}, s.stopContainer(ctx, req.ContainerId, req.Timeout)
+	return &shimapi.StopContainerResponse{}, s.stopContainer(ctx, req.ContainerId, req.Timeout)
 }
-func (s *RuntimeServer) RemoveContainer(ctx context.Context, req *p.RemoveContainerRequest) (*p.RemoveContainerResponse, error) {
+func (s *RuntimeServer) RemoveContainer(ctx context.Context, req *shimapi.RemoveContainerRequest) (*shimapi.RemoveContainerResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::RemoveContainer")
-	return &p.RemoveContainerResponse{}, s.removeContainer(ctx, req.ContainerId)
+	return &shimapi.RemoveContainerResponse{}, s.removeContainer(ctx, req.ContainerId)
 }
-func (s *RuntimeServer) ListContainers(ctx context.Context, req *p.ListContainersRequest) (*p.ListContainersResponse, error) {
+func (s *RuntimeServer) ListContainers(ctx context.Context, req *shimapi.ListContainersRequest) (*shimapi.ListContainersResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::ListContainers")
 	containers := s.listContainers(ctx, req.Filter)
-	return &p.ListContainersResponse{Containers: containers}, nil
+	return &shimapi.ListContainersResponse{Containers: containers}, nil
 }
-func (s *RuntimeServer) ContainerStatus(ctx context.Context, req *p.ContainerStatusRequest) (*p.ContainerStatusResponse, error) {
+func (s *RuntimeServer) ContainerStatus(ctx context.Context, req *shimapi.ContainerStatusRequest) (*shimapi.ContainerStatusResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::ContainerStatus")
 	status, err := s.containerStatus(ctx, req.ContainerId)
 	if err != nil {
 		return nil, err
 	}
-	return &p.ContainerStatusResponse{Status: status}, nil
+	return &shimapi.ContainerStatusResponse{Status: status}, nil
 }
-func (s *RuntimeServer) UpdateContainerResources(ctx context.Context, req *p.UpdateContainerResourcesRequest) (*p.UpdateContainerResourcesResponse, error) {
-	return &p.UpdateContainerResourcesResponse{}, s.updateContainerResources(ctx, req.ContainerId, req.Linux, req.Annotations)
+func (s *RuntimeServer) UpdateContainerResources(ctx context.Context, req *shimapi.UpdateContainerResourcesRequest) (*shimapi.UpdateContainerResourcesResponse, error) {
+	return &shimapi.UpdateContainerResourcesResponse{}, s.updateContainerResources(ctx, req.ContainerId, req.Linux, req.Annotations)
 }
-func (*RuntimeServer) ReopenContainerLog(ctx context.Context, req *p.ReopenContainerLogRequest) (*p.ReopenContainerLogResponse, error) {
+func (*RuntimeServer) ReopenContainerLog(ctx context.Context, req *shimapi.ReopenContainerLogRequest) (*shimapi.ReopenContainerLogResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReopenContainerLog not implemented")
 }
-func (s *RuntimeServer) ExecSync(ctx context.Context, req *p.ExecSyncRequest) (*p.ExecSyncResponse, error) {
+func (s *RuntimeServer) ExecSync(ctx context.Context, req *shimapi.ExecSyncRequest) (*shimapi.ExecSyncResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::ExecSync")
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(req.Timeout))
 	defer cancel()
 	return s.execSync(ctx, req)
 }
-func (s *RuntimeServer) Exec(ctx context.Context, req *p.ExecRequest) (*p.ExecResponse, error) {
+func (s *RuntimeServer) Exec(ctx context.Context, req *shimapi.ExecRequest) (*shimapi.ExecResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::Exec")
 	return s.exec(ctx, req)
 }
-func (s *RuntimeServer) Attach(ctx context.Context, req *p.AttachRequest) (*p.AttachResponse, error) {
+func (s *RuntimeServer) Attach(ctx context.Context, req *shimapi.AttachRequest) (*shimapi.AttachResponse, error) {
 	logrus.WithField("request", req).Info("shimlike::Attach")
 	return s.attach(ctx, req)
 }
-func (s *RuntimeServer) ContainerStats(ctx context.Context, req *p.ContainerStatsRequest) (*p.ContainerStatsResponse, error) {
+func (s *RuntimeServer) ContainerStats(ctx context.Context, req *shimapi.ContainerStatsRequest) (*shimapi.ContainerStatsResponse, error) {
 	stats, err := s.containerStats(ctx, req.ContainerId)
 	if err != nil {
 		return nil, err
 	}
-	return &p.ContainerStatsResponse{Stats: stats}, nil
+	return &shimapi.ContainerStatsResponse{Stats: stats}, nil
 }
-func (s *RuntimeServer) ListContainerStats(ctx context.Context, req *p.ListContainerStatsRequest) (*p.ListContainerStatsResponse, error) {
+func (s *RuntimeServer) ListContainerStats(ctx context.Context, req *shimapi.ListContainerStatsRequest) (*shimapi.ListContainerStatsResponse, error) {
 	return s.listContainerStats(ctx, req)
 }
-func (*RuntimeServer) Status(ctx context.Context, req *p.StatusRequest) (*p.StatusResponse, error) {
-	return &p.StatusResponse{Status: &p.RuntimeStatus{Conditions: []*p.RuntimeCondition{}}}, nil
+func (*RuntimeServer) Status(ctx context.Context, req *shimapi.StatusRequest) (*shimapi.StatusResponse, error) {
+	return &shimapi.StatusResponse{Status: &shimapi.RuntimeStatus{Conditions: []*shimapi.RuntimeCondition{}}}, nil
 }
-func (*RuntimeServer) GetContainerEvents(req *p.GetEventsRequest, srv p.RuntimeService_GetContainerEventsServer) error {
+func (*RuntimeServer) GetContainerEvents(req *shimapi.GetEventsRequest, srv shimapi.RuntimeService_GetContainerEventsServer) error {
 	return status.Errorf(codes.Unimplemented, "method GetContainerEvents not implemented")
 }

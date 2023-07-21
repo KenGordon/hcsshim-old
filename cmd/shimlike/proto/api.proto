@@ -20,6 +20,7 @@ package runtime.v1;
 option go_package = "github.com/Microsoft/hcsshim/cmd/shimlike/proto";
 
 import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+import "github.com/kubernetes/cri-api/pkg/apis/runtime/v1/api.proto";
 
 option (gogoproto.goproto_stringer_all) = false;
 option (gogoproto.stringer_all) =  true;

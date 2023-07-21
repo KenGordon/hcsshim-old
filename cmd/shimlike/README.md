@@ -20,6 +20,13 @@ echo Done
 
 The Shimlike can be built by running `go build` in the `cmd/shimlike` folder with `$GOOS="windows"`.
 
+The protobuf files were built using the following commands:
+
+```sh
+protoc --gogo_opt=paths=source_relative --gogo_out=plugins=grpc:. -I vendor/ --proto_path=. cmd/shimlike/proto/api.proto
+protoc --gogo_opt=paths=source_relative --gogo_out=plugins=grpc:. -I vendor/ --proto_path=. internal/tools/shimlikeclient/proto/api.proto
+```
+
 ## Usage
 
 The Shimlike accepts two arguments: a pipe address on which to listen for connections, and the UVM ID to connect to.

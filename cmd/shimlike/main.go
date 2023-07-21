@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/Microsoft/go-winio"
@@ -14,18 +13,6 @@ import (
 var (
 	usage = "shimlike <pipe address> <UVM ID>"
 )
-
-// ReadLog continuously reads from the log connection and prints to stdout.
-func readLog(conn *winio.HvsockConn) {
-	for {
-		buf := make([]byte, 4096)
-		n, err := conn.Read(buf)
-		if err != nil {
-			logrus.Fatal(err)
-		}
-		fmt.Print(string(buf[:n]))
-	}
-}
 
 func run(cCtx *cli.Context) {
 	if cCtx.NArg() != 2 {
@@ -49,7 +36,7 @@ func run(cCtx *cli.Context) {
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	go readLog(rs.lc)
+	go rs.readLog()
 
 	// Accept the GCS connection
 	logrus.Info("Accepting GCS")

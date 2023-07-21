@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/Microsoft/go-winio"
-	p "github.com/Microsoft/hcsshim/internal/tools/shimlikeclient/proto"
+	shimapi "github.com/Microsoft/hcsshim/internal/tools/shimlikeclient/proto"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"google.golang.org/grpc"
@@ -55,7 +55,7 @@ func run(cCtx *cli.Context) {
 	defer conn.Close()
 	logrus.Info("Connected to Shimlike")
 
-	nic := &p.NIC{}
+	nic := &shimapi.NIC{}
 
 	fmt.Print("Namespace ID: ")
 	fmt.Scan(&nic.NamespaceId)
@@ -63,15 +63,15 @@ func run(cCtx *cli.Context) {
 	fmt.Print("NIC ID: ")
 	fmt.Scan(&nic.Id)
 
-	client := p.NewRuntimeServiceClient(conn)
-	_, err = client.RunPodSandbox(context.Background(), &p.RunPodSandboxRequest{
-		PauseDisk: &p.Mount{
+	client := shimapi.NewRuntimeServiceClient(conn)
+	_, err = client.RunPodSandbox(context.Background(), &shimapi.RunPodSandboxRequest{
+		PauseDisk: &shimapi.Mount{
 			Controller: 0,
 			Lun:        1,
 			Partition:  0,
 			Readonly:   true,
 		},
-		ScratchDisk: &p.Mount{
+		ScratchDisk: &shimapi.Mount{
 			Controller: 0,
 			Lun:        3,
 			Partition:  0,
@@ -83,22 +83,22 @@ func run(cCtx *cli.Context) {
 		logrus.Fatal(err)
 	}
 
-	ccResp, err := client.CreateContainer(context.Background(), &p.CreateContainerRequest{
-		Config: &p.ContainerConfig{
-			Metadata: &p.ContainerMetadata{
+	ccResp, err := client.CreateContainer(context.Background(), &shimapi.CreateContainerRequest{
+		Config: &shimapi.ContainerConfig{
+			Metadata: &shimapi.ContainerMetadata{
 				Name:    "alpine",
 				Attempt: 1,
 			},
-			Image: &p.ImageSpec{
+			Image: &shimapi.ImageSpec{
 				Image: "alpine",
 			},
 			Command:    []string{"ash", "-c", "apk add iputils && ping microsoft.com"},
 			WorkingDir: "/",
-			Envs: []*p.KeyValue{
+			Envs: []*shimapi.KeyValue{
 				{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 				{Key: "TERM", Value: "xterm"},
 			},
-			Mounts: []*p.Mount{
+			Mounts: []*shimapi.Mount{
 				{Controller: 0, Lun: 2, Partition: 0, Readonly: true},
 			},
 		},
@@ -107,7 +107,7 @@ func run(cCtx *cli.Context) {
 		logrus.Fatal(err)
 	}
 	logrus.Infof("Response: %v", ccResp)
-	scResp, err := client.StartContainer(context.Background(), &p.StartContainerRequest{
+	scResp, err := client.StartContainer(context.Background(), &shimapi.StartContainerRequest{
 		ContainerId: ccResp.ContainerId,
 	})
 	if err != nil {
@@ -123,7 +123,7 @@ func run(cCtx *cli.Context) {
 
 	go acceptPrint(pipe)
 
-	aResp, err := client.Attach(context.Background(), &p.AttachRequest{
+	aResp, err := client.Attach(context.Background(), &shimapi.AttachRequest{
 		ContainerId: ccResp.ContainerId,
 		Stdout:      true,
 		Stderr:      true,
@@ -144,7 +144,7 @@ func run(cCtx *cli.Context) {
 
 	go acceptPrint(pipe2)
 
-	eResp, err := client.Exec(context.Background(), &p.ExecRequest{
+	eResp, err := client.Exec(context.Background(), &shimapi.ExecRequest{
 		Cmd:         []string{"ash", "-c", "for i in $(seq 1 10); do echo $i; sleep 1; done"},
 		ContainerId: ccResp.ContainerId,
 		Stdout:      true,
