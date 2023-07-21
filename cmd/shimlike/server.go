@@ -191,15 +191,6 @@ func (*RuntimeServer) ListContainerStats(ctx context.Context, req *p.ListContain
 func (*RuntimeServer) Status(ctx context.Context, req *p.StatusRequest) (*p.StatusResponse, error) {
 	return &p.StatusResponse{Status: &p.RuntimeStatus{Conditions: []*p.RuntimeCondition{}}}, nil
 }
-func (*RuntimeServer) CheckpointContainer(ctx context.Context, req *p.CheckpointContainerRequest) (*p.CheckpointContainerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CheckpointContainer not implemented")
-}
 func (*RuntimeServer) GetContainerEvents(req *p.GetEventsRequest, srv p.RuntimeService_GetContainerEventsServer) error {
 	return status.Errorf(codes.Unimplemented, "method GetContainerEvents not implemented")
-}
-func (*RuntimeServer) ListMetricDescriptors(ctx context.Context, req *p.ListMetricDescriptorsRequest) (*p.ListMetricDescriptorsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListMetricDescriptors not implemented")
-}
-func (*RuntimeServer) ListPodSandboxMetrics(ctx context.Context, req *p.ListPodSandboxMetricsRequest) (*p.ListPodSandboxMetricsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListPodSandboxMetrics not implemented")
 }
