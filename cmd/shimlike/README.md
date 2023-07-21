@@ -23,8 +23,7 @@ The Shimlike can be built by running `go build` in the `cmd/shimlike` folder wit
 The protobuf files were built using the following commands:
 
 ```sh
-protoc --gogo_opt=paths=source_relative --gogo_out=plugins=grpc:. -I vendor/ --proto_path=. cmd/shimlike/proto/api.proto
-protoc --gogo_opt=paths=source_relative --gogo_out=plugins=grpc:. -I vendor/ --proto_path=. internal/tools/shimlikeclient/proto/api.proto
+protoc --gogo_opt=paths=source_relative --gogo_out=plugins=grpc:. -I vendor/ --proto_path=. pkg/shimlike/api/api.proto
 ```
 
 ## Usage

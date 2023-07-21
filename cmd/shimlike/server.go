@@ -7,8 +7,8 @@ import (
 
 	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/go-winio/pkg/guid"
-	shimapi "github.com/Microsoft/hcsshim/cmd/shimlike/proto"
 	"github.com/Microsoft/hcsshim/internal/gcs"
+	shimapi "github.com/Microsoft/hcsshim/pkg/shimlike/api"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

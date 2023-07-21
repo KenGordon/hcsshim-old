@@ -3,16 +3,16 @@ package main
 import (
 	"context"
 
-	p "github.com/Microsoft/hcsshim/cmd/shimlike/proto"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
+	shimapi "github.com/Microsoft/hcsshim/pkg/shimlike/api"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 // marshalLinuxResources marshals a LinuxContainerResources into an OCI spec
-func marshalLinuxResources(c *p.LinuxContainerResources) *specs.LinuxResources {
+func marshalLinuxResources(c *shimapi.LinuxContainerResources) *specs.LinuxResources {
 	resources := &specs.LinuxResources{}
 	resources.CPU = &specs.LinuxCPU{
 		Cpus: c.CpusetCpus,
@@ -37,7 +37,7 @@ func marshalLinuxResources(c *p.LinuxContainerResources) *specs.LinuxResources {
 }
 
 // updateContainerResources updates the resources of a container
-func (s *RuntimeServer) updateContainerResources(ctx context.Context, containerID string, resources *p.LinuxContainerResources, annotations map[string]string) error {
+func (s *RuntimeServer) updateContainerResources(ctx context.Context, containerID string, resources *shimapi.LinuxContainerResources, annotations map[string]string) error {
 	c := s.containers[containerID]
 	if c == nil {
 		return status.Error(codes.NotFound, "container not found")

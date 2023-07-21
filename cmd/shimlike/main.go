@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"github.com/Microsoft/go-winio"
-	"github.com/Microsoft/hcsshim/cmd/shimlike/proto"
+	shimapi "github.com/Microsoft/hcsshim/pkg/shimlike/api"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"google.golang.org/grpc"
@@ -28,7 +28,7 @@ func run(cCtx *cli.Context) {
 		VMID:       cCtx.Args().Get(1),
 		grpcServer: s,
 	}
-	proto.RegisterRuntimeServiceServer(s, &rs)
+	shimapi.RegisterRuntimeServiceServer(s, &rs)
 
 	// Connect to the UVM's log port
 	logrus.Info("Connecting to UVM")

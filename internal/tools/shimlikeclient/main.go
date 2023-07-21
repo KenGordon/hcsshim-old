@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/Microsoft/go-winio"
-	shimapi "github.com/Microsoft/hcsshim/internal/tools/shimlikeclient/proto"
+	shimapi "github.com/Microsoft/hcsshim/pkg/shimlike/api"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"google.golang.org/grpc"

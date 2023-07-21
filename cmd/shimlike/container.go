@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/Microsoft/go-winio"
-	p "github.com/Microsoft/hcsshim/cmd/shimlike/proto"
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/gcs"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/hns"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
+	shimapi "github.com/Microsoft/hcsshim/pkg/shimlike/api"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
@@ -38,13 +38,13 @@ type ContainerStatus struct {
 
 // Container represents a container running in the UVM
 type Container struct {
-	Container          *p.Container
+	Container          *shimapi.Container
 	ProcessHost        *gcs.Container
 	Status             *ContainerStatus
 	LogPath            string
 	Disks              []*ScsiDisk
-	ContainerResources *p.ContainerResources // Container's resources. May be nil.
-	Cmds               []*cmd.Cmd            // All commands running in the container. The first element is the main process.
+	ContainerResources *shimapi.ContainerResources // Container's resources. May be nil.
+	Cmds               []*cmd.Cmd                  // All commands running in the container. The first element is the main process.
 }
 
 // linuxHostedSystem is passed to the GCS to create a container
@@ -64,7 +64,7 @@ func generateID() string {
 }
 
 // validateContainerConfig validates a container config received from the ContainerController
-func validateContainerConfig(c *p.ContainerConfig) error {
+func validateContainerConfig(c *shimapi.ContainerConfig) error {
 	if c == nil {
 		return status.Error(codes.InvalidArgument, "container config is nil")
 	}
@@ -88,7 +88,7 @@ func validateContainerConfig(c *p.ContainerConfig) error {
 
 // runPodSandbox creates and starts a sandbox container in the UVM. This function should only be called once
 // in a UVM's lifecycle.
-func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxRequest) error {
+func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *shimapi.RunPodSandboxRequest) error {
 	endpoints, err := hns.GetNamespaceEndpoints(r.Nic.NamespaceId)
 	if err != nil {
 		return err
@@ -186,18 +186,18 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *p.RunPodSandboxReq
 		s.containers = make(map[string]*Container)
 	}
 	s.containers[id] = &Container{
-		Container: &p.Container{
+		Container: &shimapi.Container{
 			Id: id,
-			Metadata: &p.ContainerMetadata{
+			Metadata: &shimapi.ContainerMetadata{
 				Name:    "sandbox",
 				Attempt: 1,
 			},
-			Image: &p.ImageSpec{
+			Image: &shimapi.ImageSpec{
 				Image:       "pause",
 				Annotations: doc.OciSpecification.Annotations,
 			},
 			ImageRef:    "", //TODO: What is this?
-			State:       p.ContainerState_CONTAINER_CREATED,
+			State:       shimapi.ContainerState_CONTAINER_CREATED,
 			CreatedAt:   time.Now().UnixNano(),
 			Labels:      nil,
 			Annotations: doc.OciSpecification.Annotations,
@@ -246,7 +246,7 @@ func assignNamespaces(spec *specs.Spec, pid int) {
 // createContainer creates a container in the UVM and returns the newly created container's ID
 //
 // TODO: Non-layer, non-network devices are not supported yet
-func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfig) (string, error) {
+func (s *RuntimeServer) createContainer(ctx context.Context, c *shimapi.ContainerConfig) (string, error) {
 	err := validateContainerConfig(c)
 	if err != nil {
 		return "", err
@@ -323,18 +323,18 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 		s.containers = make(map[string]*Container)
 	}
 	s.containers[id] = &Container{
-		Container: &p.Container{
+		Container: &shimapi.Container{
 			Id: id,
-			Metadata: &p.ContainerMetadata{
+			Metadata: &shimapi.ContainerMetadata{
 				Name:    c.Metadata.Name,
 				Attempt: c.Metadata.Attempt,
 			},
-			Image: &p.ImageSpec{
+			Image: &shimapi.ImageSpec{
 				Image:       c.Image.Image,
 				Annotations: c.Image.Annotations,
 			},
 			ImageRef:    "", //TODO: What is this?
-			State:       p.ContainerState_CONTAINER_CREATED,
+			State:       shimapi.ContainerState_CONTAINER_CREATED,
 			CreatedAt:   time.Now().UnixNano(),
 			Labels:      c.Labels,
 			Annotations: doc.OciSpecification.Annotations,
@@ -344,7 +344,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *p.ContainerConfi
 		Disks:       disks,
 	}
 	if c.Linux != nil {
-		s.containers[id].ContainerResources = &p.ContainerResources{
+		s.containers[id].ContainerResources = &shimapi.ContainerResources{
 			Linux: c.Linux.Resources,
 		}
 	}
@@ -357,7 +357,7 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	if c == nil {
 		return -1, status.Error(codes.NotFound, "container not found")
 	}
-	if c.Container.State != p.ContainerState_CONTAINER_CREATED {
+	if c.Container.State != shimapi.ContainerState_CONTAINER_CREATED {
 		return -1, status.Error(codes.FailedPrecondition, "cannot start container: container must be in a created state")
 	}
 	err := c.ProcessHost.Start(ctx)
@@ -374,7 +374,7 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 		Stderr: &PipeWriter{},
 	}
 	cmd.Start()
-	c.Container.State = p.ContainerState_CONTAINER_RUNNING
+	c.Container.State = shimapi.ContainerState_CONTAINER_RUNNING
 	c.Status = &ContainerStatus{
 		StartedAt: time.Now().UnixNano(),
 	}
@@ -390,7 +390,7 @@ func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, t
 	if c == nil {
 		return status.Error(codes.NotFound, "container not found")
 	}
-	if c.Container.State != p.ContainerState_CONTAINER_RUNNING {
+	if c.Container.State != shimapi.ContainerState_CONTAINER_RUNNING {
 		return status.Error(codes.FailedPrecondition, "cannot stop container: container must be in a running state")
 	}
 	err := c.ProcessHost.Shutdown(ctx)
@@ -405,7 +405,7 @@ func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, t
 			cmd.Process.Kill(ctx)
 		}
 	}()
-	c.Container.State = p.ContainerState_CONTAINER_EXITED
+	c.Container.State = shimapi.ContainerState_CONTAINER_EXITED
 	c.Status.FinishedAt = time.Now().UnixNano()
 	return nil
 }
@@ -416,7 +416,7 @@ func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string)
 	if c == nil {
 		return nil
 	}
-	if c.Container.State == p.ContainerState_CONTAINER_RUNNING {
+	if c.Container.State == shimapi.ContainerState_CONTAINER_RUNNING {
 		s.stopContainer(ctx, containerID, 0)
 	}
 
@@ -442,8 +442,8 @@ func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string)
 }
 
 // listContainers returns a list of all containers
-func (s *RuntimeServer) listContainers(ctx context.Context, filter *p.ContainerFilter) []*p.Container {
-	containers := make([]*p.Container, 0, len(s.containers))
+func (s *RuntimeServer) listContainers(ctx context.Context, filter *shimapi.ContainerFilter) []*shimapi.Container {
+	containers := make([]*shimapi.Container, 0, len(s.containers))
 	skipID := filter.Id == ""
 	skipState := filter.State == nil
 
@@ -466,22 +466,22 @@ func (s *RuntimeServer) listContainers(ctx context.Context, filter *p.ContainerF
 }
 
 // containerStatus returns the status of a container. If the container is not present, this returns an error
-func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string) (*p.ContainerStatus, error) {
+func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string) (*shimapi.ContainerStatus, error) {
 	c := s.containers[containerID]
 	if c == nil {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
 
-	mounts := make([]*p.Mount, 0, len(c.Disks))
+	mounts := make([]*shimapi.Mount, 0, len(c.Disks))
 	for _, d := range c.Disks {
-		mounts = append(mounts, &p.Mount{
+		mounts = append(mounts, &shimapi.Mount{
 			Controller: int32(d.Controller),
 			Lun:        int32(d.Lun),
 			Partition:  int32(d.Partition),
 			Readonly:   d.Readonly,
 		})
 	}
-	status := &p.ContainerStatus{
+	status := &shimapi.ContainerStatus{
 		Id:          c.Container.Id,
 		Metadata:    c.Container.Metadata,
 		State:       c.Container.State,
@@ -503,12 +503,12 @@ func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string)
 }
 
 // execSync executes a command synchronously in a container
-func (s *RuntimeServer) execSync(context context.Context, req *p.ExecSyncRequest) (*p.ExecSyncResponse, error) {
+func (s *RuntimeServer) execSync(context context.Context, req *shimapi.ExecSyncRequest) (*shimapi.ExecSyncResponse, error) {
 	c, ok := s.containers[req.ContainerId]
 	if !ok {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
-	if c.Container.State != p.ContainerState_CONTAINER_RUNNING {
+	if c.Container.State != shimapi.ContainerState_CONTAINER_RUNNING {
 		return nil, status.Error(codes.FailedPrecondition, "cannot exec in container: container must be in a running state")
 	}
 	if len(req.Cmd) < 1 {
@@ -532,7 +532,7 @@ func (s *RuntimeServer) execSync(context context.Context, req *p.ExecSyncRequest
 		return nil, err
 	}
 
-	return &p.ExecSyncResponse{
+	return &shimapi.ExecSyncResponse{
 		Stdout:   stdout.Bytes(),
 		Stderr:   stderr.Bytes(),
 		ExitCode: int32(exitCode),
@@ -540,12 +540,12 @@ func (s *RuntimeServer) execSync(context context.Context, req *p.ExecSyncRequest
 }
 
 // exec connects to a named pipe to forward output from an executed command in a container
-func (s *RuntimeServer) exec(context context.Context, req *p.ExecRequest) (*p.ExecResponse, error) {
+func (s *RuntimeServer) exec(context context.Context, req *shimapi.ExecRequest) (*shimapi.ExecResponse, error) {
 	c, ok := s.containers[req.ContainerId]
 	if !ok {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
-	if c.Container.State != p.ContainerState_CONTAINER_RUNNING {
+	if c.Container.State != shimapi.ContainerState_CONTAINER_RUNNING {
 		return nil, status.Error(codes.FailedPrecondition, "cannot exec in container: container must be in a running state")
 	}
 	if len(req.Cmd) < 1 {
@@ -580,16 +580,16 @@ func (s *RuntimeServer) exec(context context.Context, req *p.ExecRequest) (*p.Ex
 	}
 	c.Cmds = append(c.Cmds, com)
 
-	return &p.ExecResponse{}, nil
+	return &shimapi.ExecResponse{}, nil
 }
 
 // Attach connects to a named pipe and streams output from a running container
-func (s *RuntimeServer) attach(context context.Context, req *p.AttachRequest) (*p.AttachResponse, error) {
+func (s *RuntimeServer) attach(context context.Context, req *shimapi.AttachRequest) (*shimapi.AttachResponse, error) {
 	c, ok := s.containers[req.ContainerId]
 	if !ok {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
-	if c.Container.State != p.ContainerState_CONTAINER_RUNNING {
+	if c.Container.State != shimapi.ContainerState_CONTAINER_RUNNING {
 		return nil, status.Error(codes.FailedPrecondition, "cannot exec in container: container must be in a running state")
 	}
 	if !req.Stdin && !req.Stdout && !req.Stderr {
@@ -620,11 +620,11 @@ func (s *RuntimeServer) attach(context context.Context, req *p.AttachRequest) (*
 		}
 	}
 
-	return &p.AttachResponse{}, nil
+	return &shimapi.AttachResponse{}, nil
 }
 
 // containerStats returns the stats of a container. If the container is not present, this returns an error
-func (s *RuntimeServer) containerStats(ctx context.Context, containerID string) (*p.ContainerStats, error) {
+func (s *RuntimeServer) containerStats(ctx context.Context, containerID string) (*shimapi.ContainerStats, error) {
 	c, ok := s.containers[containerID]
 	if !ok {
 		return nil, status.Error(codes.NotFound, "container not found")
@@ -634,34 +634,34 @@ func (s *RuntimeServer) containerStats(ctx context.Context, containerID string) 
 		return nil, err
 	}
 
-	stats := &p.ContainerStats{
-		Attributes: &p.ContainerAttributes{
+	stats := &shimapi.ContainerStats{
+		Attributes: &shimapi.ContainerAttributes{
 			Id:          c.Container.Id,
 			Metadata:    c.Container.Metadata,
 			Labels:      c.Container.Labels,
 			Annotations: c.Container.Annotations,
 		},
-		Cpu: &p.CpuUsage{
+		Cpu: &shimapi.CpuUsage{
 			Timestamp:            props.Statistics.Timestamp.UnixNano(),
-			UsageCoreNanoSeconds: &p.UInt64Value{Value: props.Metrics.CPU.Usage.Total},
+			UsageCoreNanoSeconds: &shimapi.UInt64Value{Value: props.Metrics.CPU.Usage.Total},
 		},
-		Memory: &p.MemoryUsage{
+		Memory: &shimapi.MemoryUsage{
 			Timestamp:       props.Statistics.Timestamp.UnixNano(),
-			UsageBytes:      &p.UInt64Value{Value: props.Metrics.Memory.Usage.Usage},
-			RssBytes:        &p.UInt64Value{Value: props.Metrics.Memory.RSS},
-			PageFaults:      &p.UInt64Value{Value: props.Metrics.Memory.PgFault},
-			MajorPageFaults: &p.UInt64Value{Value: props.Metrics.Memory.PgMajFault},
+			UsageBytes:      &shimapi.UInt64Value{Value: props.Metrics.Memory.Usage.Usage},
+			RssBytes:        &shimapi.UInt64Value{Value: props.Metrics.Memory.RSS},
+			PageFaults:      &shimapi.UInt64Value{Value: props.Metrics.Memory.PgFault},
+			MajorPageFaults: &shimapi.UInt64Value{Value: props.Metrics.Memory.PgMajFault},
 		},
-		WritableLayer: &p.FilesystemUsage{
+		WritableLayer: &shimapi.FilesystemUsage{
 			Timestamp: props.Statistics.Timestamp.UnixNano(),
-			UsedBytes: &p.UInt64Value{Value: props.Statistics.Storage.WriteSizeBytes},
+			UsedBytes: &shimapi.UInt64Value{Value: props.Statistics.Storage.WriteSizeBytes},
 		},
 	}
 	return stats, nil
 }
 
-func (s *RuntimeServer) listContainerStats(ctx context.Context, req *p.ListContainerStatsRequest) (*p.ListContainerStatsResponse, error) {
-	stats := make([]*p.ContainerStats, 0, len(s.containers))
+func (s *RuntimeServer) listContainerStats(ctx context.Context, req *shimapi.ListContainerStatsRequest) (*shimapi.ListContainerStatsResponse, error) {
+	stats := make([]*shimapi.ContainerStats, 0, len(s.containers))
 	for _, c := range s.containers {
 		add := true
 		if req.Filter.Id == "" || c.Container.Id == req.Filter.Id {
@@ -680,5 +680,5 @@ func (s *RuntimeServer) listContainerStats(ctx context.Context, req *p.ListConta
 			}
 		}
 	}
-	return &p.ListContainerStatsResponse{Stats: stats}, nil
+	return &shimapi.ListContainerStatsResponse{Stats: stats}, nil
 }
