@@ -22,7 +22,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/resources"
 	"github.com/Microsoft/hcsshim/internal/schemaversion"
 	"github.com/Microsoft/hcsshim/internal/uvm"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
 
@@ -84,7 +84,7 @@ func validateContainerConfig(ctx context.Context, coi *createOptionsInternal) er
 	return nil
 }
 
-func initializeCreateOptions(ctx context.Context, createOptions *CreateOptions) (*createOptionsInternal, error) {
+func InitializeCreateOptions(ctx context.Context, createOptions *CreateOptions) (*createOptionsInternal, error) {
 	coi := &createOptionsInternal{
 		CreateOptions: createOptions,
 		actualID:      createOptions.ID,
@@ -144,7 +144,7 @@ func configureSandboxNetwork(ctx context.Context, coi *createOptionsInternal, r 
 				// No network setup type was specified for this UVM. Create and assign one here unless
 				// we received a different error.
 				if err == uvm.ErrNoNetworkSetup {
-					if err := coi.HostingSystem.CreateAndAssignNetworkSetup(ctx, "", ""); err != nil {
+					if err := coi.HostingSystem.CreateAndAssignNetworkSetup(ctx, "", "", false); err != nil {
 						return err
 					}
 					if err := coi.HostingSystem.ConfigureNetworking(ctx, coi.actualNetworkNamespace); err != nil {
@@ -168,7 +168,7 @@ func configureSandboxNetwork(ctx context.Context, coi *createOptionsInternal, r 
 // release the resources on failure, so that the client can make the necessary
 // call to release resources that have been allocated as part of calling this function.
 func CreateContainer(ctx context.Context, createOptions *CreateOptions) (_ cow.Container, _ *resources.Resources, err error) {
-	coi, err := initializeCreateOptions(ctx, createOptions)
+	coi, err := InitializeCreateOptions(ctx, createOptions)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -4,6 +4,7 @@ package uvm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -39,7 +40,7 @@ var (
 // In this function we take the namespace ID of the namespace that was created for this
 // UVM. We hot add the namespace. We get the endpoints associated with this namespace
 // and then hot add those endpoints.
-func (uvm *UtilityVM) SetupNetworkNamespace(ctx context.Context, nsid string) error {
+func (uvm *UtilityVM) SetupNetworkNamespace(ctx context.Context, nsid string, noGuest bool) error {
 	nsidInsideUVM := nsid
 
 	// Query endpoints with actual nsid
@@ -55,13 +56,26 @@ func (uvm *UtilityVM) SetupNetworkNamespace(ctx context.Context, nsid string) er
 		return err
 	}
 
+	hcnB, err := json.Marshal(hcnNamespace)
+	if err != nil {
+		return err
+	}
+	log.G(ctx).WithField("hcnNamespace", string(hcnB)).Debug("SetupNetworkNamespace::AddNetNS")
 	if err = uvm.AddNetNS(ctx, hcnNamespace); err != nil {
 		return err
 	}
 
-	if err = uvm.AddEndpointsToNS(ctx, nsidInsideUVM, endpoints); err != nil {
+	eps, err := json.Marshal(endpoints)
+	if err != nil {
+		return err
+	}
+	log.G(ctx).WithFields(logrus.Fields{
+		"nsid":      nsid,
+		"endpoints": string(eps),
+	}).Debug("SetupNetworkNamespace::AddEndpointsToNS")
+	if err = uvm.AddEndpointsToNS(ctx, nsidInsideUVM, endpoints, noGuest); err != nil {
 		// Best effort clean up the NS
-		if removeErr := uvm.RemoveNetNS(ctx, nsidInsideUVM); removeErr != nil {
+		if removeErr := uvm.RemoveNetNS(ctx, nsidInsideUVM, noGuest); removeErr != nil {
 			log.G(ctx).Warn(removeErr)
 		}
 		return err
@@ -131,7 +145,8 @@ var ErrNoNetworkSetup = errors.New("no network setup present for UVM")
 // This can be used to configure the networking (setup and teardown) of the vm.
 //
 // `addr` is an optional parameter
-func (uvm *UtilityVM) CreateAndAssignNetworkSetup(ctx context.Context, addr, containerID string) (err error) {
+func (uvm *UtilityVM) CreateAndAssignNetworkSetup(ctx context.Context, addr, containerID string,
+	krypton bool) (err error) {
 	if uvm.NCProxyEnabled() {
 		if addr == "" || containerID == "" {
 			return errors.New("received empty field(s) for external network setup")
@@ -142,7 +157,11 @@ func (uvm *UtilityVM) CreateAndAssignNetworkSetup(ctx context.Context, addr, con
 		}
 		uvm.networkSetup = setup
 	} else {
-		uvm.networkSetup = NewInternalNetworkSetup(uvm)
+		if !krypton {
+			uvm.networkSetup = NewInternalNetworkSetup(uvm)
+		} else {
+			uvm.networkSetup = NewVMNetworkSetup(uvm)
+		}
 	}
 	return nil
 }
@@ -184,11 +203,11 @@ func NewInternalNetworkSetup(vm *UtilityVM) NetworkSetup {
 func (i *internalNetworkSetup) ConfigureNetworking(ctx context.Context, namespaceID string, configType NetworkConfigType) error {
 	switch configType {
 	case NetworkRequestSetup:
-		if err := i.vm.SetupNetworkNamespace(ctx, namespaceID); err != nil {
+		if err := i.vm.SetupNetworkNamespace(ctx, namespaceID, false); err != nil {
 			return err
 		}
 	case NetworkRequestTearDown:
-		if err := i.vm.RemoveNetNS(ctx, namespaceID); err != nil {
+		if err := i.vm.RemoveNetNS(ctx, namespaceID, false); err != nil {
 			return err
 		}
 	default:
@@ -196,6 +215,26 @@ func (i *internalNetworkSetup) ConfigureNetworking(ctx context.Context, namespac
 	}
 
 	return nil
+}
+
+type vmNetworkSetup struct {
+	vm *UtilityVM
+}
+
+func NewVMNetworkSetup(vm *UtilityVM) NetworkSetup {
+	return &vmNetworkSetup{vm}
+}
+
+func (v *vmNetworkSetup) ConfigureNetworking(ctx context.Context, namespaceID string,
+	configType NetworkConfigType) error {
+	switch configType {
+	case NetworkRequestSetup:
+		return v.vm.SetupNetworkNamespace(ctx, namespaceID, true)
+	case NetworkRequestTearDown:
+		return v.vm.RemoveNetNS(ctx, namespaceID, true)
+	default:
+		return fmt.Errorf("network configuration type %d is not known", configType)
+	}
 }
 
 // ExternalNetworkSetup implements the NetworkSetup interface for configuring
@@ -299,6 +338,30 @@ func (endpoints *NetworkEndpoints) Release(ctx context.Context) error {
 	return nil
 }
 
+func (uvm *UtilityVM) addNICOnly(ctx context.Context, id string, endpoint *hns.HNSEndpoint) error {
+	request := hcsschema.ModifySettingRequest{
+		RequestType:  guestrequest.RequestTypeAdd,
+		ResourcePath: fmt.Sprintf(resourcepaths.NetworkResourceFormat, id),
+		Settings: hcsschema.NetworkAdapter{
+			EndpointId: endpoint.Id,
+			MacAddress: endpoint.MacAddress,
+		},
+	}
+	return uvm.modify(ctx, &request)
+}
+
+func (uvm *UtilityVM) removeNICOnly(ctx context.Context, id string, endpoint *hns.HNSEndpoint) error {
+	request := hcsschema.ModifySettingRequest{
+		RequestType:  guestrequest.RequestTypeRemove,
+		ResourcePath: fmt.Sprintf(resourcepaths.NetworkResourceFormat, id),
+		Settings: hcsschema.NetworkAdapter{
+			EndpointId: endpoint.Id,
+			MacAddress: endpoint.MacAddress,
+		},
+	}
+	return uvm.modify(ctx, &request)
+}
+
 // AddNetNS adds network namespace inside the guest without actually querying for the
 // namespace by its ID. It uses the given namespace struct as it is in the guest request.
 // This function is mostly used when we need to override the values inside the namespace
@@ -313,6 +376,7 @@ func (uvm *UtilityVM) AddNetNS(ctx context.Context, hcnNamespace *hcn.HostComput
 	}
 
 	if uvm.isNetworkNamespaceSupported() {
+		log.G(ctx).Debug("AddNetNS with network namespace supported")
 		// Add a Guest Network namespace. On LCOW we add the adapters
 		// dynamically.
 		if uvm.operatingSystem == "windows" {
@@ -389,7 +453,8 @@ func (uvm *UtilityVM) AddEndpointToNSWithID(ctx context.Context, nsID, nicID str
 // added endpoints.
 //
 // If no network namespace matches `id` returns `ErrNetNSNotFound`.
-func (uvm *UtilityVM) AddEndpointsToNS(ctx context.Context, id string, endpoints []*hns.HNSEndpoint) error {
+func (uvm *UtilityVM) AddEndpointsToNS(ctx context.Context, id string, endpoints []*hns.HNSEndpoint,
+	noGuest bool) error {
 	uvm.m.Lock()
 	defer uvm.m.Unlock()
 
@@ -404,8 +469,18 @@ func (uvm *UtilityVM) AddEndpointsToNS(ctx context.Context, id string, endpoints
 			if err != nil {
 				return err
 			}
-			if err := uvm.addNIC(ctx, nicID.String(), endpoint); err != nil {
-				return err
+			log.G(ctx).WithFields(logrus.Fields{
+				"id":    id,
+				"nicID": nicID.String(),
+			}).Debug("addNic")
+			if noGuest {
+				if err := uvm.addNICOnly(ctx, nicID.String(), endpoint); err != nil {
+					return err
+				}
+			} else {
+				if err := uvm.addNIC(ctx, nicID.String(), endpoint); err != nil {
+					return err
+				}
 			}
 			ns.nics[endpoint.Id] = &nicInfo{
 				ID:       nicID.String(),
@@ -420,13 +495,19 @@ func (uvm *UtilityVM) AddEndpointsToNS(ctx context.Context, id string, endpoints
 // the namespace.
 //
 // If a namespace matching `id` is not found this command silently succeeds.
-func (uvm *UtilityVM) RemoveNetNS(ctx context.Context, id string) error {
+func (uvm *UtilityVM) RemoveNetNS(ctx context.Context, id string, noGuest bool) error {
 	uvm.m.Lock()
 	defer uvm.m.Unlock()
 	if ns, ok := uvm.namespaces[id]; ok {
 		for _, ninfo := range ns.nics {
-			if err := uvm.removeNIC(ctx, ninfo.ID, ninfo.Endpoint); err != nil {
-				return err
+			if noGuest {
+				if err := uvm.removeNICOnly(ctx, ninfo.ID, ninfo.Endpoint); err != nil {
+					return err
+				}
+			} else {
+				if err := uvm.removeNIC(ctx, ninfo.ID, ninfo.Endpoint); err != nil {
+					return err
+				}
 			}
 			ns.nics[ninfo.Endpoint.Id] = nil
 		}

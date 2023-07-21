@@ -16,7 +16,7 @@ import (
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 	eventstypes "github.com/containerd/containerd/api/events"
-	task "github.com/containerd/containerd/api/runtime/task/v2"
+	"github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/runtime"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -75,6 +75,7 @@ func createPod(ctx context.Context, events publisher, req *task.CreateTaskReques
 		return nil, errors.Wrapf(errdefs.ErrFailedPrecondition, "pod support is not available on Windows versions previous to RS5 (%d)", osversion.RS5)
 	}
 
+	log.G(ctx).WithField("annotations", s.Annotations).Debug("logging annotations")
 	ct, sid, err := oci.GetSandboxTypeAndID(s.Annotations)
 	if err != nil {
 		return nil, err
@@ -123,6 +124,11 @@ func createPod(ctx context.Context, events publisher, req *task.CreateTaskReques
 			}
 		case *uvm.OptionsWCOW:
 			wopts := (opts).(*uvm.OptionsWCOW)
+
+			if wopts.VMContainer {
+				wopts.BundleDirectory = req.Bundle
+				return createVMPod(ctx, events, req)
+			}
 
 			// In order for the UVM sandbox.vhdx not to collide with the actual
 			// nested Argon sandbox.vhdx we append the \vm folder to the last
@@ -191,7 +197,7 @@ func createPod(ctx context.Context, events publisher, req *task.CreateTaskReques
 			cid = id
 		}
 		caAddr := fmt.Sprintf(uvm.ComputeAgentAddrFmt, cid)
-		if err := parent.CreateAndAssignNetworkSetup(ctx, caAddr, cid); err != nil {
+		if err := parent.CreateAndAssignNetworkSetup(ctx, caAddr, cid, false); err != nil {
 			return nil, err
 		}
 	}

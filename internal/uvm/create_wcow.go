@@ -10,6 +10,7 @@ import (
 
 	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/go-winio/pkg/guid"
+	"github.com/Microsoft/go-winio/vhd"
 	"github.com/pkg/errors"
 	"go.opencensus.io/trace"
 
@@ -40,6 +41,8 @@ type OptionsWCOW struct {
 
 	// NoInheritHostTimezone specifies whether to not inherit the hosts timezone for the UVM. UTC will be set as the default for the VM instead.
 	NoInheritHostTimezone bool
+
+	BundleDirectory string
 }
 
 // NewDefaultOptionsWCOW creates the default options for a bootable version of
@@ -57,7 +60,6 @@ func NewDefaultOptionsWCOW(id, owner string) *OptionsWCOW {
 
 func (uvm *UtilityVM) startExternalGcsListener(ctx context.Context) error {
 	log.G(ctx).WithField("vmID", uvm.runtimeID).Debug("Using external GCS bridge")
-
 	l, err := winio.ListenHvsock(&winio.HvsockAddr{
 		VMID:      uvm.runtimeID,
 		ServiceID: gcs.WindowsGcsHvsockServiceID,
@@ -65,8 +67,142 @@ func (uvm *UtilityVM) startExternalGcsListener(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	log.G(ctx).Debug("done listenHvsock")
 	uvm.gcListener = l
 	return nil
+}
+
+func prepareVMContainerConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW) (*hcsschema.ComputeSystem, error) {
+	processorTopology, err := processorinfo.HostProcessorInfo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get host processor information: %w", err)
+	}
+
+	uvm.processorCount = uvm.normalizeProcessorCount(ctx, opts.ProcessorCount, processorTopology)
+
+	memorySizeInMB := uvm.normalizeMemorySize(ctx, opts.MemorySizeInMB)
+	processor := &hcsschema.Processor2{
+		Count:  uvm.processorCount,
+		Limit:  opts.ProcessorLimit,
+		Weight: opts.ProcessorWeight,
+	}
+	// We can set a cpu group for the VM at creation time in recent builds.
+	if opts.CPUGroupID != "" {
+		if osversion.Build() < osversion.V21H1 {
+			return nil, errCPUGroupCreateNotSupported
+		}
+		processor.CpuGroup = &hcsschema.CpuGroup{Id: opts.CPUGroupID}
+	}
+
+	var registryChanges hcsschema.RegistryChanges
+	// Here for a temporary workaround until the need for setting this regkey is no more. To protect
+	// against any undesired behavior (such as some general networking scenarios ceasing to function)
+	// with a recent change to fix SMB share access in the UVM, this registry key will be checked to
+	// enable the change in question inside GNS.dll.
+	if !opts.DisableCompartmentNamespace {
+		registryChanges.AddValues = append(registryChanges.AddValues,
+			hcsschema.RegistryValue{
+				Key: &hcsschema.RegistryKey{
+					Hive: "System",
+					Name: "CurrentControlSet\\Services\\gns",
+				},
+				Name:       "EnableCompartmentNamespace",
+				DWordValue: 1,
+				Type_:      "DWord",
+			},
+		)
+	}
+
+	doc := &hcsschema.ComputeSystem{
+		Owner:                             uvm.owner,
+		SchemaVersion:                     schemaversion.SchemaV21(),
+		ShouldTerminateOnLastHandleClosed: true,
+		VirtualMachine: &hcsschema.VirtualMachine{
+			StopOnReset: true,
+			Chipset: &hcsschema.Chipset{
+				Uefi: &hcsschema.Uefi{
+					BootThis: &hcsschema.UefiBootEntry{
+						DevicePath: guestrequest.ScsiControllerGuids[0],
+						DeviceType: "ScsiDrive",
+						DiskNumber: 0,
+					},
+				},
+			},
+			RegistryChanges: &registryChanges,
+			ComputeTopology: &hcsschema.Topology{
+				Memory: &hcsschema.Memory2{
+					SizeInMB:             memorySizeInMB,
+					AllowOvercommit:      opts.AllowOvercommit,
+					EnableHotHint:        opts.AllowOvercommit,
+					EnableDeferredCommit: opts.EnableDeferredCommit,
+					LowMMIOGapInMB:       opts.LowMMIOGapInMB,
+					HighMMIOBaseInMB:     opts.HighMMIOBaseInMB,
+					HighMMIOGapInMB:      opts.HighMMIOGapInMB,
+				},
+				Processor: processor,
+			},
+			Devices: &hcsschema.Devices{
+				HvSocket: &hcsschema.HvSocket2{
+					HvSocketConfig: &hcsschema.HvSocketSystemConfig{
+						// Allow administrators and SYSTEM to bind to vsock sockets
+						// so that we can create a GCS log socket.
+						DefaultBindSecurityDescriptor: "D:P(A;;FA;;;SY)(A;;FA;;;BA)",
+					},
+				},
+				Keyboard:     &hcsschema.Keyboard{},
+				Mouse:        &hcsschema.Mouse{},
+				VideoMonitor: &hcsschema.VideoMonitor{},
+				VirtualSmb: &hcsschema.VirtualSmb{
+					DirectFileMappingInMB: 1024,
+					Shares: []hcsschema.VirtualSmbShare{
+						{
+							Name:    "0",
+							Path:    filepath.Join(opts.BundleDirectory, "share0hack"),
+							Options: uvm.DefaultVSMBOptions(false),
+						},
+					},
+				},
+			},
+		},
+	}
+	// Handle StorageQoS if set
+	if opts.StorageQoSBandwidthMaximum > 0 || opts.StorageQoSIopsMaximum > 0 {
+		doc.VirtualMachine.StorageQoS = &hcsschema.StorageQoS{
+			IopsMaximum:      opts.StorageQoSIopsMaximum,
+			BandwidthMaximum: opts.StorageQoSBandwidthMaximum,
+		}
+	}
+
+	// Set boot options
+	if opts.DumpDirectoryPath != "" {
+		if info, err := os.Stat(opts.DumpDirectoryPath); err != nil {
+			return nil, fmt.Errorf("failed to stat dump directory %s: %w", opts.DumpDirectoryPath, err)
+		} else if !info.IsDir() {
+			return nil, fmt.Errorf("dump directory path %s isn't a directory", opts.DumpDirectoryPath)
+		}
+		if err := security.GrantVmGroupAccessWithMask(opts.DumpDirectoryPath, security.AccessMaskAll); err != nil {
+			return nil, fmt.Errorf("failed to add SDL to dump directory: %w", err)
+		}
+		debugOpts := &hcsschema.DebugOptions{
+			BugcheckSavedStateFileName:            filepath.Join(opts.DumpDirectoryPath, fmt.Sprintf("%s-savedstate.vmrs", uvm.id)),
+			BugcheckNoCrashdumpSavedStateFileName: filepath.Join(opts.DumpDirectoryPath, fmt.Sprintf("%s-savedstate_nocrashdump.vmrs", uvm.id)),
+		}
+		doc.VirtualMachine.DebugOptions = debugOpts
+	}
+
+	doc.VirtualMachine.Devices.Scsi = map[string]hcsschema.Scsi{}
+	for i := 0; i < int(uvm.scsiControllerCount); i++ {
+		doc.VirtualMachine.Devices.Scsi[guestrequest.ScsiControllerGuids[i]] = hcsschema.Scsi{
+			Attachments: make(map[string]hcsschema.Attachment),
+		}
+	}
+	uvm.reservedSCSISlots = append(uvm.reservedSCSISlots, scsi.Slot{Controller: 0, LUN: 0})
+
+	doc.VirtualMachine.Devices.Scsi[guestrequest.ScsiControllerGuids[0]].Attachments["0"] = hcsschema.Attachment{
+		Path:  filepath.Join(opts.BundleDirectory, "diff-scratch.vhdx"),
+		Type_: "VirtualDisk",
+	}
+	return doc, nil
 }
 
 func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uvmFolder string) (*hcsschema.ComputeSystem, error) {
@@ -195,7 +331,10 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uv
 						DefaultBindSecurityDescriptor: "D:P(A;;FA;;;SY)(A;;FA;;;BA)",
 					},
 				},
-				VirtualSmb: virtualSMB,
+				VirtualSmb:   virtualSMB,
+				Keyboard:     &hcsschema.Keyboard{},
+				Mouse:        &hcsschema.Mouse{},
+				VideoMonitor: &hcsschema.VideoMonitor{},
 			},
 		},
 	}
@@ -270,6 +409,36 @@ func CreateWCOW(ctx context.Context, opts *OptionsWCOW) (_ *UtilityVM, err error
 		}
 	}()
 
+	if opts.VMContainer {
+		// TODO: CRI should probably manage this through snapshots?
+		scratchPath := filepath.Join(opts.BundleDirectory, "diff-scratch.vhdx")
+		err := vhd.CreateDiffVhd(scratchPath, opts.VMContainerTemplatePath, 1)
+		if err != nil {
+			return nil, err
+		}
+		if err := security.GrantVmGroupAccessWithMask(scratchPath, security.AccessMaskAll); err != nil {
+			return nil, err
+		}
+
+		if err = os.Mkdir(filepath.Join(opts.BundleDirectory, "share0hack"), 0777); err != nil {
+			return nil, err
+		}
+
+		doc, err := prepareVMContainerConfigDoc(ctx, uvm, opts)
+		if err != nil {
+			return nil, fmt.Errorf("error generating krypton doc: %w", err)
+		}
+
+		if err := uvm.create(ctx, doc); err != nil {
+			return nil, fmt.Errorf("error creating compute system: %w", err)
+		}
+
+		if err := uvm.startExternalGcsListener(ctx); err != nil {
+			return nil, err
+		}
+		return uvm, nil
+	}
+
 	if err := verifyOptions(ctx, opts); err != nil {
 		return nil, errors.Wrap(err, errBadUVMOpts.Error())
 	}
@@ -320,7 +489,6 @@ func CreateWCOW(ctx context.Context, opts *OptionsWCOW) (_ *UtilityVM, err error
 	}
 
 	doc.VirtualMachine.Devices.Scsi[guestrequest.ScsiControllerGuids[0]].Attachments["0"] = hcsschema.Attachment{
-
 		Path:  scratchPath,
 		Type_: "VirtualDisk",
 	}

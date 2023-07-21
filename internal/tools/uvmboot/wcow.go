@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/log"
@@ -19,10 +20,12 @@ import (
 )
 
 var (
-	wcowDockerImage string
-	wcowCommandLine string
-	wcowImage       string
-	wcowUseTerminal bool
+	wcowDockerImage  string
+	wcowCommandLine  string
+	wcowImage        string
+	wcowVMPodVhdPath string
+	wcowVMPod        bool
+	wcowUseTerminal  bool
 )
 
 var wcowCommand = cli.Command{
@@ -49,34 +52,50 @@ var wcowCommand = cli.Command{
 			Usage:       "create the process in the UVM with a TTY enabled",
 			Destination: &wcowUseTerminal,
 		},
+		cli.BoolFlag{
+			Name:        "krypton",
+			Usage:       "create a krypton UVM",
+			Destination: &wcowVMPod,
+		},
+		cli.StringFlag{
+			Name:        "krypton-vhd-path",
+			Usage:       "path to krypton VHD",
+			Destination: &wcowVMPodVhdPath,
+		},
 	},
 	Action: func(c *cli.Context) error {
 		runMany(c, func(id string) error {
 			options := uvm.NewDefaultOptionsWCOW(id, "")
 			setGlobalOptions(c, options.Options)
-			var layers []string
-			if wcowImage != "" {
-				layer, err := filepath.Abs(wcowImage)
-				if err != nil {
-					return err
-				}
-				layers = []string{layer}
-			} else {
-				if wcowDockerImage == "" {
-					wcowDockerImage = "mcr.microsoft.com/windows/nanoserver:1809"
-				}
-				var err error
-				layers, err = getLayers(wcowDockerImage)
-				if err != nil {
-					return err
-				}
-			}
 			tempDir, err := os.MkdirTemp("", "uvmboot")
 			if err != nil {
 				return err
 			}
-			defer os.RemoveAll(tempDir)
-			options.LayerFolders = append(layers, tempDir)
+			if !wcowVMPod {
+				var layers []string
+				if wcowImage != "" {
+					layer, err := filepath.Abs(wcowImage)
+					if err != nil {
+						return err
+					}
+					layers = []string{layer}
+				} else {
+					if wcowDockerImage == "" {
+						wcowDockerImage = "mcr.microsoft.com/windows/nanoserver:1809"
+					}
+					var err error
+					layers, err = getLayers(wcowDockerImage)
+					if err != nil {
+						return err
+					}
+				}
+				defer os.RemoveAll(tempDir)
+				options.LayerFolders = append(layers, tempDir)
+			} else {
+				options.VMContainer = true
+				options.VMContainerTemplatePath = wcowVMPodVhdPath
+				options.BundleDirectory = tempDir
+			}
 			vm, err := uvm.CreateWCOW(context.TODO(), options)
 			if err != nil {
 				return err
@@ -112,6 +131,7 @@ var wcowCommand = cli.Command{
 					return err
 				}
 			}
+			time.Sleep(30 * time.Second)
 			_ = vm.Terminate(context.TODO())
 			_ = vm.Wait()
 			return vm.ExitError()

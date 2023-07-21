@@ -29,7 +29,7 @@ func createNetworkNamespace(ctx context.Context, coi *createOptionsInternal, r *
 	log.G(ctx).WithFields(logrus.Fields{
 		"netID":               ns.Id,
 		logfields.ContainerID: coi.ID,
-	}).Info("created network namespace for container")
+	}).Debug("created network namespace for container")
 
 	r.SetNetNS(ns.Id)
 	r.SetCreatedNetNS(true)
@@ -43,7 +43,7 @@ func createNetworkNamespace(ctx context.Context, coi *createOptionsInternal, r *
 		log.G(ctx).WithFields(logrus.Fields{
 			"netID":      ns.Id,
 			"endpointID": endpointID,
-		}).Info("added network endpoint to namespace")
+		}).Debug("added network endpoint to namespace")
 		endpoints = append(endpoints, endpointID)
 	}
 	r.Add(&uvm.NetworkEndpoints{EndpointIDs: endpoints, Namespace: ns.Id})

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	eventstypes "github.com/containerd/containerd/api/events"
-	task "github.com/containerd/containerd/api/runtime/task/v2"
+	"github.com/containerd/containerd/api/runtime/task/v2"
 	containerd_v1_types "github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/runtime"
@@ -383,7 +383,7 @@ func (he *hcsExec) ForceExit(ctx context.Context, status int) {
 }
 
 // exitFromCreatedL transitions the shim to the exited state from the created
-// state. It is the callers responsibility to hold `he.sl` for the durration of
+// state. It is the caller's responsibility to hold `he.sl` for the duration of
 // this transition.
 //
 // This call is idempotent and will not affect any state if the shim is already

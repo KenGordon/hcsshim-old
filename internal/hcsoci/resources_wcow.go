@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 
 	"github.com/Microsoft/hcsshim/internal/cmd"
@@ -72,7 +72,7 @@ func allocateWindowsResources(ctx context.Context, coi *createOptionsInternal, r
 		}
 	}
 
-	if err := setupMounts(ctx, coi, r); err != nil {
+	if err := SetupMounts(ctx, coi, r); err != nil {
 		return err
 	}
 
@@ -126,9 +126,9 @@ func allocateWindowsResources(ctx context.Context, coi *createOptionsInternal, r
 	return nil
 }
 
-// setupMounts adds the custom mounts requested in the container configuration of this
+// SetupMounts adds the custom mounts requested in the container configuration of this
 // request.
-func setupMounts(ctx context.Context, coi *createOptionsInternal, r *resources.Resources) error {
+func SetupMounts(ctx context.Context, coi *createOptionsInternal, r *resources.Resources) error {
 	// Validate each of the mounts. If this is a V2 Xenon, we have to add them as
 	// VSMB shares to the utility VM. For V1 Xenon and Argons, there's nothing for
 	// us to do as it's done by HCS.

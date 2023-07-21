@@ -126,7 +126,7 @@ func TestLCOW_IPv6_Assignment(t *testing.T) {
 	opts := defaultLCOWOptions(t)
 	vm := uvm.CreateAndStartLCOWFromOpts(ctx, t, opts)
 
-	if err := vm.CreateAndAssignNetworkSetup(ctx, "", ""); err != nil {
+	if err := vm.CreateAndAssignNetworkSetup(ctx, "", "", false); err != nil {
 		t.Fatalf("setting up network: %v", err)
 	}
 	if err := vm.ConfigureNetworking(ctx, ns.Id); err != nil {

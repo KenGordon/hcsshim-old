@@ -23,9 +23,9 @@ const (
 	// DefaultScratchSizeGB is the size of the default LCOW scratch disk in GB
 	DefaultScratchSizeGB = 20
 
-	// defaultVhdxBlockSizeMB is the block-size for the scratch VHDx's this
+	// DefaultVhdxBlockSizeMB is the block-size for the scratch VHDx's this
 	// package can create.
-	defaultVhdxBlockSizeMB = 1
+	DefaultVhdxBlockSizeMB = 1
 )
 
 // CreateScratch uses a utility VM to create an empty scratch disk of a
@@ -64,7 +64,7 @@ func CreateScratch(ctx context.Context, lcowUVM *uvm.UtilityVM, destFile string,
 	}
 
 	// Create the VHDX
-	if err := vhd.CreateVhdx(destFile, sizeGB, defaultVhdxBlockSizeMB); err != nil {
+	if err := vhd.CreateVhdx(destFile, sizeGB, DefaultVhdxBlockSizeMB); err != nil {
 		return fmt.Errorf("failed to create VHDx %s: %s", destFile, err)
 	}
 

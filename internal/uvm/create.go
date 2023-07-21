@@ -102,10 +102,13 @@ type Options struct {
 
 	// DumpDirectoryPath is the path of the directory inside which all debug dumps etc are stored.
 	DumpDirectoryPath string
+
+	VMContainer             bool
+	VMContainerTemplatePath string
 }
 
 // Verifies that the final UVM options are correct and supported.
-func verifyOptions(ctx context.Context, options interface{}) error {
+func verifyOptions(_ context.Context, options interface{}) error {
 	switch opts := options.(type) {
 	case *OptionsLCOW:
 		if opts.EnableDeferredCommit && !opts.AllowOvercommit {
@@ -133,11 +136,18 @@ func verifyOptions(ctx context.Context, options interface{}) error {
 		if opts.EnableDeferredCommit && !opts.AllowOvercommit {
 			return errors.New("EnableDeferredCommit is not supported on physically backed VMs")
 		}
-		if len(opts.LayerFolders) < 2 {
-			return errors.New("at least 2 LayerFolders must be supplied")
-		}
 		if opts.SCSIControllerCount != 1 {
 			return errors.New("exactly 1 SCSI controller is required for WCOW")
+		}
+		if !opts.VMContainer {
+			if len(opts.LayerFolders) < 2 {
+				return errors.New("at least 2 LayerFolders must be supplied")
+			}
+			return nil
+		}
+		// In case of a VM pod we need a VHD (or VMGS?) to boot
+		if _, err := os.Stat(opts.VMContainerTemplatePath); err != nil {
+			return err
 		}
 	}
 	return nil

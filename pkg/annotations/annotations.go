@@ -293,6 +293,10 @@ const (
 	// DumpDirectoryPath provides a path to the directory in which dumps for a UVM will be collected in
 	// case the UVM crashes.
 	DumpDirectoryPath = "io.microsoft.virtualmachine.dump-directory-path"
+
+	VMPod = "io.microsoft.virtualmachine.vm-pod"
+
+	VMPodTemplatePath = "io.microsoft.virtualmachine.template-path"
 )
 
 // AnnotationExpansions maps annotations that will be expanded into an array of
