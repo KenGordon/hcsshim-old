@@ -14,11 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// To regenerate api.pb.go run `hack/update-codegen.sh protobindings`
 syntax = "proto3";
 
 package runtime.v1;
-option go_package = "k8s.io/cri-api/pkg/apis/runtime/v1";
+option go_package = "github.com/Microsoft/hcsshim/cmd/shimlike/proto";
 
 import "github.com/gogo/protobuf/gogoproto/gogo.proto";
 
@@ -35,31 +34,19 @@ service RuntimeService {
     // Version returns the runtime name, runtime version, and runtime API version.
     rpc Version(VersionRequest) returns (VersionResponse) {}
 
-    // RunPodSandbox creates and starts a pod-level sandbox. Runtimes must ensure
-    // the sandbox is in the ready state on success.
+    // RunPodSandbox must be called before any other operations. This function
+    // connects the shimlike to the UVM's GCS and creates a sandbox container to set
+    // up networking and other resources for all containers running inside the UVM.
     rpc RunPodSandbox(RunPodSandboxRequest) returns (RunPodSandboxResponse) {}
-    // StopPodSandbox stops any running process that is part of the sandbox and
-    // reclaims network resources (e.g., IP addresses) allocated to the sandbox.
+    // StopPodSandbox stops any running process that is part of the sandbox.
     // If there are any running containers in the sandbox, they must be forcibly
     // terminated.
-    // This call is idempotent, and must not return an error if all relevant
-    // resources have already been reclaimed. kubelet will call StopPodSandbox
-    // at least once before calling RemovePodSandbox. It will also attempt to
-    // reclaim resources eagerly, as soon as a sandbox is not needed. Hence,
-    // multiple StopPodSandbox calls are expected.
     rpc StopPodSandbox(StopPodSandboxRequest) returns (StopPodSandboxResponse) {}
-    // RemovePodSandbox removes the sandbox. If there are any running containers
-    // in the sandbox, they must be forcibly terminated and removed.
-    // This call is idempotent, and must not return an error if the sandbox has
-    // already been removed.
-    rpc RemovePodSandbox(RemovePodSandboxRequest) returns (RemovePodSandboxResponse) {}
-    // PodSandboxStatus returns the status of the PodSandbox. If the PodSandbox is not
-    // present, returns an error.
-    rpc PodSandboxStatus(PodSandboxStatusRequest) returns (PodSandboxStatusResponse) {}
-    // ListPodSandbox returns a list of PodSandboxes.
-    rpc ListPodSandbox(ListPodSandboxRequest) returns (ListPodSandboxResponse) {}
 
-    // CreateContainer creates a new container in specified PodSandbox
+    // CreateContainer creates a new container. RDAgent has responsibility for
+    // all host adjustments necessary for the container to run--for example,
+    // attaching SCSI disks and NICs. The guest service will manage mounting
+    // the disks and combination of layers.
     rpc CreateContainer(CreateContainerRequest) returns (CreateContainerResponse) {}
     // StartContainer starts the container.
     rpc StartContainer(StartContainerRequest) returns (StartContainerResponse) {}
@@ -91,12 +78,10 @@ service RuntimeService {
 
     // ExecSync runs a command in a container synchronously.
     rpc ExecSync(ExecSyncRequest) returns (ExecSyncResponse) {}
-    // Exec prepares a streaming endpoint to execute a command in the container.
+    // Exec connects to a named pipe to forward output from an executed command in a container. The pipe must be created before calling this function.
     rpc Exec(ExecRequest) returns (ExecResponse) {}
-    // Attach prepares a streaming endpoint to attach to a running container.
+    // Attach connects to a named pipe and streams output from a running container. The pipe must be created before calling this function.
     rpc Attach(AttachRequest) returns (AttachResponse) {}
-    // PortForward prepares a streaming endpoint to forward ports from a PodSandbox.
-    rpc PortForward(PortForwardRequest) returns (PortForwardResponse) {}
 
     // ContainerStats returns stats of the container. If the container does not
     // exist, the call returns an error.
@@ -104,51 +89,11 @@ service RuntimeService {
     // ListContainerStats returns stats of all running containers.
     rpc ListContainerStats(ListContainerStatsRequest) returns (ListContainerStatsResponse) {}
 
-    // PodSandboxStats returns stats of the pod sandbox. If the pod sandbox does not
-    // exist, the call returns an error.
-    rpc PodSandboxStats(PodSandboxStatsRequest) returns (PodSandboxStatsResponse) {}
-    // ListPodSandboxStats returns stats of the pod sandboxes matching a filter.
-    rpc ListPodSandboxStats(ListPodSandboxStatsRequest) returns (ListPodSandboxStatsResponse) {}
-
-    // UpdateRuntimeConfig updates the runtime configuration based on the given request.
-    rpc UpdateRuntimeConfig(UpdateRuntimeConfigRequest) returns (UpdateRuntimeConfigResponse) {}
-
     // Status returns the status of the runtime.
     rpc Status(StatusRequest) returns (StatusResponse) {}
 
-    // CheckpointContainer checkpoints a container
-    rpc CheckpointContainer(CheckpointContainerRequest) returns (CheckpointContainerResponse) {}
-
     // GetContainerEvents gets container events from the CRI runtime
-    rpc  GetContainerEvents(GetEventsRequest) returns (stream ContainerEventResponse) {}
-
-    // ListMetricDescriptors gets the descriptors for the metrics that will be returned in ListPodSandboxMetrics.
-    // This list should be static at startup: either the client and server restart together when
-    // adding or removing metrics descriptors, or they should not change.
-    // Put differently, if ListPodSandboxMetrics references a name that is not described in the initial
-    // ListMetricDescriptors call, then the metric will not be broadcasted.
-    rpc ListMetricDescriptors(ListMetricDescriptorsRequest) returns (ListMetricDescriptorsResponse) {}
-
-    // ListPodSandboxMetrics gets pod sandbox metrics from CRI Runtime
-    rpc ListPodSandboxMetrics(ListPodSandboxMetricsRequest) returns (ListPodSandboxMetricsResponse) {}
-}
-
-// ImageService defines the public APIs for managing images.
-service ImageService {
-    // ListImages lists existing images.
-    rpc ListImages(ListImagesRequest) returns (ListImagesResponse) {}
-    // ImageStatus returns the status of the image. If the image is not
-    // present, returns a response with ImageStatusResponse.Image set to
-    // nil.
-    rpc ImageStatus(ImageStatusRequest) returns (ImageStatusResponse) {}
-    // PullImage pulls an image with authentication config.
-    rpc PullImage(PullImageRequest) returns (PullImageResponse) {}
-    // RemoveImage removes the image.
-    // This call is idempotent, and must not return an error if the image has
-    // already been removed.
-    rpc RemoveImage(RemoveImageRequest) returns (RemoveImageResponse) {}
-    // ImageFSInfo returns information of the filesystem that is used to store images.
-    rpc ImageFsInfo(ImageFsInfoRequest) returns (ImageFsInfoResponse) {}
+    rpc GetContainerEvents(GetEventsRequest) returns (stream ContainerEventResponse) {}
 }
 
 message VersionRequest {
@@ -199,7 +144,7 @@ message PortMapping {
 }
 
 enum MountPropagation {
-    // No mount propagation ("private" in Linux terminology).
+    // No mount propagation ("rprivate" in Linux terminology).
     PROPAGATION_PRIVATE = 0;
     // Mounts get propagated from the host to the container ("rslave" in Linux).
     PROPAGATION_HOST_TO_CONTAINER = 1;
@@ -208,24 +153,18 @@ enum MountPropagation {
     PROPAGATION_BIDIRECTIONAL = 2;
 }
 
-// Mount specifies a host volume to mount into a container.
+// Mount specifies a pre-attached volume on the Pod to be mounted.
 message Mount {
-    // Path of the mount within the container.
-    string container_path = 1;
-    // Path of the mount on the host. If the hostPath doesn't exist, then runtimes
-    // should report error. If the hostpath is a symbolic link, runtimes should
-    // follow the symlink and mount the real destination to container.
-    string host_path = 2;
-    // If set, the mount is read-only.
-    bool readonly = 3;
-    // If set, the mount needs SELinux relabeling.
-    bool selinux_relabel = 4;
-    // Requested propagation mode.
-    MountPropagation propagation = 5;
-    // UidMappings specifies the runtime UID mappings for the mount.
-    repeated IDMapping uidMappings = 6;
-    // GidMappings specifies the runtime GID mappings for the mount.
-    repeated IDMapping gidMappings = 7;
+    // The controller of the volume.
+    int32 controller = 1;
+    // The LUN of the volume.
+    int32 lun = 2;
+    // The partition of the volume.
+    int32 partition = 3;
+    // If set, the mount is read-only. A non-readonly mount will be assumed to be
+    // a scratch disk when creating containers. A container may only have one
+    // non-readonly mount
+    bool readonly = 4;
 }
 
 // IDMapping describes host to container ID mappings for a pod sandbox.
@@ -457,25 +396,24 @@ message PodSandboxConfig {
 }
 
 message RunPodSandboxRequest {
-    // Configuration for creating a PodSandbox.
-    PodSandboxConfig config = 1;
-    // Named runtime configuration to use for this PodSandbox.
-    // If the runtime handler is unknown, this request should be rejected.  An
-    // empty string should select the default handler, equivalent to the
-    // behavior before this feature was added.
-    // See https://git.k8s.io/enhancements/keps/sig-node/585-runtime-class
-    string runtime_handler = 2;
+    // The attached VHD for the pause image used for the sandbox container
+    Mount pauseDisk = 1;
+    // The attached VHD used as the scratch disk for all containers
+    Mount scratchDisk = 2;
+    // The network device used for all containers
+    NIC nic = 3;
 }
 
-message RunPodSandboxResponse {
-    // ID of the PodSandbox to run.
-    string pod_sandbox_id = 1;
+message RunPodSandboxResponse {}
+
+message NIC {
+    // The namespace ID associated with the NIC
+    string namespaceId = 1;
+    // The ID of the NIC
+    string id = 2;
 }
 
-message StopPodSandboxRequest {
-    // ID of the PodSandbox to stop.
-    string pod_sandbox_id = 1;
-}
+message StopPodSandboxRequest {}
 
 message StopPodSandboxResponse {}
 
@@ -1002,7 +940,7 @@ message WindowsContainerResources {
 // container name based on the metadata. Note that (name, attempt) is unique
 // within a sandbox for the entire lifetime of the sandbox.
 message ContainerMetadata {
-    // Name of the container. Same as the container name in the PodSpec.
+    // Name of the container.
     string name = 1;
     // Attempt number of creating the container. Default: 0.
     uint32 attempt = 2;
@@ -1012,7 +950,7 @@ message ContainerMetadata {
 message Device {
     // Path of the device within the container.
     string container_path = 1;
-    // Path of the device on the host.
+    // Path of the device on the host. The device must already be attached.
     string host_path = 2;
     // Cgroups permissions of the device, candidates are one or more of
     // * r - allows container to read from the specified device.
@@ -1048,7 +986,7 @@ message ContainerConfig {
     string working_dir = 5;
     // List of environment variable to set in the container.
     repeated KeyValue envs = 6;
-    // Mounts for the container.
+    // Mounts for the container. The runtime will mount these, but they must already be attached.
     repeated Mount mounts = 7;
     // Devices for the container.
     repeated Device devices = 8;
@@ -1070,10 +1008,9 @@ message ContainerConfig {
     // kubelet and the container runtime, annotations SHOULD NOT influence
     // runtime behaviour.
     map<string, string> annotations = 10;
-    // Path relative to PodSandboxConfig.LogDirectory for container to store
+    // Path for container to store
     // the log (STDOUT and STDERR) on the host.
     // E.g.,
-    //     PodSandboxConfig.LogDirectory = `/var/log/pods/<NAMESPACE>_<NAME>_<UID>/`
     //     ContainerConfig.LogPath = `containerName/Instance#.log`
     string log_path = 11;
 
@@ -1085,7 +1022,7 @@ message ContainerConfig {
 
     // Configuration specific to Linux containers.
     LinuxContainerConfig linux = 15;
-    // Configuration specific to Windows containers.
+    // Configuration specific to Windows containers. Not used.
     WindowsContainerConfig windows = 16;
 
     // CDI devices for the container.
@@ -1093,15 +1030,8 @@ message ContainerConfig {
 }
 
 message CreateContainerRequest {
-    // ID of the PodSandbox in which the container should be created.
-    string pod_sandbox_id = 1;
     // Config of the container.
-    ContainerConfig config = 2;
-    // Config of the PodSandbox. This is the same config that was passed
-    // to RunPodSandboxRequest to create the PodSandbox. It is passed again
-    // here just for easy reference. The PodSandboxConfig is immutable and
-    // remains the same throughout the lifetime of the pod.
-    PodSandboxConfig sandbox_config = 3;
+    ContainerConfig config = 1;
 }
 
 message CreateContainerResponse {
@@ -1153,12 +1083,10 @@ message ContainerFilter {
     string id = 1;
     // State of the container.
     ContainerStateValue state = 2;
-    // ID of the PodSandbox.
-    string pod_sandbox_id = 3;
     // LabelSelector to select matches.
     // Only api.MatchLabels is supported for now and the requirements
     // are ANDed. MatchExpressions is not supported yet.
-    map<string, string> label_selector = 4;
+    map<string, string> label_selector = 3;
 }
 
 message ListContainersRequest {
@@ -1171,26 +1099,24 @@ message Container {
     // ID of the container, used by the container runtime to identify
     // a container.
     string id = 1;
-    // ID of the sandbox to which this container belongs.
-    string pod_sandbox_id = 2;
     // Metadata of the container.
-    ContainerMetadata metadata = 3;
+    ContainerMetadata metadata = 2;
     // Spec of the image.
-    ImageSpec image = 4;
+    ImageSpec image = 3;
     // Reference to the image in use. For most runtimes, this should be an
     // image ID.
-    string image_ref = 5;
+    string image_ref = 4;
     // State of the container.
-    ContainerState state = 6;
+    ContainerState state = 5;
     // Creation time of the container in nanoseconds.
-    int64 created_at = 7;
+    int64 created_at = 6;
     // Key-value pairs that may be used to scope and select individual resources.
-    map<string, string> labels = 8;
+    map<string, string> labels = 7;
     // Unstructured key-value map holding arbitrary metadata.
     // Annotations MUST NOT be altered by the runtime; the value of this field
     // MUST be identical to that of the corresponding ContainerConfig used to
     // instantiate this Container.
-    map<string, string> annotations = 9;
+    map<string, string> annotations = 8;
 }
 
 message ListContainersResponse {
@@ -1325,11 +1251,11 @@ message ExecRequest {
     // in this case. The output of stdout and stderr will be combined to a
     // single stream.
     bool stderr = 6;
+    // Address of the named pipe to stream to
+    string pipe = 7;
 }
 
 message ExecResponse {
-    // Fully qualified URL of the exec streaming server.
-    string url = 1;
 }
 
 message AttachRequest {
@@ -1350,18 +1276,11 @@ message AttachRequest {
     // in this case. The output of stdout and stderr will be combined to a
     // single stream.
     bool stderr = 5;
+    // Address of the named pipe to stream to
+    string pipe = 6;
 }
 
 message AttachResponse {
-    // Fully qualified URL of the attach streaming server.
-    string url = 1;
-}
-
-message PortForwardRequest {
-    // ID of the container to which to forward the port.
-    string pod_sandbox_id = 1;
-    // Port to forward.
-    repeated int32 port = 2;
 }
 
 message PortForwardResponse {
@@ -1589,12 +1508,10 @@ message ListContainerStatsRequest{
 message ContainerStatsFilter {
     // ID of the container.
     string id = 1;
-    // ID of the PodSandbox.
-    string pod_sandbox_id = 2;
     // LabelSelector to select matches.
     // Only api.MatchLabels is supported for now and the requirements
     // are ANDed. MatchExpressions is not supported yet.
-    map<string, string> label_selector = 3;
+    map<string, string> label_selector = 2;
 }
 
 message ListContainerStatsResponse {
@@ -1726,11 +1643,8 @@ message ContainerEventResponse {
     // Creation timestamp of this event
     int64 created_at = 3;
 
-    // Sandbox status
-    PodSandboxStatus pod_sandbox_status = 4;
-
     // Container statuses
-    repeated ContainerStatus containers_statuses = 5;
+    repeated ContainerStatus containers_statuses = 4;
 }
 
 enum ContainerEventType {
