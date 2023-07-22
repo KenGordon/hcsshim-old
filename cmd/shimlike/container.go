@@ -125,7 +125,12 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *shimapi.RunPodSand
 	s.NIC = r.Nic
 
 	// Create the sandbox container
-	doc := createSandboxSpec()
+	doc, err := readSpec()
+	if err != nil {
+		return err
+	}
+	applySandboxSpec(doc)
+
 	id := generateID()
 	doc.OciSpecification.Annotations["io.kubernetes.cri.sandbox-id"] = id
 	s.sandboxID = id
@@ -219,30 +224,6 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *shimapi.RunPodSand
 	return nil
 }
 
-func assignNamespaces(spec *specs.Spec, pid int) {
-	spec.Linux.Namespaces = []specs.LinuxNamespace{
-		{
-			Type: specs.PIDNamespace,
-			Path: fmt.Sprintf("/proc/%d/ns/pid", pid),
-		},
-		{
-			Type: specs.IPCNamespace,
-			Path: fmt.Sprintf("/proc/%d/ns/ipc", pid),
-		},
-		{
-			Type: specs.UTSNamespace,
-			Path: fmt.Sprintf("/proc/%d/ns/uts", pid),
-		},
-		{
-			Type: specs.MountNamespace,
-		},
-		{
-			Type: specs.NetworkNamespace,
-			Path: fmt.Sprintf("/proc/%d/ns/net", pid),
-		},
-	}
-}
-
 // createContainer creates a container in the UVM and returns the newly created container's ID
 //
 // TODO: Non-layer, non-network devices are not supported yet
@@ -253,7 +234,12 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *shimapi.Containe
 	}
 
 	// create the container document
-	doc := createContainerSpec()
+	doc, err := readSpec()
+	if err != nil {
+		return "", err
+	}
+	applyContainerSpec(doc)
+
 	id := generateID()
 	doc.OciBundlePath = fmt.Sprintf(bundlePath, id)
 	doc.OciSpecification.Process.Args = append(c.Command, c.Args...)

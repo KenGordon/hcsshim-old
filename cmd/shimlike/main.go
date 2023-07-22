@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/Microsoft/go-winio"
 	shimapi "github.com/Microsoft/hcsshim/pkg/shimlike/api"
@@ -18,6 +19,17 @@ func run(cCtx *cli.Context) {
 	if cCtx.NArg() != 2 {
 		logrus.Fatalf("Usage: %s", usage)
 	}
+
+	// Verify existence of spec.json relative to the location of the binary
+	binPath, err := os.Executable()
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
+	if _, err = os.Stat(filepath.Join(filepath.Dir(binPath), "spec.json")); err != nil {
+		logrus.Fatal(err)
+	}
+
 	s := grpc.NewServer()
 	pipe, err := winio.ListenPipe(cCtx.Args().First(), nil)
 	if err != nil {
