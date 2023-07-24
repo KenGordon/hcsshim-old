@@ -547,24 +547,16 @@ func (s *RuntimeServer) exec(context context.Context, req *shimapi.ExecRequest) 
 	}
 	com := cmd.Command(c.ProcessHost, req.Cmd[0], req.Cmd[1:]...)
 	if req.Stdin {
-		stdin, ok := com.Stdin.(*PipeReader)
-		if ok {
-			stdin.pipe = &pipe
-		}
+		com.Stdin = &PipeReader{pipe: &pipe}
 	}
 	if req.Stdout {
-		stdout, ok := com.Stdout.(*PipeWriter)
-		if ok {
-			stdout.pipe = &pipe
-		}
+		com.Stdout = &PipeWriter{pipe: &pipe}
 	}
 	if req.Stderr {
-		stderr, ok := com.Stderr.(*PipeWriter)
-		if ok {
-			stderr.pipe = &pipe
-		}
+		com.Stderr = &PipeWriter{pipe: &pipe}
 	}
 	c.Cmds = append(c.Cmds, com)
+	go com.Run()
 
 	return &shimapi.ExecResponse{}, nil
 }

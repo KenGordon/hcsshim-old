@@ -145,11 +145,11 @@ func run(cCtx *cli.Context) {
 	go acceptPrint(pipe2)
 
 	eResp, err := client.Exec(context.Background(), &shimapi.ExecRequest{
-		Cmd:         []string{"ash", "-c", "for i in $(seq 1 10); do echo $i; sleep 1; done"},
+		Cmd:         []string{"ash", "-c", "for i in $(seq 1 10); do echo hello; sleep 1; done"},
 		ContainerId: ccResp.ContainerId,
 		Stdout:      true,
 		Stderr:      true,
-		Pipe:        pipe.Addr().String(),
+		Pipe:        pipe2.Addr().String(),
 	})
 	if err != nil {
 		logrus.Fatal(err)
