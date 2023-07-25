@@ -10034,9 +10034,10 @@ const _ = grpc.SupportPackageIsVersion4
 type RuntimeServiceClient interface {
 	// Version returns the runtime name, runtime version, and runtime API version.
 	Version(ctx context.Context, in *VersionRequest, opts ...grpc.CallOption) (*VersionResponse, error)
-	// RunPodSandbox must be called before any other operations. This function
-	// connects the shimlike to the UVM's GCS and creates a sandbox container to set
-	// up networking and other resources for all containers running inside the UVM.
+	// RunPodSandbox sets up the guest environment inside the UVM. It adds a NIC,
+	// mounts the scratch disk, and runs a pause sandbox container.
+	//
+	// Has no effect if called more than once.
 	RunPodSandbox(ctx context.Context, in *RunPodSandboxRequest, opts ...grpc.CallOption) (*RunPodSandboxResponse, error)
 	// StopPodSandbox stops any running process that is part of the sandbox.
 	// If there are any running containers in the sandbox, they must be forcibly
@@ -10288,9 +10289,10 @@ func (x *runtimeServiceGetContainerEventsClient) Recv() (*ContainerEventResponse
 type RuntimeServiceServer interface {
 	// Version returns the runtime name, runtime version, and runtime API version.
 	Version(context.Context, *VersionRequest) (*VersionResponse, error)
-	// RunPodSandbox must be called before any other operations. This function
-	// connects the shimlike to the UVM's GCS and creates a sandbox container to set
-	// up networking and other resources for all containers running inside the UVM.
+	// RunPodSandbox sets up the guest environment inside the UVM. It adds a NIC,
+	// mounts the scratch disk, and runs a pause sandbox container.
+	//
+	// Has no effect if called more than once.
 	RunPodSandbox(context.Context, *RunPodSandboxRequest) (*RunPodSandboxResponse, error)
 	// StopPodSandbox stops any running process that is part of the sandbox.
 	// If there are any running containers in the sandbox, they must be forcibly

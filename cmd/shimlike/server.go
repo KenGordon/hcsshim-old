@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Microsoft/go-winio"
@@ -35,6 +36,7 @@ type RuntimeServer struct {
 	sandboxID    string
 	sandboxPID   int
 	NIC          *shimapi.NIC
+	runPodOnce   sync.Once // Only run the pod once
 }
 
 // connectLog connects to the UVM's log port and stores the connection
@@ -125,9 +127,17 @@ func (*RuntimeServer) Version(ctx context.Context, req *shimapi.VersionRequest) 
 	return r, nil
 }
 
-// RunPodSandbox is a reserved function for setting up the Shimlike.
+// RunPodSandbox sets up the guest environment inside the UVM. It adds a NIC,
+// mounts the scratch disk, and runs a pause sandbox container.
+//
+// Has no effect if called more than once.
 func (s *RuntimeServer) RunPodSandbox(ctx context.Context, req *shimapi.RunPodSandboxRequest) (*shimapi.RunPodSandboxResponse, error) {
-	return &shimapi.RunPodSandboxResponse{}, s.runPodSandbox(ctx, req)
+	logrus.WithField("request", req).Info("shimlike::RunPodSandbox")
+	var err error
+	s.runPodOnce.Do(func() {
+		err = s.runPodSandbox(ctx, req)
+	})
+	return &shimapi.RunPodSandboxResponse{}, err
 }
 func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *shimapi.StopPodSandboxRequest) (*shimapi.StopPodSandboxResponse, error) {
 	for i := range s.containers {

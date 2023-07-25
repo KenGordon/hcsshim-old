@@ -34,9 +34,10 @@ service RuntimeService {
     // Version returns the runtime name, runtime version, and runtime API version.
     rpc Version(VersionRequest) returns (VersionResponse) {}
 
-    // RunPodSandbox must be called before any other operations. This function
-    // connects the shimlike to the UVM's GCS and creates a sandbox container to set
-    // up networking and other resources for all containers running inside the UVM.
+    // RunPodSandbox sets up the guest environment inside the UVM. It adds a NIC,
+    // mounts the scratch disk, and runs a pause sandbox container.
+    //
+    // Has no effect if called more than once.
     rpc RunPodSandbox(RunPodSandboxRequest) returns (RunPodSandboxResponse) {}
     // StopPodSandbox stops any running process that is part of the sandbox.
     // If there are any running containers in the sandbox, they must be forcibly
