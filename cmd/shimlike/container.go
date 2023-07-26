@@ -445,22 +445,29 @@ func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string)
 // listContainers returns a list of all containers
 func (s *RuntimeServer) listContainers(ctx context.Context, filter *shimapi.ContainerFilter) []*shimapi.Container {
 	containers := make([]*shimapi.Container, 0, len(s.containers))
-	skipID := filter.Id == ""
-	skipState := filter.State == nil
 
 	for _, c := range s.containers {
-		add := true
-		if (c.ProcessHost.ID() == filter.Id || skipID) &&
-			(c.Container.State == filter.State.State || skipState) {
-			for k, v := range filter.LabelSelector {
-				if c.Container.Labels[k] != v {
-					add = false
-					break
+		if c.Container.Id == s.sandboxID {
+			continue
+		}
+		if filter != nil {
+			add := true
+			if (filter.Id == "" || c.ProcessHost.ID() == filter.Id) &&
+				(filter.State == nil || c.Container.State == filter.State.State) {
+				if filter != nil {
+					for k, v := range filter.LabelSelector {
+						if c.Container.Labels[k] != v {
+							add = false
+							break
+						}
+					}
+				}
+				if add {
+					containers = append(containers, c.Container)
 				}
 			}
-			if add {
-				containers = append(containers, c.Container)
-			}
+		} else {
+			containers = append(containers, c.Container)
 		}
 	}
 	return containers
@@ -656,21 +663,32 @@ func (s *RuntimeServer) containerStats(ctx context.Context, containerID string) 
 func (s *RuntimeServer) listContainerStats(ctx context.Context, req *shimapi.ListContainerStatsRequest) (*shimapi.ListContainerStatsResponse, error) {
 	stats := make([]*shimapi.ContainerStats, 0, len(s.containers))
 	for _, c := range s.containers {
-		add := true
-		if req.Filter.Id == "" || c.Container.Id == req.Filter.Id {
-			for k, v := range req.Filter.LabelSelector {
-				if c.Container.Labels[k] != v {
-					add = false
-					break
+		if c.Container.Id == s.sandboxID {
+			continue
+		}
+		if req.Filter != nil {
+			add := true
+			if req.Filter.Id == "" || c.Container.Id == req.Filter.Id {
+				for k, v := range req.Filter.LabelSelector {
+					if c.Container.Labels[k] != v {
+						add = false
+						break
+					}
+				}
+				if add {
+					stat, err := s.containerStats(ctx, c.Container.Id)
+					if err != nil {
+						return nil, err
+					}
+					stats = append(stats, stat)
 				}
 			}
-			if add {
-				stat, err := s.containerStats(ctx, c.Container.Id)
-				if err != nil {
-					return nil, err
-				}
-				stats = append(stats, stat)
+		} else {
+			stat, err := s.containerStats(ctx, c.Container.Id)
+			if err != nil {
+				return nil, err
 			}
+			stats = append(stats, stat)
 		}
 	}
 	return &shimapi.ListContainerStatsResponse{Stats: stats}, nil
