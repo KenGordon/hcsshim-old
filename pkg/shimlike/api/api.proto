@@ -162,9 +162,7 @@ message Mount {
     int32 lun = 2;
     // The partition of the volume.
     int32 partition = 3;
-    // If set, the mount is read-only. A non-readonly mount will be assumed to be
-    // a scratch disk when creating containers. A container may only have one
-    // non-readonly mount
+    // If set, the mount is read-only.
     bool readonly = 4;
 }
 
@@ -399,7 +397,7 @@ message PodSandboxConfig {
 message RunPodSandboxRequest {
     // The attached VHD for the pause image used for the sandbox container
     Mount pauseDisk = 1;
-    // The attached VHD used as the scratch disk for all containers
+    // The attached VHD used as the scratch disk for the sandbox container
     Mount scratchDisk = 2;
     // The network device used for all containers
     NIC nic = 3;
@@ -989,15 +987,18 @@ message ContainerConfig {
     repeated KeyValue envs = 6;
     // Mounts for the container. The runtime will mount these, but they must already be attached.
     repeated Mount mounts = 7;
+    // Scratch disk for the container. The runtime will mount this disk, but it must already be attached.
+    // May be used by multiple containers.
+    Mount scratch_disk = 8;
     // Devices for the container.
-    repeated Device devices = 8;
+    repeated Device devices = 9;
     // Key-value pairs that may be used to scope and select individual resources.
     // Label keys are of the form:
     //     label-key ::= prefixed-name | name
     //     prefixed-name ::= prefix '/' name
     //     prefix ::= DNS_SUBDOMAIN
     //     name ::= DNS_LABEL
-    map<string, string> labels = 9;
+    map<string, string> labels = 10;
     // Unstructured key-value map that may be used by the kubelet to store and
     // retrieve arbitrary metadata.
     //
@@ -1008,26 +1009,26 @@ message ContainerConfig {
     // In general, in order to preserve a well-defined interface between the
     // kubelet and the container runtime, annotations SHOULD NOT influence
     // runtime behaviour.
-    map<string, string> annotations = 10;
+    map<string, string> annotations = 11;
     // Path for container to store
     // the log (STDOUT and STDERR) on the host.
     // E.g.,
     //     ContainerConfig.LogPath = `containerName/Instance#.log`
-    string log_path = 11;
+    string log_path = 12;
 
     // Variables for interactive containers, these have very specialized
     // use-cases (e.g. debugging).
-    bool stdin = 12;
-    bool stdin_once = 13;
-    bool tty = 14;
+    bool stdin = 13;
+    bool stdin_once = 14;
+    bool tty = 15;
 
     // Configuration specific to Linux containers.
-    LinuxContainerConfig linux = 15;
+    LinuxContainerConfig linux = 16;
     // Configuration specific to Windows containers. Not used.
-    WindowsContainerConfig windows = 16;
+    WindowsContainerConfig windows = 17;
 
     // CDI devices for the container.
-    repeated CDIDevice CDI_devices = 17;
+    repeated CDIDevice CDI_devices = 18;
 }
 
 message CreateContainerRequest {

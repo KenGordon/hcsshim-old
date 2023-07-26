@@ -98,6 +98,11 @@ func run(cCtx *cli.Context) {
 				{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 				{Key: "TERM", Value: "xterm"},
 			},
+			ScratchDisk: &shimapi.Mount{
+				Controller: 0,
+				Lun:        3,
+				Partition:  0,
+			},
 			Mounts: []*shimapi.Mount{
 				{Controller: 0, Lun: 2, Partition: 0, Readonly: true},
 			},

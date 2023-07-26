@@ -30,10 +30,9 @@ type ScsiDisk struct {
 type MountManager struct {
 	// A list of mounts for the UVM. If an index is nil, then that index is available to be mounted on.
 	// The first index is always the scratch disk for the UVM.
-	mounts       []*ScsiDisk
-	diskMap      map[string]*ScsiDisk // Map of "controller lun partition" to ScsiDisk
-	gc           *gcs.GuestConnection
-	scratchIndex *int // Populated by mountScratch
+	mounts  []*ScsiDisk
+	diskMap map[string]*ScsiDisk // Map of "controller lun partition" to ScsiDisk
+	gc      *gcs.GuestConnection
 }
 
 func firstEmptyIndex(mounts []*ScsiDisk) int {
@@ -48,7 +47,6 @@ func firstEmptyIndex(mounts []*ScsiDisk) int {
 // mountLayer mounts a layer on the UVM and returns its mounted path.
 // If the layer is already mounted, then it returns the existing mount path, and disk is modified to
 // point to the existing disk.
-// If the disk is not readonly, then it is mounted as a scratch disk.
 // Populates disk.MountPath
 func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk) (string, error) {
 	// Check if already mounted
@@ -94,9 +92,6 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk) (string, e
 		m.mounts[index] = disk
 	}
 	disk.MountIndex = &mountIndex
-	if !disk.Readonly {
-		m.scratchIndex = &mountIndex
-	}
 	disk.References++
 	if m.diskMap == nil {
 		m.diskMap = make(map[string]*ScsiDisk)
@@ -108,12 +103,11 @@ func (m *MountManager) mountScsi(ctx context.Context, disk *ScsiDisk) (string, e
 
 // combineLayers combines all mounted layers to create a rootfs for a container and returns its path.
 // The scratch disk must NOT be passed in as a layer.
-func (m *MountManager) combineLayers(ctx context.Context, layers []*ScsiDisk, containerID string) (string, error) {
-	scratchPath := fmt.Sprintf(mountPath, *m.scratchIndex)
-	hcsLayers := make([]hcsschema.Layer, 0, len(layers))
-	for _, m := range layers {
+func (m *MountManager) combineLayers(ctx context.Context, layerPaths []string, scratchPath string, containerID string) (string, error) {
+	hcsLayers := make([]hcsschema.Layer, 0, len(layerPaths))
+	for _, path := range layerPaths {
 		hcsLayers = append(hcsLayers, hcsschema.Layer{
-			Path: fmt.Sprintf(mountPath, *m.MountIndex),
+			Path: path,
 		})
 	}
 	path := fmt.Sprintf(rootfsPath, containerID)

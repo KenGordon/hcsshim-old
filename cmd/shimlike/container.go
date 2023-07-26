@@ -171,8 +171,8 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *shimapi.RunPodSand
 	}
 
 	// create the rootfs
-	disks := []*ScsiDisk{disk}
-	rootPath, err := s.mountmanager.combineLayers(ctx, disks, id)
+	layerPaths := []string{layerPath}
+	rootPath, err := s.mountmanager.combineLayers(ctx, layerPaths, scratchDiskPath, id)
 	if err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *shimapi.RunPodSand
 		},
 		ProcessHost: container,
 		LogPath:     "", // TODO: Put this somewhere
-		Disks:       disks,
+		Disks:       []*ScsiDisk{disk, scratchDisk},
 	}
 	pid, err := s.startContainer(ctx, id)
 	if err != nil {
@@ -266,6 +266,7 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *shimapi.Containe
 
 	// mount the SCSI disks
 	disks := make([]*ScsiDisk, 0, len(c.Mounts))
+	mountPaths := make([]string, 0, len(c.Mounts))
 	for _, m := range c.Mounts {
 		disk := &ScsiDisk{
 			Controller: uint8(m.Controller),
@@ -282,17 +283,31 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *shimapi.Containe
 			return "", err
 		}
 		disks = append(disks, disk)
+		mountPaths = append(mountPaths, mountPath)
 	}
 
+	// mount the scratch disk
+	scratchDisk := &ScsiDisk{
+		Controller: uint8(c.ScratchDisk.Controller),
+		Lun:        uint8(c.ScratchDisk.Lun),
+		Partition:  uint64(c.ScratchDisk.Partition),
+		Readonly:   false,
+	}
+	scratchDiskPath, err := s.mountmanager.mountScsi(ctx, scratchDisk)
+	if err != nil {
+		return "", err
+	}
+	disks = append(disks, scratchDisk)
+
 	// create the rootfs
-	rootPath, err := s.mountmanager.combineLayers(ctx, disks, id)
+	rootPath, err := s.mountmanager.combineLayers(ctx, mountPaths, scratchDiskPath, id)
 	if err != nil {
 		return "", err
 	}
 	doc.OciSpecification.Root = &specs.Root{
 		Path: rootPath,
 	}
-	doc.ScratchDirPath = fmt.Sprintf(mountPath+scratchDirSuffix, *s.mountmanager.scratchIndex, id)
+	doc.ScratchDirPath = scratchDiskPath + scratchDirSuffix
 
 	// create the container
 	container, err := s.gc.CreateContainer(ctx, id, doc)
