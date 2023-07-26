@@ -44,12 +44,15 @@ int listenacceptvsock(unsigned int cid, unsigned int port) {
     addr.svm_cid = cid;
     socklen_t len = sizeof(addr);
     if(bind(s, (struct sockaddr *)&addr, len)) {
+        close(s);
         return -1;
     }
     if (listen(s, 1)) {
+        close(s);
         return -1;
     }
     if ((l = accept(s, (struct sockaddr *)&addr, &len)) < 0) {
+        close(s);
         return -1;
     }
     close(s);
