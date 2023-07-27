@@ -175,6 +175,7 @@ func (m *MountManager) unmountScsi(ctx context.Context, disk *ScsiDisk) error {
 	}
 	m.mounts[*disk.MountIndex] = nil
 	disk.MountIndex = nil
+	delete(m.diskMap, fmt.Sprintf("%d %d %d", disk.Controller, disk.Lun, disk.Partition))
 
 	return nil
 }
