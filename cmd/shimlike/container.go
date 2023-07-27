@@ -581,7 +581,12 @@ func (s *RuntimeServer) exec(context context.Context, req *shimapi.ExecRequest) 
 		com.Stderr = &PipeWriter{pipe: &pipe}
 	}
 	c.Cmds = append(c.Cmds, com)
-	go com.Run()
+	index := len(c.Cmds) - 1
+	go func() {
+		com.Run()
+		c.Cmds[index] = c.Cmds[len(c.Cmds)-1] // Remove the command from the list
+		c.Cmds = c.Cmds[:len(c.Cmds)-1]       // by copying the last element to the index and slicing
+	}()
 
 	return &shimapi.ExecResponse{}, nil
 }
