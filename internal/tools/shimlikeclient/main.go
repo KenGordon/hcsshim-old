@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"time"
+	osExec "os/exec"
 
 	"github.com/Microsoft/go-winio"
 	shimapi "github.com/Microsoft/hcsshim/pkg/shimlike/api"
@@ -22,21 +22,40 @@ func pipeDialer(ctx context.Context, addr string) (net.Conn, error) {
 	return winio.DialPipe(addr, nil)
 }
 
-func acceptPrint(pipe net.Listener) {
-	con, err := pipe.Accept()
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	defer con.Close()
+func clear() {
+	cmd := osExec.Command("cmd", "/c", "cls")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+}
 
-	buf := make([]byte, 1024)
-	for {
-		n, err := con.Read(buf)
-		if err != nil {
-			logrus.Fatal(err)
-		}
-		fmt.Print(string(buf[:n]))
+func doMenu(display string) int {
+	clear()
+	fmt.Println(`--------Shimlike Client--------
+|1.  Version                  |
+|2.  RunPodSandbox            |
+|3.  StopPodSandbox           |
+|4.  CreateContainer          |
+|5.  StartContainer           |
+|6.  StopContainer            |
+|7.  RemoveContainer          |
+|8.  ListContainers           |
+|9.  ContainerStatus 	      |
+|10. UpdateContainerResources |
+|11. ExecSync                 |
+|12. Exec                     |
+|13. Attach                   |
+|14. ContainerStats           |
+|15. ListContainerStats       |
+|16. Status                   |
+-------------------------------`)
+	fmt.Println(display)
+	fmt.Print("Enter your choice: ")
+	var input int
+	_, err := fmt.Scanln(&input)
+	if err != nil {
+		return doMenu("Invalid choice")
 	}
+	return input
 }
 
 func run(cCtx *cli.Context) {
@@ -45,7 +64,7 @@ func run(cCtx *cli.Context) {
 	}
 
 	// Connect to the shimlike service
-	logrus.Info("Connecting to Shimlike")
+	logrus.Info("Connecting to Shimlike...")
 
 	opts := []grpc.DialOption{grpc.WithInsecure(), grpc.WithContextDialer(pipeDialer)}
 	conn, err := grpc.Dial(cCtx.Args().First(), opts...)
@@ -53,115 +72,53 @@ func run(cCtx *cli.Context) {
 		logrus.Fatal(err)
 	}
 	defer conn.Close()
-	logrus.Info("Connected to Shimlike")
-
-	nic := &shimapi.NIC{}
-
-	fmt.Print("Namespace ID: ")
-	fmt.Scan(&nic.NamespaceId)
-
-	fmt.Print("NIC ID: ")
-	fmt.Scan(&nic.Id)
 
 	client := shimapi.NewRuntimeServiceClient(conn)
-	_, err = client.RunPodSandbox(context.Background(), &shimapi.RunPodSandboxRequest{
-		PauseDisk: &shimapi.Mount{
-			Controller: 0,
-			Lun:        1,
-			Partition:  0,
-			Readonly:   true,
-		},
-		ScratchDisk: &shimapi.Mount{
-			Controller: 0,
-			Lun:        3,
-			Partition:  0,
-			Readonly:   false,
-		},
-		Nic: nic,
-	})
-	if err != nil {
-		logrus.Fatal(err)
+	choice := doMenu("Connected to Shimlike")
+	for {
+		var result string
+		switch choice {
+		case 1:
+			result = version(client)
+		case 2:
+			result = runPodSandbox(client)
+		case 3:
+			fmt.Println(stopPodSandbox(client))
+			return
+		case 4:
+			result = createContainer(client)
+		case 5:
+			result = startContainer(client)
+		case 6:
+			result = stopContainer(client)
+		case 7:
+			result = removeContainer(client)
+		case 8:
+			result = listContainers(client)
+		case 9:
+			result = containerStatus(client)
+		case 10:
+			result = updateContainerResources(client)
+		case 11:
+			result = execSync(client)
+		case 12:
+			result = exec(client)
+		case 13:
+			result = attach(client)
+		case 14:
+			// ContainerStats
+			result = "Not implemented"
+		case 15:
+			// ListContainerStats
+			result = "Not implemented"
+		case 16:
+			// Status
+			result = "Normal"
+		default:
+			result = "Invalid choice"
+		}
+		choice = doMenu(result)
 	}
-
-	ccResp, err := client.CreateContainer(context.Background(), &shimapi.CreateContainerRequest{
-		Config: &shimapi.ContainerConfig{
-			Metadata: &shimapi.ContainerMetadata{
-				Name:    "alpine",
-				Attempt: 1,
-			},
-			Image: &shimapi.ImageSpec{
-				Image: "alpine",
-			},
-			Command:    []string{"ash", "-c", "apk add iputils && ping microsoft.com"},
-			WorkingDir: "/",
-			Envs: []*shimapi.KeyValue{
-				{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
-				{Key: "TERM", Value: "xterm"},
-			},
-			ScratchDisk: &shimapi.Mount{
-				Controller: 0,
-				Lun:        3,
-				Partition:  0,
-			},
-			Mounts: []*shimapi.Mount{
-				{Controller: 0, Lun: 2, Partition: 0, Readonly: true},
-			},
-		},
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %v", ccResp)
-	scResp, err := client.StartContainer(context.Background(), &shimapi.StartContainerRequest{
-		ContainerId: ccResp.ContainerId,
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %v", scResp)
-
-	pipe, err := winio.ListenPipe(`\\.\pipe\slclient\attach`, nil)
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	defer pipe.Close()
-
-	go acceptPrint(pipe)
-
-	aResp, err := client.Attach(context.Background(), &shimapi.AttachRequest{
-		ContainerId: ccResp.ContainerId,
-		Stdout:      true,
-		Stderr:      true,
-		Pipe:        pipe.Addr().String(),
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %v", aResp)
-
-	time.Sleep(2 * time.Second)
-
-	pipe2, err := winio.ListenPipe(`\\.\pipe\slclient\exec`, nil)
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	defer pipe2.Close()
-
-	go acceptPrint(pipe2)
-
-	eResp, err := client.Exec(context.Background(), &shimapi.ExecRequest{
-		Cmd:         []string{"ash", "-c", "for i in $(seq 1 10); do echo hello; sleep 1; done"},
-		ContainerId: ccResp.ContainerId,
-		Stdout:      true,
-		Stderr:      true,
-		Pipe:        pipe2.Addr().String(),
-	})
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	logrus.Infof("Response: %v", eResp)
-
-	time.Sleep(30 * time.Second)
 }
 
 func main() {
