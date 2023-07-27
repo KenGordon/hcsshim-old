@@ -381,7 +381,12 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 	}
 	c.Cmds = append(c.Cmds, &cmd)
 
-	go cmd.Wait()
+	go func() {
+		cmd.Wait()
+		c.Status.FinishedAt = time.Now().UnixNano()
+		c.Status.ExitCode = int32(cmd.ExitState.ExitCode())
+		c.Container.State = shimapi.ContainerState_CONTAINER_EXITED
+	}()
 	return cmd.Process.Pid(), nil
 }
 
@@ -474,6 +479,7 @@ func (s *RuntimeServer) listContainers(ctx context.Context, filter *shimapi.Cont
 }
 
 // containerStatus returns the status of a container. If the container is not present, this returns an error
+// TODO: Change container status when container exits by itself
 func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string) (*shimapi.ContainerStatus, error) {
 	c := s.containers[containerID]
 	if c == nil {
@@ -535,10 +541,7 @@ func (s *RuntimeServer) execSync(context context.Context, req *shimapi.ExecSyncR
 	if err != nil && !errors.As(err, &exitErr) {
 		return nil, err
 	}
-	exitCode, err := com.Process.ExitCode()
-	if err != nil {
-		return nil, err
-	}
+	exitCode := com.ExitState.ExitCode()
 
 	return &shimapi.ExecSyncResponse{
 		Stdout:   stdout.Bytes(),
