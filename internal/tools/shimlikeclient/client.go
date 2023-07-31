@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/go-winio/pkg/guid"
@@ -366,7 +367,36 @@ func listContainers(client shimapi.RuntimeServiceClient) string {
 }
 
 func containerStatus(client shimapi.RuntimeServiceClient) string {
-	return "Not implemented" // TODO: Implement
+	req := &shimapi.ContainerStatusRequest{}
+
+	fmt.Print("Enter container ID: ")
+	_, err := fmt.Scanln(&req.ContainerId)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err)
+	}
+
+	resp, err := client.ContainerStatus(context.Background(), req)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err)
+	}
+
+	format := func(t int64) string {
+		if t == 0 {
+			return "N/A"
+		}
+		return time.Unix(0, t).Local().Format("01/02 03:04:05PM")
+	}
+
+	respString := fmt.Sprintf(`ID: %v
+State: %v
+CreatedAt: %v
+StartedAt: %v
+FinishedAt: %v
+ExitCode: %v
+Image: %v`, resp.Status.Id, resp.Status.State, format(resp.Status.CreatedAt), format(resp.Status.StartedAt),
+		format(resp.Status.FinishedAt), resp.Status.ExitCode, resp.Status.Image.Image)
+
+	return respString
 }
 
 func updateContainerResources(client shimapi.RuntimeServiceClient) string {
