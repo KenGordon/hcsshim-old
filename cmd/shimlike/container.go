@@ -374,6 +374,7 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 		Stdout: &PipeWriter{},
 		Stderr: &PipeWriter{},
 	}
+	logrus.Infof("Starting container %s", containerID)
 	cmd.Start()
 	c.Container.State = shimapi.ContainerState_CONTAINER_RUNNING
 	c.Status = &ContainerStatus{

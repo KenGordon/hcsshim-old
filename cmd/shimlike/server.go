@@ -140,6 +140,7 @@ func (s *RuntimeServer) RunPodSandbox(ctx context.Context, req *shimapi.RunPodSa
 	return &shimapi.RunPodSandboxResponse{}, err
 }
 func (s *RuntimeServer) StopPodSandbox(ctx context.Context, req *shimapi.StopPodSandboxRequest) (*shimapi.StopPodSandboxResponse, error) {
+	logrus.WithField("request", req).Info("shimlike::StopPodSandbox")
 	for i := range s.containers {
 		s.removeContainer(ctx, i)
 	}

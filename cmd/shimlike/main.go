@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -12,12 +13,14 @@ import (
 )
 
 var (
-	usage = "shimlike <pipe address> <UVM ID>"
+	usage = "shimlike [--no-fwd-stdio] <pipe address> <UVM ID>"
 )
 
 func run(cCtx *cli.Context) {
-	if cCtx.NArg() != 2 {
-		logrus.Fatalf("Usage: %s", usage)
+	logrus.SetFormatter(&logrus.JSONFormatter{})
+	if cCtx.NArg() < 2 {
+		fmt.Println("Usage: " + usage)
+		os.Exit(1)
 	}
 
 	// Verify existence of spec.json relative to the location of the binary
@@ -43,15 +46,15 @@ func run(cCtx *cli.Context) {
 	shimapi.RegisterRuntimeServiceServer(s, &rs)
 
 	// Connect to the UVM's log port
-	logrus.Info("Connecting to UVM")
 	err = rs.connectLog()
 	if err != nil {
 		logrus.Fatal(err)
 	}
-	go rs.readLog()
+	if !cCtx.Bool("no-fwd-stdio") {
+		go rs.readLog()
+	}
 
 	// Accept the GCS connection
-	logrus.Info("Accepting GCS")
 	err = rs.acceptGcs()
 	if err != nil {
 		logrus.Fatal(err)
@@ -72,6 +75,12 @@ func main() {
 		Usage:     "Connect to a UVM",
 		ArgsUsage: usage,
 		Action:    run,
+		Flags: []cli.Flag{
+			cli.BoolFlag{
+				Name:  "no-fwd-stdio",
+				Usage: "Do not forward stdio from the UVM",
+			},
+		},
 	}
 	if err := app.Run(os.Args); err != nil {
 		logrus.Fatal(err)
