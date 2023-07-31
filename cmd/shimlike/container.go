@@ -86,6 +86,24 @@ func validateContainerConfig(c *shimapi.ContainerConfig) error {
 	return nil
 }
 
+// containerPrefixSearch returns the container with the given ID prefix and true.
+// If no container is found, nil and false are returned.
+// If multiple containers with the same prefix are found, the first one is returned.
+func (s *RuntimeServer) containerPrefixSearch(prefix string) (*Container, bool) {
+	if c, ok := s.containers[prefix]; ok {
+		return c, true
+	}
+	for _, c := range s.containers {
+		if c.Container.Id[:len(prefix)] == prefix {
+			if c.Container.Id == s.sandboxID {
+				continue
+			}
+			return c, true
+		}
+	}
+	return nil, false
+}
+
 // runPodSandbox creates and starts a sandbox container in the UVM. This function should only be called once
 // in a UVM's lifecycle.
 func (s *RuntimeServer) runPodSandbox(ctx context.Context, r *shimapi.RunPodSandboxRequest) error {
@@ -354,8 +372,8 @@ func (s *RuntimeServer) createContainer(ctx context.Context, c *shimapi.Containe
 
 // startContainer starts a created container in the UVM and returns its pid
 func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) (int, error) {
-	c := s.containers[containerID]
-	if c == nil {
+	c, ok := s.containerPrefixSearch(containerID)
+	if !ok {
 		return -1, status.Error(codes.NotFound, "container not found")
 	}
 	if c.Container.State != shimapi.ContainerState_CONTAINER_CREATED {
@@ -374,7 +392,7 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 		Stdout: &PipeWriter{},
 		Stderr: &PipeWriter{},
 	}
-	logrus.Infof("Starting container %s", containerID)
+	logrus.Infof("Starting container %s", c.Container.Id)
 	cmd.Start()
 	c.Container.State = shimapi.ContainerState_CONTAINER_RUNNING
 	c.Status = &ContainerStatus{
@@ -393,8 +411,8 @@ func (s *RuntimeServer) startContainer(ctx context.Context, containerID string) 
 
 // StopContainer stops a running container.
 func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, timeout int64) error {
-	c := s.containers[containerID]
-	if c == nil {
+	c, ok := s.containerPrefixSearch(containerID)
+	if !ok {
 		return status.Error(codes.NotFound, "container not found")
 	}
 	if c.Container.State != shimapi.ContainerState_CONTAINER_RUNNING {
@@ -419,12 +437,12 @@ func (s *RuntimeServer) stopContainer(ctx context.Context, containerID string, t
 
 // removeContainer removes a container from the UVM. If the container is not found, this is a no-op
 func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string) error {
-	c := s.containers[containerID]
-	if c == nil {
+	c, ok := s.containerPrefixSearch(containerID)
+	if !ok {
 		return nil
 	}
 	if c.Container.State == shimapi.ContainerState_CONTAINER_RUNNING {
-		s.stopContainer(ctx, containerID, 0)
+		s.stopContainer(ctx, c.Container.Id, 0)
 	}
 
 	err := c.ProcessHost.Close()
@@ -432,7 +450,7 @@ func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string)
 		return err
 	}
 
-	err = s.mountmanager.removeLayers(ctx, containerID)
+	err = s.mountmanager.removeLayers(ctx, c.Container.Id)
 	if err != nil {
 		return err
 	}
@@ -444,7 +462,7 @@ func (s *RuntimeServer) removeContainer(ctx context.Context, containerID string)
 		}
 	}
 
-	delete(s.containers, containerID)
+	delete(s.containers, c.Container.Id)
 	return nil
 }
 
@@ -482,8 +500,8 @@ func (s *RuntimeServer) listContainers(ctx context.Context, filter *shimapi.Cont
 // containerStatus returns the status of a container. If the container is not present, this returns an error
 // TODO: Change container status when container exits by itself
 func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string) (*shimapi.ContainerStatus, error) {
-	c := s.containers[containerID]
-	if c == nil {
+	c, ok := s.containerPrefixSearch(containerID)
+	if !ok {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
 
@@ -519,7 +537,7 @@ func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string)
 
 // execSync executes a command synchronously in a container
 func (s *RuntimeServer) execSync(context context.Context, req *shimapi.ExecSyncRequest) (*shimapi.ExecSyncResponse, error) {
-	c, ok := s.containers[req.ContainerId]
+	c, ok := s.containerPrefixSearch(req.ContainerId)
 	if !ok {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
@@ -553,7 +571,7 @@ func (s *RuntimeServer) execSync(context context.Context, req *shimapi.ExecSyncR
 
 // exec connects to a named pipe to forward output from an executed command in a container
 func (s *RuntimeServer) exec(context context.Context, req *shimapi.ExecRequest) (*shimapi.ExecResponse, error) {
-	c, ok := s.containers[req.ContainerId]
+	c, ok := s.containerPrefixSearch(req.ContainerId)
 	if !ok {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
@@ -594,7 +612,7 @@ func (s *RuntimeServer) exec(context context.Context, req *shimapi.ExecRequest) 
 
 // Attach connects to a named pipe and streams output from a running container
 func (s *RuntimeServer) attach(context context.Context, req *shimapi.AttachRequest) (*shimapi.AttachResponse, error) {
-	c, ok := s.containers[req.ContainerId]
+	c, ok := s.containerPrefixSearch(req.ContainerId)
 	if !ok {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
@@ -634,7 +652,7 @@ func (s *RuntimeServer) attach(context context.Context, req *shimapi.AttachReque
 
 // containerStats returns the stats of a container. If the container is not present, this returns an error
 func (s *RuntimeServer) containerStats(ctx context.Context, containerID string) (*shimapi.ContainerStats, error) {
-	c, ok := s.containers[containerID]
+	c, ok := s.containerPrefixSearch(containerID)
 	if !ok {
 		return nil, status.Error(codes.NotFound, "container not found")
 	}
