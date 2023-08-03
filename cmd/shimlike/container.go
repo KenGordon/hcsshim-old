@@ -498,7 +498,6 @@ func (s *RuntimeServer) listContainers(ctx context.Context, filter *shimapi.Cont
 }
 
 // containerStatus returns the status of a container. If the container is not present, this returns an error
-// TODO: Change container status when container exits by itself
 func (s *RuntimeServer) containerStatus(ctx context.Context, containerID string) (*shimapi.ContainerStatus, error) {
 	c, ok := s.containerPrefixSearch(containerID)
 	if !ok {

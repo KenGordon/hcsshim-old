@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -27,34 +29,46 @@ func readConnUntilSigint(conn net.Conn, in bool, ready <-chan bool) { // TODO: S
 		return
 	}
 	sigint := make(chan os.Signal, 1)
-	errored := make(chan error, 1)
 	signal.Notify(sigint, os.Interrupt, syscall.SIGINT)
+
+	errored := make(chan error, 1)
+	exitCh := make(chan struct{}, 1)
 	buf := make([]byte, 1024)
 	go func() {
 		for {
-			n, err := conn.Read(buf)
-			if err != nil {
-				signal.Stop(sigint)
-				errored <- err
+			select {
+			case <-exitCh:
 				return
+			default:
+				n, err := conn.Read(buf)
+				if err != nil {
+					errored <- err
+					return
+				}
+				fmt.Print(string(buf[:n]))
 			}
-			fmt.Print(string(buf[:n]))
 		}
 	}()
 	if in {
 		go func() {
 			for {
-				text, err := readLine()
-				if err != nil {
-					//signal.Stop(sigint)
-					errored <- err
+				select {
+				case <-exitCh:
 					return
-				}
-				_, err = conn.Write([]byte(text + "\n"))
-				if err != nil {
-					//signal.Stop(sigint)
-					errored <- err
-					return
+				default:
+					text, err := readLine()
+					if err != nil && !errors.Is(err, io.EOF) {
+						errored <- err
+						return
+					}
+					if err != nil {
+						return
+					}
+					_, err = conn.Write([]byte(text + "\n"))
+					if err != nil {
+						errored <- err
+						return
+					}
 				}
 			}
 		}()
@@ -63,6 +77,7 @@ func readConnUntilSigint(conn net.Conn, in bool, ready <-chan bool) { // TODO: S
 	case <-sigint:
 	case <-errored:
 	}
+	close(exitCh)
 	signal.Stop(sigint)
 }
 
