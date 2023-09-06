@@ -15,7 +15,6 @@ import (
 	"github.com/Microsoft/hcsshim/internal/cow"
 	"github.com/Microsoft/hcsshim/internal/hcs"
 	"github.com/Microsoft/hcsshim/internal/hcs/schema1"
-	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/internal/oci"
@@ -77,6 +76,10 @@ func newHcsVMTask(
 		}
 	}()
 
+	if cs, ok := s.Windows.CredentialSpec.(string); ok {
+		log.G(ctx).WithField("CredentialSpec", cs).Debug("creating credential spec")
+	}
+
 	caAddr := fmt.Sprintf(uvm.ComputeAgentAddrFmt, req.ID)
 	log.G(ctx).WithFields(logrus.Fields{
 		"caAddr": caAddr,
@@ -109,6 +112,7 @@ func newHcsVMTask(
 		owner,
 	)
 
+	go vmTask.waitForHostExit()
 	go vmTask.waitInitExit()
 
 	// Publish the created event
@@ -155,6 +159,7 @@ func (vt *hcsVMTask) CreateExec(ctx context.Context, req *task.ExecProcessReques
 		return err
 	}
 
+	spec.User.Username = `NT AUTHORITY\SYSTEM`
 	he := newHcsExec(
 		ctx,
 		vt.events,
@@ -420,24 +425,20 @@ func (vt *hcsVMTask) Share(ctx context.Context, req *shimdiag.ShareRequest) erro
 
 func (vt *hcsVMTask) Stats(ctx context.Context) (*stats.Statistics, error) {
 	s := &stats.Statistics{}
-	props, err := vt.c.PropertiesV2(ctx, hcsschema.PTStatistics)
-	if err != nil {
-		if isStatsNotFound(err) {
-			return nil, fmt.Errorf("failed to fetch stats: %s: %w", err, errdefs.ErrNotFound)
-		}
+	vmStats, err := vt.host.Stats(ctx)
+	if err != nil && !isStatsNotFound(err) {
 		return nil, err
 	}
-
-	if props != nil {
-		s.Container = hcsPropertiesToWindowsStats(props)
+	wcs := &stats.Statistics_Windows{Windows: &stats.WindowsContainerStatistics{}}
+	wcs.Windows.Timestamp = timestamppb.New(time.Now())
+	wcs.Windows.Processor = &stats.WindowsContainerProcessorStatistics{
+		TotalRuntimeNS: vmStats.Processor.TotalRuntimeNS,
 	}
-	if vt.host != nil {
-		vmStats, err := vt.host.Stats(ctx)
-		if err != nil && !isStatsNotFound(err) {
-			return nil, err
-		}
-		s.VM = vmStats
+	wcs.Windows.Memory = &stats.WindowsContainerMemoryStatistics{
+		MemoryUsagePrivateWorkingSetBytes: vmStats.Memory.WorkingSetBytes,
 	}
+	s.Container = wcs
+	log.G(ctx).WithField("stats", fmt.Sprintf("%v", vmStats)).Debug("host stats")
 	return s, nil
 }
 
@@ -458,6 +459,26 @@ func (vt *hcsVMTask) Update(ctx context.Context, req *task.UpdateTaskRequest) er
 	}
 
 	return vt.host.Update(ctx, resources, req.Annotations)
+}
+
+func (vt *hcsVMTask) waitForHostExit() {
+	ctx, span := oc.StartSpan(context.Background(), "hcsVMTask::waitForHostExit")
+	defer span.End()
+	span.AddAttributes(trace.StringAttribute("tid", vt.id))
+
+	err := vt.host.Wait()
+	if err != nil {
+		log.G(ctx).WithError(err).Error("failed to wait for host virtual machine exit")
+	} else {
+		log.G(ctx).Debug("host virtual machine exited")
+	}
+	vt.execs.Range(func(key, value interface{}) bool {
+		ex := value.(shimExec)
+		ex.ForceExit(ctx, 1)
+		return true
+	})
+	vt.init.ForceExit(ctx, 1)
+	vt.closeHost(ctx)
 }
 
 // close shuts down the container that is owned by this task and if

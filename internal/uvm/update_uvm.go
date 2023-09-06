@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
+	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 	"github.com/Microsoft/hcsshim/pkg/ctrdtaskapi"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -20,6 +21,7 @@ func (uvm *UtilityVM) Update(ctx context.Context, data interface{}, annots map[s
 	case *specs.WindowsResources:
 		if resources.Memory != nil {
 			memoryLimitInBytes = resources.Memory.Limit
+			log.G(ctx).WithField("limit", *memoryLimitInBytes).Debug("updating memory limit")
 		}
 		if resources.CPU != nil {
 			processorLimits = &hcsschema.ProcessorLimits{}

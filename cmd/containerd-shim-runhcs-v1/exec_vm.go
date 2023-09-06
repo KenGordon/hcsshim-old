@@ -34,7 +34,7 @@ func newHcsVmExec(
 	bundle string,
 	spec *specs.Spec,
 	host *uvm.UtilityVM,
-	owner string,
+	_ string,
 ) shimExec {
 	log.G(ctx).WithFields(logrus.Fields{
 		"tid":    tid,
@@ -286,6 +286,30 @@ func (hve *hcsVMExec) startInternal(ctx context.Context, initializeContainer boo
 		return err
 	}
 
+	time.Sleep(2 * time.Second)
+	errBuff := &bytes.Buffer{}
+	stderr, err := cmd.CreatePipeAndListen(errBuff, false)
+	if err != nil {
+		return err
+	}
+	outBuff := &bytes.Buffer{}
+	stdout, err := cmd.CreatePipeAndListen(outBuff, false)
+	if err != nil {
+		return err
+	}
+	vsmbStart := &cmd.CmdProcessRequest{
+		Args:   []string{`C:\vsmbcontrol.exe`, "-start"},
+		Stdout: stdout,
+		Stderr: stderr,
+	}
+	if _, err := cmd.ExecInUvm(ctx, hve.host, vsmbStart); err != nil {
+		log.G(ctx).WithField("stdout", outBuff.String()).Debug("vsmbcontrol.exe stdout")
+		log.G(ctx).WithField("stderr", errBuff.String()).Debug("vsmbcontrol.exe stderr")
+		return err
+	}
+	time.Sleep(time.Second)
+
+	var uvmPaths []string
 	// setting up VSMB shares
 	for _, m := range hve.s.Mounts {
 		// virtual/physical disks are not supported for now
@@ -303,7 +327,17 @@ func (hve *hcsVMExec) startInternal(ctx context.Context, initializeContainer boo
 		if err := hve.host.Share(ctx, m.Source, m.Destination, readonly); err != nil {
 			return fmt.Errorf("failed to share host path: %w", err)
 		}
+		uvmPaths = append(uvmPaths, m.Destination)
 	}
+
+	go func() {
+		handleExec := &cmd.CmdProcessRequest{
+			Args: append([]string{`C:\handle.exe`}, uvmPaths...),
+		}
+		if _, err := cmd.ExecInUvm(ctx, hve.host, handleExec); err != nil {
+			log.G(ctx).WithError(err).Error("failed to exec in UVM")
+		}
+	}()
 
 	hve.state = shimExecStateRunning
 

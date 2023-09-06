@@ -90,7 +90,7 @@ func lookupVMMEM(ctx context.Context, vmID guid.GUID) (proc windows.Handle, err 
 			// the process exiting since we called EnumProcesses, or not having
 			// access to open the process (even as SYSTEM). In the case of an
 			// error, we just log and continue looking at the other processes.
-			log.G(ctx).WithField("pid", pid).Debug("failed to check process")
+			log.G(ctx).WithError(err).WithField("pid", pid).Error("failed to check process")
 			continue
 		}
 		if p != 0 {

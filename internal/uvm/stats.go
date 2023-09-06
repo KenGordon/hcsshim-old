@@ -88,7 +88,7 @@ func lookupVMMEM(ctx context.Context, vmID guid.GUID) (proc windows.Handle, err 
 			// the process exiting since we called EnumProcesses, or not having
 			// access to open the process (even as SYSTEM). In the case of an
 			// error, we just log and continue looking at the other processes.
-			log.G(ctx).WithField("pid", pid).Debug("failed to check process")
+			log.G(ctx).WithError(err).WithField("pid", pid).Error("failed to check process")
 			continue
 		}
 		if p != 0 {
@@ -117,13 +117,13 @@ func (uvm *UtilityVM) Stats(ctx context.Context) (*stats.VirtualMachineStatistic
 		return nil, err
 	}
 	s.Processor = &stats.VirtualMachineProcessorStatistics{}
-	s.Processor.TotalRuntimeNS = uint64(props.Statistics.Processor.TotalRuntime100ns * 100)
+	s.Processor.TotalRuntimeNS = props.Statistics.Processor.TotalRuntime100ns * 100
 
 	s.Memory = &stats.VirtualMachineMemoryStatistics{}
 	if uvm.physicallyBacked {
 		// If the uvm is physically backed we set the working set to the total amount allocated
 		// to the UVM. AssignedMemory returns the number of 4KB pages. Will always be 4KB
-		// regardless of what the UVMs actual page size is so we don't need that information.
+		// regardless of what the UVMs actual page size is, so we don't need that information.
 		if props.Memory != nil {
 			s.Memory.WorkingSetBytes = props.Memory.VirtualMachineMemory.AssignedMemory * 4096
 		}

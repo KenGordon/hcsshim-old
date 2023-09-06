@@ -152,16 +152,13 @@ func prepareVMContainerConfigDoc(ctx context.Context, uvm *UtilityVM, opts *Opti
 				Keyboard:     &hcsschema.Keyboard{},
 				Mouse:        &hcsschema.Mouse{},
 				VideoMonitor: &hcsschema.VideoMonitor{},
-				VirtualSmb: &hcsschema.VirtualSmb{
-					DirectFileMappingInMB: 1024,
-					Shares: []hcsschema.VirtualSmbShare{
-						{
-							Name:    "0",
-							Path:    filepath.Join(opts.BundleDirectory, "share0hack"),
-							Options: uvm.DefaultVSMBOptions(false),
-						},
-					},
-				},
+				VirtualSmb:   &hcsschema.VirtualSmb{},
+				//ComPorts: map[string]hcsschema.ComPort{
+				//	"0": {
+				//		NamedPipe:           "\\\\.\\pipe\\debugpipe",
+				//		OptimizeForDebugger: true,
+				//	},
+				//},
 			},
 		},
 	}
@@ -175,6 +172,7 @@ func prepareVMContainerConfigDoc(ctx context.Context, uvm *UtilityVM, opts *Opti
 
 	// Set boot options
 	if opts.DumpDirectoryPath != "" {
+		log.G(ctx).WithField("dumpPath", opts.DumpDirectoryPath).Debug("setting up DebugOptions")
 		if info, err := os.Stat(opts.DumpDirectoryPath); err != nil {
 			return nil, fmt.Errorf("failed to stat dump directory %s: %w", opts.DumpDirectoryPath, err)
 		} else if !info.IsDir() {
@@ -331,10 +329,7 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW, uv
 						DefaultBindSecurityDescriptor: "D:P(A;;FA;;;SY)(A;;FA;;;BA)",
 					},
 				},
-				VirtualSmb:   virtualSMB,
-				Keyboard:     &hcsschema.Keyboard{},
-				Mouse:        &hcsschema.Mouse{},
-				VideoMonitor: &hcsschema.VideoMonitor{},
+				VirtualSmb: virtualSMB,
 			},
 		},
 	}
