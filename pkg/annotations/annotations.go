@@ -70,6 +70,7 @@ const (
 	// `spec.Windows.Resources.Storage.Iops`.
 	ContainerStorageQoSIopsMaximum = "io.microsoft.container.storage.qos.iopsmaximum"
 
+	// Deprecated: GPU VHDs are no longer supported.
 	// GPUVHDPath overrides the default path to search for the gpu vhd
 	GPUVHDPath = "io.microsoft.lcow.gpuvhdpath"
 
@@ -125,7 +126,7 @@ const (
 	// MemoryHighMMIOBaseInMB indicates the high MMIO base in MB
 	MemoryHighMMIOBaseInMB = "io.microsoft.virtualmachine.computetopology.memory.highmmiobaseinmb"
 
-	// MemoryHighMMIOBaseInMB indicates the high MMIO gap in MB
+	// MemoryHighMMIOGapInMB indicates the high MMIO gap in MB
 	MemoryHighMMIOGapInMB = "io.microsoft.virtualmachine.computetopology.memory.highmmiogapinmb"
 
 	// ProcessorCount overrides the hypervisor isolated vCPU count set
@@ -222,6 +223,9 @@ const (
 	// SecurityPolicyEnforcer is used to specify which enforcer to initialize (open-door, standard or rego).
 	// This allows for better fallback mechanics.
 	SecurityPolicyEnforcer = "io.microsoft.virtualmachine.lcow.enforcer"
+
+	// HclEnabled specifies whether to enable the host compatibility layer.
+	HclEnabled = "io.microsoft.virtualmachine.lcow.hcl-enabled"
 
 	// ContainerProcessDumpLocation specifies a path inside of containers to save process dumps to. As
 	// the scratch space for a container is generally cleaned up after exit, this is best set to a volume mount of

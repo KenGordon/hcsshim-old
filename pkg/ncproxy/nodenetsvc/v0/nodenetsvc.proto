@@ -1,0 +1,75 @@
+syntax = "proto3";
+package azure.nodenetworkservice;
+option go_package = "github.com/Microsoft/hcsshim/pkg/ncproxy/nodenetsvc/v0";
+option deprecated = true;
+
+service NodeNetworkService {
+    rpc ConfigureNetworking(ConfigureNetworkingRequest) returns (ConfigureNetworkingResponse);
+    rpc ConfigureContainerNetworking(ConfigureContainerNetworkingRequest) returns (ConfigureContainerNetworkingResponse);
+    rpc PingNodeNetworkService(PingNodeNetworkServiceRequest) returns (PingNodeNetworkServiceResponse);
+    rpc GetHostLocalIpAddress(GetHostLocalIpAddressRequest) returns (GetHostLocalIpAddressResponse);
+}
+
+message ConfigureNetworkingRequest {
+    option deprecated = true;
+    string container_id = 1 [deprecated = true];
+    RequestType request_type = 2 [deprecated = true];
+}
+
+message ConfigureNetworkingResponse {
+    option deprecated = true;
+}
+
+message PingNodeNetworkServiceRequest {
+    option deprecated = true;
+    string ping_request_message = 1 [deprecated = true];
+}
+
+message PingNodeNetworkServiceResponse {
+    option deprecated = true;
+    string ping_response_message = 1 [deprecated = true];
+}
+
+enum RequestType {
+    option deprecated = true;
+    Setup = 0 [deprecated = true];
+    Teardown = 1 [deprecated = true];
+}
+
+message ConfigureContainerNetworkingRequest {
+    option deprecated = true;
+    RequestType request_type = 1 [deprecated = true];
+    string container_id = 2 [deprecated = true];
+    string network_namespace_id = 3 [deprecated = true];
+}
+
+message ConfigureContainerNetworkingResponse { 
+    option deprecated = true;
+    repeated ContainerNetworkInterface interfaces = 1 [deprecated = true];
+}
+
+message ContainerIPAddress {
+    option deprecated = true;
+    string version = 1 [deprecated = true];        
+    string ip = 3 [deprecated = true];    
+    string prefix_length = 4 [deprecated = true];
+    string default_gateway = 5 [deprecated = true];
+}
+
+message ContainerNetworkInterface {
+    option deprecated = true;
+    string name = 1 [deprecated = true];
+    string mac_address = 2 [deprecated = true];
+    string network_namespace_id = 3 [deprecated = true];    
+    repeated ContainerIPAddress ipaddresses = 4 [deprecated = true];
+}
+
+message GetHostLocalIpAddressRequest {
+    option deprecated = true;
+    string container_id = 1 [deprecated = true];
+}
+
+message GetHostLocalIpAddressResponse {
+    option deprecated = true;
+    string ip_addr = 1 [deprecated = true];
+}

@@ -13,20 +13,24 @@ import (
 	"github.com/Microsoft/go-winio/pkg/etw"
 	"github.com/Microsoft/go-winio/pkg/etwlogrus"
 	"github.com/Microsoft/go-winio/pkg/guid"
-	"github.com/Microsoft/hcsshim/internal/log"
-	"github.com/Microsoft/hcsshim/internal/oc"
-	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"go.opencensus.io/trace"
+
+	"github.com/Microsoft/hcsshim/internal/log"
+	"github.com/Microsoft/hcsshim/internal/oc"
+	"github.com/Microsoft/hcsshim/internal/shimdiag"
+
+	// register common types spec with typeurl
+	_ "github.com/containerd/containerd/runtime"
 )
 
 const usage = ``
 const ttrpcAddressEnv = "TTRPC_ADDRESS"
 
 // Add a manifest to get proper Windows version detection.
-//go:generate go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.4.0 -platform-specific
+//go:generate go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo -platform-specific
 
 // version will be populated by the Makefile, read from
 // VERSION file of the source code.
