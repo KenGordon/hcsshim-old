@@ -9,22 +9,20 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/containerd/containerd"
 	eventtypes "github.com/containerd/containerd/api/events"
 	eventsapi "github.com/containerd/containerd/api/services/events/v1"
 	kubeutil "github.com/containerd/containerd/integration/remote/util"
 	eventruntime "github.com/containerd/containerd/runtime"
-	"github.com/containerd/typeurl"
-	"github.com/gogo/protobuf/types"
+	typeurl "github.com/containerd/typeurl/v2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 
+	"github.com/Microsoft/hcsshim/osversion"
 	testflag "github.com/Microsoft/hcsshim/test/pkg/flag"
 	"github.com/Microsoft/hcsshim/test/pkg/images"
 	"github.com/Microsoft/hcsshim/test/pkg/require"
@@ -46,8 +44,7 @@ const (
 	testDeviceUtilFilePath    = "C:\\ContainerPlat\\device-util.exe"
 	testJobObjectUtilFilePath = "C:\\ContainerPlat\\jobobject-util.exe"
 
-	testDriversPath  = "C:\\ContainerPlat\\testdrivers"
-	testGPUBootFiles = "C:\\ContainerPlat\\LinuxBootFiles\\nvidiagpu"
+	testDriversPath = "C:\\ContainerPlat\\testdrivers"
 
 	testVMServiceAddress = "C:\\ContainerPlat\\vmservice.sock"
 	testVMServiceBinary  = "C:\\Containerplat\\vmservice.exe"
@@ -147,23 +144,13 @@ func requireFeatures(tb testing.TB, features ...string) {
 	require.Features(tb, flagFeatures, features...)
 }
 
-// requireBinary checks if `binary` exists in the same directory as the test
-// binary.
-// Returns full binary path if it exists, otherwise, skips the test.
-func requireBinary(tb testing.TB, binary string) string {
+// requireAnyFeatures checks in flagFeatures if at least one of the required features
+// was enabled, and skips the test if all are missing.
+//
+// See: [requireFeatures]
+func requireAnyFeature(tb testing.TB, features ...string) {
 	tb.Helper()
-	executable, err := os.Executable()
-	if err != nil {
-		tb.Skipf("error locating executable: %s", err)
-		return ""
-	}
-	baseDir := filepath.Dir(executable)
-	binaryPath := filepath.Join(baseDir, binary)
-	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
-		tb.Skipf("binary not found: %s", binaryPath)
-		return ""
-	}
-	return binaryPath
+	require.AnyFeature(tb, flagFeatures, features...)
 }
 
 func getWindowsNanoserverImage(build uint16) string {
@@ -188,7 +175,9 @@ func createGRPCConn(ctx context.Context) (*grpc.ClientConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return grpc.DialContext(ctx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(dialer))
+	return grpc.DialContext(ctx, addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer))
 }
 
 func newTestRuntimeClient(tb testing.TB) runtime.RuntimeServiceClient {
@@ -240,7 +229,7 @@ func getTargetRunTopics() (topicNames []string, filters []string) {
 	return topicNames, filters
 }
 
-func convertEvent(e *types.Any) (string, interface{}, error) {
+func convertEvent(e typeurl.Any) (string, interface{}, error) {
 	id := ""
 	evt, err := typeurl.UnmarshalAny(e)
 	if err != nil {

@@ -6,16 +6,26 @@ import (
 	"encoding/json"
 	"os"
 
-	ncproxygrpc "github.com/Microsoft/hcsshim/pkg/ncproxy/ncproxygrpc/v1"
 	"github.com/pkg/errors"
+
+	ncproxygrpc "github.com/Microsoft/hcsshim/pkg/ncproxy/ncproxygrpc/v1"
+	nodenetsvcV0 "github.com/Microsoft/hcsshim/pkg/ncproxy/nodenetsvc/v0"
+	nodenetsvc "github.com/Microsoft/hcsshim/pkg/ncproxy/nodenetsvc/v1"
 )
 
 type service struct {
+	nodenetsvc.UnimplementedNodeNetworkServiceServer
+
 	conf                 *config
 	client               ncproxygrpc.NetworkConfigProxyClient
 	containerToNamespace map[string]string
 	endpointToNicID      map[string]string
 	containerToNetwork   map[string][]string
+}
+
+type v0ServiceWrapper struct {
+	s *service
+	nodenetsvcV0.UnimplementedNodeNetworkServiceServer
 }
 
 type hnsSettings struct {
