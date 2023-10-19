@@ -11,9 +11,16 @@ import (
 
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/cow"
+	"github.com/Microsoft/hcsshim/internal/hcs"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
+	"github.com/Microsoft/hcsshim/internal/oci"
+	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
+	"github.com/Microsoft/hcsshim/internal/resources"
+	"github.com/Microsoft/hcsshim/internal/signals"
 	"github.com/Microsoft/hcsshim/internal/uvm"
+	"github.com/Microsoft/hcsshim/osversion"
+	"github.com/Microsoft/hcsshim/pkg/annotations"
 	eventstypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/api/runtime/task/v2"
 	containerd_v1_types "github.com/containerd/containerd/api/types/task"
@@ -35,6 +42,8 @@ func newHcsVmExec(
 	spec *specs.Spec,
 	host *uvm.UtilityVM,
 	_ string,
+	io cmd.UpstreamIO,
+	r *resources.Resources,
 ) shimExec {
 	log.G(ctx).WithFields(logrus.Fields{
 		"tid":    tid,
@@ -43,18 +52,20 @@ func newHcsVmExec(
 	}).Debug("newHcsVmExec")
 
 	hve := &hcsVMExec{
-		events:      events,
-		tid:         tid,
-		host:        host,
-		c:           c,
-		id:          id,
-		bundle:      bundle,
-		s:           spec,
-		processDone: make(chan struct{}),
-		state:       shimExecStateCreated,
-		exitStatus:  255,
-		exited:      make(chan struct{}),
-		//owner:       owner,
+		events:                 events,
+		tid:                    tid,
+		host:                   host,
+		c:                      c,
+		id:                     id,
+		bundle:                 bundle,
+		s:                      spec,
+		processDone:            make(chan struct{}),
+		state:                  shimExecStateCreated,
+		exitStatus:             255,
+		exited:                 make(chan struct{}),
+		io:                     io,
+		resources:              r,
+		terminateOnProcessExit: !oci.ParseAnnotationsBool(ctx, spec.Annotations, annotations.NoTerminateOnAppExit, false),
 	}
 	go hve.waitForContainerExit()
 	return hve
@@ -73,16 +84,22 @@ type hcsVMExec struct {
 
 	// TODO: spec needed only to add mounts and configure networking.
 	s               *specs.Spec
+	io              cmd.UpstreamIO
 	processDone     chan struct{}
 	processDoneOnce sync.Once
 
 	//resources *resources.Resources
 	//owner string
 
-	sl         sync.Mutex
-	state      shimExecState
-	exitStatus uint32
-	exitedAt   time.Time
+	sl                     sync.Mutex
+	state                  shimExecState
+	pid                    int
+	exitStatus             uint32
+	exitedAt               time.Time
+	p                      *cmd.Cmd
+	terminateOnProcessExit bool
+
+	resources *resources.Resources
 
 	exited     chan struct{}
 	exitedOnce sync.Once
@@ -286,60 +303,110 @@ func (hve *hcsVMExec) startInternal(ctx context.Context, initializeContainer boo
 		return err
 	}
 
-	time.Sleep(2 * time.Second)
-	errBuff := &bytes.Buffer{}
-	stderr, err := cmd.CreatePipeAndListen(errBuff, false)
-	if err != nil {
-		return err
-	}
-	outBuff := &bytes.Buffer{}
-	stdout, err := cmd.CreatePipeAndListen(outBuff, false)
-	if err != nil {
-		return err
-	}
-	vsmbStart := &cmd.CmdProcessRequest{
-		Args:   []string{`C:\vsmbcontrol.exe`, "-start"},
-		Stdout: stdout,
-		Stderr: stderr,
-	}
-	if _, err := cmd.ExecInUvm(ctx, hve.host, vsmbStart); err != nil {
-		log.G(ctx).WithField("stdout", outBuff.String()).Debug("vsmbcontrol.exe stdout")
-		log.G(ctx).WithField("stderr", errBuff.String()).Debug("vsmbcontrol.exe stderr")
-		return err
-	}
-	time.Sleep(time.Second)
-
-	var uvmPaths []string
-	// setting up VSMB shares
-	for _, m := range hve.s.Mounts {
-		// virtual/physical disks are not supported for now
-		if m.Type != "" {
-			return errors.New("the only supported mount type is a share type")
+	if !oci.ParseAnnotationsBool(ctx, hve.s.Annotations, annotations.NoVSMBSetup, false) {
+		errBuff := &bytes.Buffer{}
+		stderr, err := cmd.CreatePipeAndListen(errBuff, false)
+		if err != nil {
+			return err
 		}
+		outBuff := &bytes.Buffer{}
+		stdout, err := cmd.CreatePipeAndListen(outBuff, false)
+		if err != nil {
+			return err
+		}
+		vsmbStart := &cmd.CmdProcessRequest{
+			Args:   []string{`C:\vsmbcontrol.exe`, "-start"},
+			Stdout: stdout,
+			Stderr: stderr,
+		}
+		if _, err := cmd.ExecInUvm(ctx, hve.host, vsmbStart); err != nil {
+			log.G(ctx).WithField("stdout", outBuff.String()).Debug("vsmbcontrol.exe stdout")
+			log.G(ctx).WithField("stderr", errBuff.String()).Debug("vsmbcontrol.exe stderr")
+			return err
+		}
+		time.Sleep(time.Second)
 
-		readonly := false
-		for _, opt := range m.Options {
-			if opt == "ro" {
-				readonly = true
-				break
+		var uvmPaths []string
+		// setting up VSMB shares
+		for _, m := range hve.s.Mounts {
+			if uvm.IsPipe(m.Source) {
+				// add named pipe
+				log.G(ctx).WithFields(logrus.Fields{
+					"host_path": m.Source,
+				}).Debug("adding pipe")
+				pm, err := hve.host.AddPipe(ctx, m.Source)
+				if err != nil {
+					return err
+				}
+				hve.resources.Add(pm)
+				continue
 			}
+			// virtual/physical disks are not supported for now
+			if m.Type != "" {
+				return errors.New("the only supported mount type is a share type")
+			}
+
+			readonly := false
+			for _, opt := range m.Options {
+				if opt == "ro" {
+					readonly = true
+					break
+				}
+			}
+			if err := hve.host.Share(ctx, m.Source, m.Destination, readonly); err != nil {
+				return fmt.Errorf("failed to share host path: %w", err)
+			}
+			uvmPaths = append(uvmPaths, m.Destination)
 		}
-		if err := hve.host.Share(ctx, m.Source, m.Destination, readonly); err != nil {
-			return fmt.Errorf("failed to share host path: %w", err)
-		}
-		uvmPaths = append(uvmPaths, m.Destination)
+
+		go func() {
+			handleExec := &cmd.CmdProcessRequest{
+				Args: append([]string{`C:\handle.exe`}, uvmPaths...),
+			}
+			if _, err := cmd.ExecInUvm(ctx, hve.host, handleExec); err != nil {
+				log.G(ctx).WithError(err).Error("failed to exec in UVM")
+			}
+		}()
 	}
 
-	go func() {
-		handleExec := &cmd.CmdProcessRequest{
-			Args: append([]string{`C:\handle.exe`}, uvmPaths...),
-		}
-		if _, err := cmd.ExecInUvm(ctx, hve.host, handleExec); err != nil {
-			log.G(ctx).WithError(err).Error("failed to exec in UVM")
-		}
-	}()
+	log.G(ctx).WithFields(logrus.Fields{
+		"CommandLine": hve.s.Process.CommandLine,
+		"Args":        hve.s.Process.Args,
+		"env":         hve.s.Process.Env,
+		"stdout":      hve.io.Stdout(),
+		"stderr":      hve.io.Stderr(),
+	}).Debug("hve.s.Process command line and args")
+	// Launch app based on command line and args/env from process.
 
 	hve.state = shimExecStateRunning
+	// TODO: we may need to update AzCRI to not populate the process spec and
+	// also accept empty images. Maybe we could repurpose the field and instead
+	// of image reference it'll be a path to VHDX image?
+	if hve.s.Process != nil {
+		p := &cmd.Cmd{
+			Host:   hve.c,
+			Stdin:  hve.io.Stdin(),
+			Stdout: hve.io.Stdout(),
+			Stderr: hve.io.Stderr(),
+			Spec:   hve.s.Process,
+			Log: log.G(ctx).WithFields(logrus.Fields{
+				"tid": hve.tid,
+				"eid": hve.id,
+			}),
+			CopyAfterExitTimeout: time.Second,
+		}
+		if err := p.Start(); err != nil {
+			if hve.terminateOnProcessExit {
+				hve.state = shimExecStateExited
+				return err
+			}
+			log.G(ctx).WithError(err).Error("failed to start container process")
+		} else {
+			hve.p = p
+			hve.pid = hve.p.Process.Pid()
+			hve.state = shimExecStateRunning
+		}
+	}
 
 	// Publish the task/exec start event. This MUST happen before waitForExit to
 	// avoid publishing the exit previous to the start.
@@ -376,11 +443,56 @@ func (hve *hcsVMExec) Start(ctx context.Context) (err error) {
 }
 
 func (hve *hcsVMExec) Kill(ctx context.Context, signal uint32) error {
+	hve.sl.Lock()
+	defer hve.sl.Unlock()
 	switch hve.state {
 	case shimExecStateCreated:
 		hve.exitFromCreatedL(ctx, 1)
 	case shimExecStateRunning:
-		hve.processDoneOnce.Do(func() { close(hve.processDone) })
+		if hve.p != nil {
+			supported := false
+			if osversion.Build() >= osversion.RS5 {
+				supported = hve.host.SignalProcessSupported()
+			}
+			var options interface{}
+			var err error
+			var opt *guestresource.SignalProcessOptionsWCOW
+			opt, err = signals.ValidateWCOW(int(signal), supported)
+			if err != nil {
+				return fmt.Errorf("signal %d: %v: %s", signal, err, errdefs.ErrFailedPrecondition)
+			}
+			if opt != nil {
+				options = opt
+			}
+			var delivered bool
+			if supported && options != nil {
+				go func() {
+					signalDelivered, deliveryErr := hve.p.Process.Signal(ctx, options)
+					if deliveryErr != nil {
+						if !hcs.IsAlreadyStopped(err) {
+							log.G(ctx).WithError(deliveryErr).Errorf("error in delivering signal %d, to pid: %d",
+								signal, hve.pid)
+						}
+					}
+					if !signalDelivered {
+						log.G(ctx).Errorf("error: NotFound; exec: '%s' in task: '%s' not found", hve.id, hve.tid)
+					}
+				}()
+				delivered, err = true, nil
+			} else {
+				delivered, err = hve.p.Process.Kill(ctx)
+			}
+			if err != nil {
+				if hcs.IsAlreadyStopped(err) {
+					return nil
+				}
+			}
+			if !delivered {
+				return fmt.Errorf("exec: '%s' in task: '%s' not found: %w", hve.id, hve.tid, errdefs.ErrNotFound)
+			}
+		} else {
+			hve.processDoneOnce.Do(func() { close(hve.processDone) })
+		}
 	case shimExecStateExited:
 		return fmt.Errorf("exec: '%s' in task: '%s' not found: %w", hve.id, hve.tid, errdefs.ErrNotFound)
 	default:
@@ -393,7 +505,10 @@ func (hve *hcsVMExec) ResizePty(_ context.Context, _, _ uint32) error {
 	return errors.New("not supported for VM container execs")
 }
 
-func (hve *hcsVMExec) CloseIO(_ context.Context, _ bool) error {
+func (hve *hcsVMExec) CloseIO(ctx context.Context, _ bool) error {
+	if hve.p != nil {
+		hve.io.CloseStdin(ctx)
+	}
 	return nil
 }
 
@@ -410,8 +525,12 @@ func (hve *hcsVMExec) ForceExit(ctx context.Context, status int) {
 		case shimExecStateCreated:
 			hve.exitFromCreatedL(ctx, status)
 		case shimExecStateRunning:
-			hve.processDoneOnce.Do(func() { close(hve.processDone) })
-			// no-op since there's no running process
+			if hve.p != nil {
+				_, _ = hve.p.Process.Kill(ctx)
+			} else {
+				hve.processDoneOnce.Do(func() { close(hve.processDone) })
+				// no-op since there's no running process
+			}
 		}
 	}
 }
@@ -440,7 +559,7 @@ func (hve *hcsVMExec) ForceExit(ctx context.Context, status int) {
 func (hve *hcsVMExec) exitFromCreatedL(ctx context.Context, status int) {
 	if hve.state != shimExecStateExited {
 		// Avoid logging the force if we already exited gracefully
-		log.G(ctx).WithField("status", status).Debug("hcsExec::exitFromCreatedL")
+		log.G(ctx).WithField("status", status).Debug("hcsVMExec::exitFromCreatedL")
 
 		// Unblock the container exit goroutine
 		hve.processDoneOnce.Do(func() { close(hve.processDone) })
@@ -448,6 +567,10 @@ func (hve *hcsVMExec) exitFromCreatedL(ctx context.Context, status int) {
 		hve.state = shimExecStateExited
 		hve.exitStatus = uint32(status)
 		hve.exitedAt = time.Now()
+
+		if hve.p != nil {
+			hve.io.Close(ctx)
+		}
 		// Free any waiters
 		hve.exitedOnce.Do(func() {
 			close(hve.exited)
@@ -456,15 +579,45 @@ func (hve *hcsVMExec) exitFromCreatedL(ctx context.Context, status int) {
 }
 
 func (hve *hcsVMExec) waitForExit() {
-	ctx, span := oc.StartSpan(context.Background(), "hcsExec::waitForExit")
+	var err error
+	ctx, span := oc.StartSpan(context.Background(), "hcsVMExec::waitForExit")
 	defer span.End()
+	defer func() { oc.SetSpanStatus(span, err) }()
 
-	<-hve.processDone
+	var exitCode int
+
+	if hve.p != nil {
+		if hve.terminateOnProcessExit {
+			log.G(ctx).Debug("process is marked as terminal, waiting")
+			err = hve.p.Process.Wait()
+			hve.processDoneOnce.Do(func() { close(hve.processDone) })
+
+			var iErr error
+			exitCode, iErr = hve.p.Process.ExitCode()
+			if iErr != nil {
+				log.G(ctx).WithError(iErr).Error("failed to get ExitCode")
+			} else {
+				log.G(ctx).WithField("exitCode", exitCode).Debug("exited")
+			}
+		} else {
+			if _, err := hve.p.Process.Kill(ctx); err != nil {
+				log.G(ctx).WithError(err).Error("failed to init process")
+			}
+		}
+	} else {
+		<-hve.processDone
+	}
 
 	hve.sl.Lock()
 	hve.state = shimExecStateExited
+	hve.exitStatus = uint32(exitCode)
 	hve.exitedAt = time.Now()
 	hve.sl.Unlock()
+
+	if hve.p != nil {
+		_ = hve.p.Wait()
+		hve.io.Close(ctx)
+	}
 
 	// Only send the `runtime.TaskExitEventTopic` notification if this is a true
 	// exec. For the `init` exec this is handled in task teardown.
@@ -484,7 +637,7 @@ func (hve *hcsVMExec) waitForExit() {
 //
 // This MUST be called via a goroutine at exec create.
 func (hve *hcsVMExec) waitForContainerExit() {
-	ctx, span := oc.StartSpan(context.Background(), "hcsExec::waitForContainerExit")
+	ctx, span := oc.StartSpan(context.Background(), "hcsVMExec::waitForContainerExit")
 	defer span.End()
 	span.AddAttributes(
 		trace.StringAttribute("tid", hve.tid),
@@ -500,8 +653,12 @@ func (hve *hcsVMExec) waitForContainerExit() {
 		case shimExecStateCreated:
 			hve.exitFromCreatedL(ctx, 1)
 		case shimExecStateRunning:
-			// no-op, since there's no process running
-			hve.processDoneOnce.Do(func() { close(hve.processDone) })
+			if hve.p != nil && hve.terminateOnProcessExit {
+				_, _ = hve.p.Process.Kill(ctx)
+			} else {
+				// no-op, since there's no process running
+				hve.processDoneOnce.Do(func() { close(hve.processDone) })
+			}
 		}
 		hve.sl.Unlock()
 	case <-hve.processDone:

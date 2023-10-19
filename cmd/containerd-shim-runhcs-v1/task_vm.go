@@ -18,6 +18,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/internal/oci"
+	"github.com/Microsoft/hcsshim/internal/resources"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	eventstypes "github.com/containerd/containerd/api/events"
@@ -44,6 +45,7 @@ type hcsVMTask struct {
 	closeHostOnce  sync.Once
 	taskSpec       *specs.Spec
 	ioRetryTimeout time.Duration
+	resources      *resources.Resources
 }
 
 var _ = (shimTask)(&hcsVMTask{})
@@ -99,6 +101,31 @@ func newHcsVMTask(
 		taskSpec: s,
 	}
 
+	log.G(ctx).WithFields(logrus.Fields{
+		"stdin":  req.Stdin,
+		"stdout": req.Stdout,
+		"stderr": req.Stderr,
+		"bundle": req.Bundle,
+	}).Debug("newHcsVMExec request params")
+
+	var shimOpts *options.Options
+	if req.Options != nil {
+		v, err := typeurl.UnmarshalAny(req.Options)
+		if err != nil {
+			return nil, err
+		}
+		shimOpts = v.(*options.Options)
+	}
+	var ioRetryTimeout time.Duration
+	if shimOpts != nil {
+		ioRetryTimeout = time.Duration(shimOpts.IoRetryTimeoutInSec) * time.Second
+	}
+	io, err := cmd.NewUpstreamIO(ctx, req.ID, req.Stdout, req.Stderr, req.Stdin, req.Terminal, ioRetryTimeout)
+	if err != nil {
+		return nil, err
+	}
+
+	r := resources.NewContainerResources(req.ID)
 	// Do we need an init process? probably not?
 	vmTask.init = newHcsVmExec(
 		ctx,
@@ -110,6 +137,8 @@ func newHcsVMTask(
 		s,
 		wcow,
 		owner,
+		io,
+		r,
 	)
 
 	go vmTask.waitForHostExit()
@@ -502,6 +531,11 @@ func (vt *hcsVMTask) close(ctx context.Context) {
 				werr = vt.c.Wait()
 				close(ch)
 			}()
+
+			if err := resources.ReleaseResources(ctx, vt.resources, vt.host, true); err != nil {
+				log.G(ctx).WithError(err).Error("error releasing UVM resources")
+			}
+
 			err := vt.c.Shutdown(ctx)
 			if err != nil {
 				log.G(ctx).WithError(err).Error("failed to shutdown container")

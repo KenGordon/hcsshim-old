@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
-	task "github.com/containerd/containerd/api/runtime/task/v2"
+	"github.com/Microsoft/hcsshim/pkg/annotations"
+	"github.com/containerd/containerd/api/runtime/task/v2"
 	containerd_v1_types "github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/protobuf"
-	typeurl "github.com/containerd/typeurl/v2"
+	"github.com/containerd/typeurl/v2"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -121,7 +123,10 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 		layerFolders = spec.Windows.LayerFolders
 	}
 	if err := validateRootfsAndLayers(req.Rootfs, layerFolders); err != nil {
-		return nil, err
+		// Ignore the error only in case of krypton
+		if v, ok := spec.Annotations[annotations.VMPod]; !ok || strings.ToLower(v) == "false" {
+			return nil, err
+		}
 	}
 
 	// Only work with Windows here.

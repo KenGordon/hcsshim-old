@@ -296,7 +296,11 @@ const (
 
 	VMPod = "io.microsoft.virtualmachine.vm-pod"
 
-	VMPodTemplatePath = "io.microsoft.virtualmachine.template-path"
+	VMTemplatePath = "io.microsoft.virtualmachine.template-path"
+
+	NoVSMBSetup = "io.microsoft.virtualmachine.wcow.no-vsmb-setup"
+
+	NoTerminateOnAppExit = "io.microsoft.virtualmachine.wcow.no-terminate-on-app-exit"
 )
 
 // AnnotationExpansions maps annotations that will be expanded into an array of
