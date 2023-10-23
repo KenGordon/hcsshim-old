@@ -406,12 +406,12 @@ func createWindowsContainerDocument(ctx context.Context, coi *createOptionsInter
 	registryAdd := []hcsschema.RegistryValue{
 		{
 			Key: &hcsschema.RegistryKey{
-				Hive: "System",
+				Hive: hcsschema.RegistryHive_SYSTEM,
 				Name: "ControlSet001\\Control",
 			},
 			Name:        "WaitToKillServiceTimeout",
 			StringValue: strconv.Itoa(math.MaxInt32),
-			Type_:       "String",
+			Type_:       hcsschema.RegistryValueType_STRING,
 		},
 	}
 
@@ -426,21 +426,21 @@ func createWindowsContainerDocument(ctx context.Context, coi *createOptionsInter
 		registryAdd = append(registryAdd, []hcsschema.RegistryValue{
 			{
 				Key: &hcsschema.RegistryKey{
-					Hive: "Software",
+					Hive: hcsschema.RegistryHive_SOFTWARE,
 					Name: "Microsoft\\Windows\\Windows Error Reporting\\LocalDumps",
 				},
 				Name:        "DumpFolder",
 				StringValue: dumpPath,
-				Type_:       "String",
+				Type_:       hcsschema.RegistryValueType_STRING,
 			},
 			{
 				Key: &hcsschema.RegistryKey{
-					Hive: "Software",
+					Hive: hcsschema.RegistryHive_SOFTWARE,
 					Name: "Microsoft\\Windows\\Windows Error Reporting\\LocalDumps",
 				},
 				Name:       "DumpType",
 				DWordValue: dumpType,
-				Type_:      "DWord",
+				Type_:      hcsschema.RegistryValueType_D_WORD,
 			},
 		}...)
 	}
