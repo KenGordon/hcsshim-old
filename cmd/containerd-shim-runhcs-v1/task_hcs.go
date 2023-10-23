@@ -7,24 +7,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	eventstypes "github.com/containerd/containerd/api/events"
+	"github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/runtime"
-	"github.com/containerd/containerd/runtime/v2/task"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/typeurl/v2"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/Microsoft/go-winio/pkg/fs"
 	runhcsopts "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
 	"github.com/Microsoft/hcsshim/internal/cmd"
 	"github.com/Microsoft/hcsshim/internal/cow"
+	"github.com/Microsoft/hcsshim/internal/guestpath"
 	"github.com/Microsoft/hcsshim/internal/hcs"
 	"github.com/Microsoft/hcsshim/internal/hcs/resourcepaths"
 	"github.com/Microsoft/hcsshim/internal/hcs/schema1"
@@ -43,6 +47,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
+	"github.com/Microsoft/hcsshim/pkg/ctrdtaskapi"
 )
 
 func newHcsStandaloneTask(ctx context.Context, events publisher, req *task.CreateTaskRequest, s *specs.Spec) (shimTask, error) {
@@ -547,10 +552,10 @@ func (ht *hcsTask) DeleteExec(ctx context.Context, eid string) (int, uint32, tim
 		return 0, 0, time.Time{}, err
 	}
 
-	return int(status.Pid), status.ExitStatus, status.ExitedAt, nil
+	return int(status.Pid), status.ExitStatus, status.ExitedAt.AsTime(), nil
 }
 
-func (ht *hcsTask) Pids(ctx context.Context) ([]runhcsopts.ProcessDetails, error) {
+func (ht *hcsTask) Pids(ctx context.Context) ([]*runhcsopts.ProcessDetails, error) {
 	// Map all user created exec's to pid/exec-id
 	pidMap := make(map[int]string)
 	ht.execs.Range(func(key, value interface{}) bool {
@@ -566,14 +571,19 @@ func (ht *hcsTask) Pids(ctx context.Context) ([]runhcsopts.ProcessDetails, error
 	// Get the guest pids
 	props, err := ht.c.Properties(ctx, schema1.PropertyTypeProcessList)
 	if err != nil {
+		if isStatsNotFound(err) {
+			return nil, errors.Wrapf(errdefs.ErrNotFound, "failed to fetch pids: %s", err)
+		}
 		return nil, err
 	}
 
 	// Copy to pid/exec-id pair's
-	pairs := make([]runhcsopts.ProcessDetails, len(props.ProcessList))
+	pairs := make([]*runhcsopts.ProcessDetails, len(props.ProcessList))
 	for i, p := range props.ProcessList {
+		pairs[i] = &runhcsopts.ProcessDetails{}
+
 		pairs[i].ImageName = p.ImageName
-		pairs[i].CreatedAt = p.CreateTimestamp
+		pairs[i].CreatedAt = timestamppb.New(p.CreateTimestamp)
 		pairs[i].KernelTime_100Ns = p.KernelTime100ns
 		pairs[i].MemoryCommitBytes = p.MemoryCommitBytes
 		pairs[i].MemoryWorkingSetPrivateBytes = p.MemoryWorkingSetPrivateBytes
@@ -781,8 +791,8 @@ func (ht *hcsTask) Share(ctx context.Context, req *shimdiag.ShareRequest) error 
 func hcsPropertiesToWindowsStats(props *hcsschema.Properties) *stats.Statistics_Windows {
 	wcs := &stats.Statistics_Windows{Windows: &stats.WindowsContainerStatistics{}}
 	if props.Statistics != nil {
-		wcs.Windows.Timestamp = props.Statistics.Timestamp
-		wcs.Windows.ContainerStartTime = props.Statistics.ContainerStartTime
+		wcs.Windows.Timestamp = timestamppb.New(props.Statistics.Timestamp)
+		wcs.Windows.ContainerStartTime = timestamppb.New(props.Statistics.ContainerStartTime)
 		wcs.Windows.UptimeNS = props.Statistics.Uptime100ns * 100
 		if props.Statistics.Processor != nil {
 			wcs.Windows.Processor = &stats.WindowsContainerProcessorStatistics{
@@ -856,7 +866,15 @@ func (ht *hcsTask) Update(ctx context.Context, req *task.UpdateTaskRequest) erro
 
 func (ht *hcsTask) updateTaskContainerResources(ctx context.Context, data interface{}, annotations map[string]string) error {
 	if ht.isWCOW {
-		return ht.updateWCOWResources(ctx, data, annotations)
+		switch resources := data.(type) {
+		case *specs.WindowsResources:
+			return ht.updateWCOWResources(ctx, resources, annotations)
+		case *ctrdtaskapi.ContainerMount:
+			// Adding mount to a running container is currently only supported for windows containers
+			return ht.updateWCOWContainerMount(ctx, resources, annotations)
+		default:
+			return errNotSupportedResourcesRequest
+		}
 	}
 
 	return ht.updateLCOWResources(ctx, data, annotations)
@@ -892,11 +910,7 @@ func isValidWindowsCPUResources(c *specs.WindowsCPUResources) bool {
 		(c.Maximum != nil && (c.Count == nil && c.Shares == nil))
 }
 
-func (ht *hcsTask) updateWCOWResources(ctx context.Context, data interface{}, annotations map[string]string) error {
-	resources, ok := data.(*specs.WindowsResources)
-	if !ok {
-		return errors.New("must have resources be type *WindowsResources when updating a wcow container")
-	}
+func (ht *hcsTask) updateWCOWResources(ctx context.Context, resources *specs.WindowsResources, annotations map[string]string) error {
 	if resources.Memory != nil && resources.Memory.Limit != nil {
 		newMemorySizeInMB := *resources.Memory.Limit / memory.MiB
 		memoryLimit := hcsoci.NormalizeMemorySize(ctx, ht.id, newMemorySizeInMB)
@@ -954,4 +968,90 @@ func (ht *hcsTask) ProcessorInfo(ctx context.Context) (*processorInfo, error) {
 	return &processorInfo{
 		count: ht.host.ProcessorCount(),
 	}, nil
+}
+
+func (ht *hcsTask) requestAddContainerMount(ctx context.Context, resourcePath string, settings interface{}) error {
+	modification := &hcsschema.ModifySettingRequest{
+		ResourcePath: resourcePath,
+		RequestType:  guestrequest.RequestTypeAdd,
+		Settings:     settings,
+	}
+	return ht.c.Modify(ctx, modification)
+}
+
+func isMountTypeSupported(hostPath, mountType string) bool {
+	// currently we only support mounting of host volumes/directories
+	switch mountType {
+	case hcsoci.MountTypeBind, hcsoci.MountTypePhysicalDisk,
+		hcsoci.MountTypeVirtualDisk, hcsoci.MountTypeExtensibleVirtualDisk:
+		return false
+	default:
+		// Ensure that host path is not sandbox://, hugepages://
+		if strings.HasPrefix(hostPath, guestpath.SandboxMountPrefix) ||
+			strings.HasPrefix(hostPath, guestpath.HugePagesMountPrefix) ||
+			strings.HasPrefix(hostPath, guestpath.PipePrefix) {
+			return false
+		} else {
+			// hcsshim treats mountType == "" as a normal directory mount
+			// and this is supported
+			return mountType == ""
+		}
+	}
+}
+
+func (ht *hcsTask) updateWCOWContainerMount(ctx context.Context, resources *ctrdtaskapi.ContainerMount, annotations map[string]string) error {
+	// Hcsschema v2 should be supported
+	if osversion.Build() < osversion.RS5 {
+		// OSVerions < RS5 only support hcsshema v1
+		return fmt.Errorf("hcsschema v1 unsupported")
+	}
+
+	if resources.HostPath == "" || resources.ContainerPath == "" {
+		return fmt.Errorf("invalid OCI spec - a mount must have both host and container path set")
+	}
+
+	// Check for valid mount type
+	if !isMountTypeSupported(resources.HostPath, resources.Type) {
+		return fmt.Errorf("invalid mount type %v. Currently only host volumes/directories can be mounted to running containers", resources.Type)
+	}
+
+	if ht.host == nil {
+		// HCS has a bug where it does not correctly resolve file (not dir) paths
+		// if the path includes a symlink. Therefore, we resolve the path here before
+		// passing it in. The issue does not occur with VSMB, so don't need to worry
+		// about the isolated case.
+		hostPath, err := fs.ResolvePath(resources.HostPath)
+		if err != nil {
+			return errors.Wrapf(err, "failed to resolve path for hostPath %s", resources.HostPath)
+		}
+
+		// process isolated windows container
+		settings := hcsschema.MappedDirectory{
+			HostPath:      hostPath,
+			ContainerPath: resources.ContainerPath,
+			ReadOnly:      resources.ReadOnly,
+		}
+		if err := ht.requestAddContainerMount(ctx, resourcepaths.SiloMappedDirectoryResourcePath, settings); err != nil {
+			return errors.Wrapf(err, "failed to add mount to process isolated container")
+		}
+	} else {
+		// if it is a mount request for a running hyperV WCOW container, we should first mount volume to the
+		// UVM as a VSMB share and then mount to the running container using the src path as seen by the UVM
+		vsmbShare, guestPath, err := ht.host.AddVsmbAndGetSharePath(ctx, resources.HostPath, resources.ContainerPath, resources.ReadOnly)
+		if err != nil {
+			return err
+		}
+		// Add mount to list of resources to be released on container cleanup
+		ht.cr.Add(vsmbShare)
+
+		settings := hcsschema.MappedDirectory{
+			HostPath:      guestPath,
+			ContainerPath: resources.ContainerPath,
+			ReadOnly:      resources.ReadOnly,
+		}
+		if err := ht.requestAddContainerMount(ctx, resourcepaths.SiloMappedDirectoryResourcePath, settings); err != nil {
+			return errors.Wrapf(err, "failed to add mount to hyperV container")
+		}
+	}
+	return nil
 }

@@ -2,15 +2,19 @@ package oci
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 
+	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
+
+	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/logfields"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
-	"github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/sirupsen/logrus"
 )
 
 var ErrAnnotationExpansionConflict = errors.New("annotation expansion conflict")
@@ -60,6 +64,80 @@ func ParseAnnotationsDisableGMSA(ctx context.Context, s *specs.Spec) bool {
 	return ParseAnnotationsBool(ctx, s.Annotations, annotations.WCOWDisableGMSA, false)
 }
 
+func parseAdditionalRegistryValues(ctx context.Context, a map[string]string) []hcsschema.RegistryValue {
+	k := annotations.AdditionalRegistryValues
+	v := a[k]
+	if v == "" {
+		return nil
+	}
+
+	t := []hcsschema.RegistryValue{}
+	if err := json.Unmarshal([]byte(v), &t); err != nil {
+		logAnnotationParseError(ctx, k, v, "JSON string", err)
+		return nil
+	}
+
+	// basic error checking: warn about and delete invalid registry keys
+	rvs := make([]hcsschema.RegistryValue, 0, len(t))
+	for _, rv := range t {
+		entry := log.G(ctx).WithFields(logrus.Fields{
+			logfields.OCIAnnotation: k,
+			logfields.Value:         v,
+			"registry-value":        log.Format(ctx, rv),
+		})
+
+		if rv.Key == nil {
+			entry.Warning("registry key is required")
+			continue
+		}
+
+		if !slices.Contains([]hcsschema.RegistryHive{
+			hcsschema.RegistryHive_SYSTEM,
+			hcsschema.RegistryHive_SOFTWARE,
+			hcsschema.RegistryHive_SECURITY,
+			hcsschema.RegistryHive_SAM,
+		}, rv.Key.Hive) {
+			entry.Warning("invalid registry key hive")
+			continue
+		}
+
+		if rv.Key.Name == "" {
+			entry.Warning("registry key name is required")
+			continue
+		}
+
+		if rv.Name == "" {
+			entry.Warning("registry name is required")
+			continue
+		}
+
+		if !slices.Contains([]hcsschema.RegistryValueType{
+			hcsschema.RegistryValueType_NONE,
+			hcsschema.RegistryValueType_STRING,
+			hcsschema.RegistryValueType_EXPANDED_STRING,
+			hcsschema.RegistryValueType_MULTI_STRING,
+			hcsschema.RegistryValueType_BINARY,
+			hcsschema.RegistryValueType_D_WORD,
+			hcsschema.RegistryValueType_Q_WORD,
+			hcsschema.RegistryValueType_CUSTOM_TYPE,
+		}, rv.Type_) {
+			entry.Warning("invalid registry value type")
+			continue
+		}
+
+		// multiple values are set
+		b2i := map[bool]int{true: 1}
+		if (b2i[rv.StringValue != ""] + b2i[rv.BinaryValue != ""] + b2i[rv.DWordValue != 0] + b2i[rv.QWordValue != 0]) > 1 {
+			entry.Warning("multiple values set")
+			continue
+		}
+
+		entry.Trace("parsed additional registry value")
+		rvs = append(rvs, rv)
+	}
+	return slices.Compact(rvs)
+}
+
 // general annotation parsing
 
 // ParseAnnotationsBool searches `a` for `key` and if found verifies that the
@@ -76,6 +154,27 @@ func ParseAnnotationsBool(ctx context.Context, a map[string]string, key string, 
 		}
 	}
 	return def
+}
+
+// ParseAnnotationsNullableBool searches `a` for `key` and if found verifies that the
+// value is `true` or `false`. If `key` is not found it returns a null pointer.
+// The JSON Marshaller will omit null pointers and will serialise non-null pointers as
+// the value they point at.
+func ParseAnnotationsNullableBool(ctx context.Context, a map[string]string, key string) *bool {
+	if v, ok := a[key]; ok {
+		switch strings.ToLower(v) {
+		case "true":
+			_bool := true
+			return &_bool
+		case "false":
+			_bool := false
+			return &_bool
+		default:
+			err := errors.New("boolean fields must be 'true', 'false', or not set")
+			logAnnotationParseError(ctx, key, v, logfields.Bool, err)
+		}
+	}
+	return nil
 }
 
 // parseAnnotationsUint32 searches `a` for `key` and if found verifies that the

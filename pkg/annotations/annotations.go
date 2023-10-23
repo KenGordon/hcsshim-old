@@ -70,10 +70,12 @@ const (
 	// `spec.Windows.Resources.Storage.Iops`.
 	ContainerStorageQoSIopsMaximum = "io.microsoft.container.storage.qos.iopsmaximum"
 
-	// GPUVHDPath overrides the default path to search for the gpu vhd
+	// GPUVHDPath overrides the default path to search for the gpu vhd.
+	//
+	// Deprecated: GPU VHDs are no longer supported.
 	GPUVHDPath = "io.microsoft.lcow.gpuvhdpath"
 
-	// ContainerGPUCapabilities is used to find the gpu capabilities on the container spec
+	// ContainerGPUCapabilities is used to find the gpu capabilities on the container spec.
 	ContainerGPUCapabilities = "io.microsoft.container.gpu.capabilities"
 
 	// VirtualMachineKernelDrivers indicates what drivers to install in the pod.
@@ -119,13 +121,13 @@ const (
 	// the caller MUST use MB or sizing will be wrong.
 	MemorySizeInMB = "io.microsoft.virtualmachine.computetopology.memory.sizeinmb"
 
-	// MemoryLowMMIOGapInMB indicates the low MMIO gap in MB
+	// MemoryLowMMIOGapInMB indicates the low MMIO gap in MB.
 	MemoryLowMMIOGapInMB = "io.microsoft.virtualmachine.computetopology.memory.lowmmiogapinmb"
 
-	// MemoryHighMMIOBaseInMB indicates the high MMIO base in MB
+	// MemoryHighMMIOBaseInMB indicates the high MMIO base in MB.
 	MemoryHighMMIOBaseInMB = "io.microsoft.virtualmachine.computetopology.memory.highmmiobaseinmb"
 
-	// MemoryHighMMIOBaseInMB indicates the high MMIO gap in MB
+	// MemoryHighMMIOGapInMB indicates the high MMIO gap in MB.
 	MemoryHighMMIOGapInMB = "io.microsoft.virtualmachine.computetopology.memory.highmmiogapinmb"
 
 	// ProcessorCount overrides the hypervisor isolated vCPU count set
@@ -154,29 +156,29 @@ const (
 	// the UVM are not mutually exclusive and can be set together.
 	ProcessorWeight = "io.microsoft.virtualmachine.computetopology.processor.weight"
 
-	// VPMemCount indicates the max number of vpmem devices that can be used on the UVM
+	// VPMemCount indicates the max number of vpmem devices that can be used on the UVM.
 	VPMemCount = "io.microsoft.virtualmachine.devices.virtualpmem.maximumcount"
 
 	// VPMemSize indicates the size of the VPMem devices.
 	VPMemSize = "io.microsoft.virtualmachine.devices.virtualpmem.maximumsizebytes"
 
 	// PreferredRootFSType indicates what the preferred rootfs type should be for an LCOW UVM.
-	// valid values are "initrd" or "vhd"
+	// valid values are "initrd" or "vhd".
 	PreferredRootFSType = "io.microsoft.virtualmachine.lcow.preferredrootfstype"
 
-	// BootFilesRootPath indicates the path to find the LCOW boot files to use when creating the UVM
+	// BootFilesRootPath indicates the path to find the LCOW boot files to use when creating the UVM.
 	BootFilesRootPath = "io.microsoft.virtualmachine.lcow.bootfilesrootpath"
 
-	// KernelDirectBoot indicates that we should skip UEFI and boot directly to `kernel`
+	// KernelDirectBoot indicates that we should skip UEFI and boot directly to `kernel`.
 	KernelDirectBoot = "io.microsoft.virtualmachine.lcow.kerneldirectboot"
 
-	// VPCIEnabled indicates that pci support should be enabled for the LCOW UVM
+	// VPCIEnabled indicates that pci support should be enabled for the LCOW UVM.
 	VPCIEnabled = "io.microsoft.virtualmachine.lcow.vpcienabled"
 
-	// VPMemNoMultiMapping indicates that we should disable LCOW vpmem layer multi mapping
+	// VPMemNoMultiMapping indicates that we should disable LCOW vpmem layer multi mapping.
 	VPMemNoMultiMapping = "io.microsoft.virtualmachine.lcow.vpmem.nomultimapping"
 
-	// KernelBootOptions is used to specify kernel options used while booting a linux kernel
+	// KernelBootOptions is used to specify kernel options used while booting a linux kernel.
 	KernelBootOptions = "io.microsoft.virtualmachine.lcow.kernelbootoptions"
 
 	// StorageQoSBandwidthMaximum indicates the maximum number of bytes per second. If `0`
@@ -195,13 +197,13 @@ const (
 	// for WCOW.
 	DisableCompartmentNamespace = "io.microsoft.virtualmachine.disablecompartmentnamespace"
 
-	// VSMBNoDirectMap specifies that no direct mapping should be used for any VSMBs added to the UVM
+	// VSMBNoDirectMap specifies that no direct mapping should be used for any VSMBs added to the UVM.
 	VSMBNoDirectMap = "io.microsoft.virtualmachine.wcow.virtualSMB.nodirectmap"
 
-	// DisableWritableFileShares disables adding any writable fileshares to the UVM
+	// DisableWritableFileShares disables adding any writable fileshares to the UVM.
 	DisableWritableFileShares = "io.microsoft.virtualmachine.fileshares.disablewritable"
 
-	// CPUGroupID specifies the cpugroup ID that a UVM should be assigned to if any
+	// CPUGroupID specifies the cpugroup ID that a UVM should be assigned to, if any.
 	CPUGroupID = "io.microsoft.virtualmachine.cpugroup.id"
 
 	// NetworkConfigProxy holds the address of the network config proxy service.
@@ -209,19 +211,22 @@ const (
 	NetworkConfigProxy = "io.microsoft.network.ncproxy"
 
 	// NcproxyContainerID indicates whether or not to use the hcsshim container ID
-	// when setting up ncproxy and computeagent
+	// when setting up ncproxy and computeagent.
 	NcproxyContainerID = "io.microsoft.network.ncproxy.containerid"
 
 	// EncryptedScratchDisk indicates whether or not the container scratch disks
-	// should be encrypted or not
+	// should be encrypted or not.
 	EncryptedScratchDisk = "io.microsoft.virtualmachine.storage.scratch.encrypted"
 
-	// SecurityPolicy is used to specify a security policy for opengcs to enforce
+	// SecurityPolicy is used to specify a security policy for opengcs to enforce.
 	SecurityPolicy = "io.microsoft.virtualmachine.lcow.securitypolicy"
 
 	// SecurityPolicyEnforcer is used to specify which enforcer to initialize (open-door, standard or rego).
 	// This allows for better fallback mechanics.
 	SecurityPolicyEnforcer = "io.microsoft.virtualmachine.lcow.enforcer"
+
+	// HclEnabled specifies whether to enable the host compatibility layer.
+	HclEnabled = "io.microsoft.virtualmachine.lcow.hcl-enabled"
 
 	// ContainerProcessDumpLocation specifies a path inside of containers to save process dumps to. As
 	// the scratch space for a container is generally cleaned up after exit, this is best set to a volume mount of
@@ -240,7 +245,7 @@ const (
 	// LCOWDevShmSizeInKb specifies the size of LCOW /dev/shm.
 	LCOWDevShmSizeInKb = "io.microsoft.lcow.shm.size-kb"
 
-	// LCOWPrivileged is used to specify that the container should be run in privileged mode
+	// LCOWPrivileged is used to specify that the container should be run in privileged mode.
 	LCOWPrivileged = "io.microsoft.virtualmachine.lcow.privileged"
 
 	// KubernetesContainerType is the annotation used by CRI to define the `ContainerType`.
@@ -250,7 +255,7 @@ const (
 	// KubernetesContainerType == "sandbox"` ID.
 	KubernetesSandboxID = "io.kubernetes.cri.sandbox-id"
 
-	// NoSecurityHardware allows us, when it is set to true, to do testing and development without requiring SNP hardware
+	// NoSecurityHardware allows us, when it is set to true, to do testing and development without requiring SNP hardware.
 	NoSecurityHardware = "io.microsoft.virtualmachine.lcow.no_security_hardware"
 
 	// GuestStateFile specifies the path of the vmgs file to use if required. Only applies in SNP mode.
@@ -278,18 +283,30 @@ const (
 	NoInheritHostTimezone = "io.microsoft.virtualmachine.wcow.timezone.noinherit"
 
 	// WCOWDisableGMSA disables providing gMSA (Group Managed Service Accounts) to
-	// a WCOW container
+	// a WCOW container.
 	WCOWDisableGMSA = "io.microsoft.container.wcow.gmsa.disable"
 
 	// DisableUnsafeOperations disables several unsafe operations, such as writable
 	// file share mounts, for hostile multi-tenant environments. See `AnnotationExpansions`
-	// for more information
+	// for more information.
 	DisableUnsafeOperations = "io.microsoft.disable-unsafe-operations"
 
 	// DumpDirectoryPath provides a path to the directory in which dumps for a UVM will be collected in
 	// case the UVM crashes.
 	DumpDirectoryPath = "io.microsoft.virtualmachine.dump-directory-path"
+
+	// AdditionalRegistryValues specifies additional registry keys and their values to set in the WCOW UVM.
+	// The format is a JSON-encoded string of an array containing [HCS RegistryValue] objects.
+	//
+	// For example:
+	//
+	//	"[{\"Key\": {\"Hive\": \"System\", \"Name\": \"registry\\path\"}, \"Name\": \"Name\", \"Type\": \"String\", \"StringValue\": \"value\"}]"
+	//
+	// [HCS RegistryValue]: https://learn.microsoft.com/en-us/virtualization/api/hcs/schemareference#registryvalue
+	AdditionalRegistryValues = "io.microsoft.virtualmachine.wcow.additional-reg-keys"
 )
+
+// TODO (helsaawy): make this a `func() map[string][]string`, so callers cannot modify the expansions
 
 // AnnotationExpansions maps annotations that will be expanded into an array of
 // other annotations. The expanded annotations will have the same value as the

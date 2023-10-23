@@ -24,7 +24,7 @@ import (
 	"github.com/Microsoft/hcsshim/test/pkg/definitions/shimdiag"
 	"github.com/Microsoft/hcsshim/test/pkg/require"
 	testuvm "github.com/Microsoft/hcsshim/test/pkg/uvm"
-	"github.com/containerd/containerd/log"
+	"github.com/containerd/log"
 	"golang.org/x/sys/windows"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 )
@@ -984,7 +984,9 @@ func Test_RunPodSandbox_Mount_SandboxDir_NoShare_WCOW(t *testing.T) {
 }
 
 func Test_RunPodSandbox_CPUGroup(t *testing.T) {
+	requireAnyFeature(t, featureLCOW, featureWCOWHypervisor)
 	require.Build(t, osversion.V21H1)
+
 	ctx := context.Background()
 	presentID := "FA22A12C-36B3-486D-A3E9-BC526C2B450B"
 

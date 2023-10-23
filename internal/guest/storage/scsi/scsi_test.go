@@ -1085,7 +1085,7 @@ func Test_Unmount_CleanupCryptDevice_Called(t *testing.T) {
 		return nil
 	}
 	cleanupCryptDeviceCalled := false
-	cleanupCryptDevice = func(devName string) error {
+	cleanupCryptDevice = func(_ context.Context, devName string) error {
 		expectedDevName := fmt.Sprintf(cryptDeviceFmt, 0, 0, 0)
 		if devName != expectedDevName {
 			t.Fatalf("expected crypt target %q, got %q", expectedDevName, devName)
@@ -1168,7 +1168,7 @@ func Test_GetDevicePath_Device_With_Partition_Error(t *testing.T) {
 	}
 }
 
-func Test_GetDevicePath_Device_No_Partition(t *testing.T) {
+func Test_GetDevicePath_Device_No_Partition_Retries_Stat(t *testing.T) {
 	clearTestDependencies()
 
 	deviceName := "sdd"
@@ -1179,8 +1179,17 @@ func Test_GetDevicePath_Device_No_Partition(t *testing.T) {
 		return []os.DirEntry{entry}, nil
 	}
 
+	callNum := 0
 	osStat = func(name string) (os.FileInfo, error) {
-		return nil, fmt.Errorf("should not make this call: %v", name)
+		if callNum == 0 {
+			callNum += 1
+			return nil, fs.ErrNotExist
+		}
+		if callNum == 1 {
+			callNum += 1
+			return nil, unix.ENXIO
+		}
+		return nil, nil
 	}
 
 	getDevicePath = GetDevicePath

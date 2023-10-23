@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
-	"github.com/Microsoft/hcsshim/pkg/annotations"
+	"github.com/google/go-cmp/cmp"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
+
+	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
+	"github.com/Microsoft/hcsshim/pkg/annotations"
 )
 
-func Test_ProccessAnnotations_Expansion(t *testing.T) {
+func TestProccessAnnotations_Expansion(t *testing.T) {
 	// suppress warnings raised by process annotation
 	defer func(l logrus.Level) {
 		logrus.SetLevel(l)
@@ -80,6 +84,136 @@ func Test_ProccessAnnotations_Expansion(t *testing.T) {
 			err := ProcessAnnotations(ctx, &tt.spec)
 			if !errors.Is(err, ErrAnnotationExpansionConflict) {
 				t.Fatalf("UpdateSpecFromOptions should have failed with %q, actual was %v", errExp, err)
+			}
+		})
+	}
+}
+
+func TestParseAdditionalRegistryValues(t *testing.T) {
+	ctx := context.Background()
+	for _, tt := range []struct {
+		name string
+		give string
+		want []hcsschema.RegistryValue
+	}{
+		{
+			name: "empty",
+		},
+		{
+			name: "nil",
+			give: "nil",
+		},
+		{
+			name: "empty list",
+			give: "[]",
+			want: []hcsschema.RegistryValue{},
+		},
+		{
+			name: "invalid",
+			give: "invalid",
+		},
+		{
+			name: "nil key",
+			give: `[
+{"Name": "stringRegistryKeyName", "Type": "String", "StringValue": "registry key value value" },
+]`,
+		},
+		{
+			name: "invalid hive",
+			give: `[
+{"Key": {"Hive": "Invalid", "Name": "a\\registry\\key"}, "Name": "stringRegistryKeyName", "Type": "String", "StringValue": "registry key value value" },
+]`,
+		},
+		{
+			name: "empty key name",
+			give: `[
+{"Key": {"Hive": "System"}, "Name": "stringRegistryKeyName", "Type": "String", "StringValue": "registry key value value" },
+]`,
+		},
+		{
+			name: "empty name",
+			give: `[
+{"Key": {"Hive": "System", "Name": "a\\registry\\key"}, "Type": "String", "StringValue": "registry key value value" },
+]`,
+		},
+		{
+			name: "invalid type",
+			give: `[
+{"Key": {"Hive": "System", "Name": "a\\registry\\key"}, "Name": "stringRegistryKeyName", "Type": "Invalid", "StringValue": "registry key value value" },
+]`,
+		},
+		{
+			name: "multiple types",
+			give: `[
+{"Key": {"Hive": "System", "Name": "a\\registry\\key"}, "Name": "stringRegistryKeyName", "Type": "String", "StringValue": "registry key value value", "QWordValue": 1 },
+]`,
+		},
+		{
+			name: "valid",
+			give: `[
+{"Key": {"Hive": "System", "Name": "a\\registry\\key"}, "Name": "stringRegistryKeyName", "Type": "String", "StringValue": "registry key value value" },
+{"Key": {"Hive": "System", "Name": "another\\registry\\key"}, "Name": "dwordRegistryKeyName", "Type": "DWord", "DWordValue": 1 }
+]`,
+			want: []hcsschema.RegistryValue{
+				{
+					Key: &hcsschema.RegistryKey{
+						Hive: hcsschema.RegistryHive_SYSTEM,
+						Name: "a\\registry\\key",
+					},
+					Name:        "stringRegistryKeyName",
+					Type_:       hcsschema.RegistryValueType_STRING,
+					StringValue: "registry key value value",
+				},
+				{
+					Key: &hcsschema.RegistryKey{
+						Hive: hcsschema.RegistryHive_SYSTEM,
+						Name: "another\\registry\\key",
+					},
+					Name:       "dwordRegistryKeyName",
+					Type_:      hcsschema.RegistryValueType_D_WORD,
+					DWordValue: 1,
+				},
+			},
+		},
+		{
+			name: "multiple",
+			give: `[
+{"Key": {"Hive": "System", "Name": "a\\registry\\key"}, "Name": "stringRegistryKeyName", "Type": "String", "StringValue": "registry key value value" },
+{"Key": {"Hive": "System"}, "Name": "stringRegistryKeyName", "Type": "String", "StringValue": "registry key value value" },
+{"Key": {"Hive": "System", "Name": "a\\registry\\key"}, "Type": "String", "StringValue": "registry key value value" },
+{"Key": {"Hive": "System", "Name": "another\\registry\\key"}, "Name": "dwordRegistryKeyName", "Type": "DWord", "DWordValue": 1 },
+{"Key": {"Hive": "System", "Name": "a\\registry\\key"}, "Name": "stringRegistryKeyName", "Type": "Invalid", "StringValue": "registry key value value" }
+]`,
+			want: []hcsschema.RegistryValue{
+				{
+					Key: &hcsschema.RegistryKey{
+						Hive: hcsschema.RegistryHive_SYSTEM,
+						Name: "a\\registry\\key",
+					},
+					Name:        "stringRegistryKeyName",
+					Type_:       hcsschema.RegistryValueType_STRING,
+					StringValue: "registry key value value",
+				},
+				{
+					Key: &hcsschema.RegistryKey{
+						Hive: hcsschema.RegistryHive_SYSTEM,
+						Name: "another\\registry\\key",
+					},
+					Name:       "dwordRegistryKeyName",
+					Type_:      hcsschema.RegistryValueType_D_WORD,
+					DWordValue: 1,
+				},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Logf("registry values:\n%s", tt.give)
+			v := strings.ReplaceAll(tt.give, "\n", "")
+			rvs := parseAdditionalRegistryValues(ctx, map[string]string{
+				annotations.AdditionalRegistryValues: v,
+			})
+			if diff := cmp.Diff(tt.want, rvs); diff != "" {
+				t.Fatal(diff)
 			}
 		})
 	}

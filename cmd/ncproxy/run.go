@@ -15,11 +15,6 @@ import (
 	"github.com/Microsoft/go-winio/pkg/etw"
 	"github.com/Microsoft/go-winio/pkg/etwlogrus"
 	"github.com/Microsoft/go-winio/pkg/guid"
-	"github.com/Microsoft/hcsshim/internal/computeagent"
-	"github.com/Microsoft/hcsshim/internal/debug"
-	"github.com/Microsoft/hcsshim/internal/log"
-	"github.com/Microsoft/hcsshim/internal/oc"
-	nodenetsvc "github.com/Microsoft/hcsshim/pkg/ncproxy/nodenetsvc/v1"
 	"github.com/containerd/ttrpc"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -27,12 +22,48 @@ import (
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+
+	"github.com/Microsoft/hcsshim/internal/computeagent"
+	"github.com/Microsoft/hcsshim/internal/debug"
+	"github.com/Microsoft/hcsshim/internal/log"
+	"github.com/Microsoft/hcsshim/internal/oc"
+	nodenetsvcV0 "github.com/Microsoft/hcsshim/pkg/ncproxy/nodenetsvc/v0"
+	nodenetsvc "github.com/Microsoft/hcsshim/pkg/ncproxy/nodenetsvc/v1"
 )
 
 type nodeNetSvcConn struct {
 	client   nodenetsvc.NodeNetworkServiceClient
+	v0Client nodenetsvcV0.NodeNetworkServiceClient
 	addr     string
 	grpcConn *grpc.ClientConn
+}
+
+func (n *nodeNetSvcConn) ConfigureNetworking(ctx context.Context, req *nodenetsvc.ConfigureNetworkingRequest) (*nodenetsvc.ConfigureNetworkingResponse, error) {
+	// try to use v1 client
+	_, err := n.client.ConfigureNetworking(ctx, req)
+	if err != nil {
+		errCode := status.Code(err)
+		if errCode == codes.Unimplemented {
+			// v1 api call for ConfigureNetworking returned "unimplemented",
+			// try the v0 client instead
+			log.G(ctx).Info("falling back to v0 nodenetsvc api")
+			v0Req := &nodenetsvcV0.ConfigureNetworkingRequest{
+				ContainerID: req.ContainerID,
+				RequestType: nodenetsvcV0.RequestType(req.RequestType),
+			}
+			_, err = n.v0Client.ConfigureNetworking(ctx, v0Req)
+			if err != nil {
+				return nil, err
+			}
+
+			return &nodenetsvc.ConfigureNetworkingResponse{}, nil
+		}
+		return nil, err
+	}
+	return &nodenetsvc.ConfigureNetworkingResponse{}, nil
 }
 
 type computeAgentClient struct {
@@ -193,7 +224,10 @@ func run(clicontext *cli.Context) error {
 		log.G(ctx).Infof("Connecting to NodeNetworkService at address %s", conf.NodeNetSvcAddr)
 
 		dialCtx := ctx
-		opts := []grpc.DialOption{grpc.WithInsecure(), grpc.WithStatsHandler(&ocgrpc.ClientHandler{})}
+		opts := []grpc.DialOption{
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithStatsHandler(&ocgrpc.ClientHandler{}),
+		}
 		if conf.Timeout > 0 {
 			var cancel context.CancelFunc
 			dialCtx, cancel = context.WithTimeout(ctx, time.Duration(conf.Timeout)*time.Second)
@@ -207,10 +241,13 @@ func run(clicontext *cli.Context) error {
 
 		log.G(ctx).Infof("Successfully connected to NodeNetworkService at address %s", conf.NodeNetSvcAddr)
 
+		// create a client for both api versions
 		netSvcClient := nodenetsvc.NewNodeNetworkServiceClient(client)
+		v0NetSvcClient := nodenetsvcV0.NewNodeNetworkServiceClient(client)
 		nodeNetSvcClient = &nodeNetSvcConn{
 			addr:     conf.NodeNetSvcAddr,
 			client:   netSvcClient,
+			v0Client: v0NetSvcClient,
 			grpcConn: client,
 		}
 	}
