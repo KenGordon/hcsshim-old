@@ -1,9 +1,6 @@
 package guestpath
 
 const (
-	// LCOWNvidiaMountPath is the path format in LCOW UVM where nvidia tools
-	// are mounted keep this value in sync with opengcs
-	LCOWNvidiaMountPath = "/run/nvidia"
 	// LCOWRootPrefixInUVM is the path inside UVM where LCOW container's root
 	// file system will be mounted
 	LCOWRootPrefixInUVM = "/run/gcs/c"
@@ -16,6 +13,8 @@ const (
 	// HugePagesMountPrefix is mount prefix used in container spec to mark a
 	// huge-pages mount
 	HugePagesMountPrefix = "hugepages://"
+	// PipePrefix is the mount prefix used in container spec to mark a named pipe
+	PipePrefix = `\\.\pipe`
 	// LCOWMountPathPrefixFmt is the path format in the LCOW UVM where
 	// non-global mounts, such as Plan9 mounts are added
 	LCOWMountPathPrefixFmt = "/mounts/m%d"

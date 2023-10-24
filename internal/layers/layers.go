@@ -31,7 +31,7 @@ type LCOWLayer struct {
 	Partition uint64
 }
 
-// Defines a set of LCOW layers.
+// LCOWLayers defines a set of LCOW layers.
 // For future extensibility, the LCOWLayer type could be swapped for an interface,
 // and we could either call some method on the interface to "apply" it directly to the UVM,
 // or type cast it to the various types that we support, and use the one it matches.
@@ -52,7 +52,7 @@ type lcowLayersCloser struct {
 func (lc *lcowLayersCloser) Release(ctx context.Context) (retErr error) {
 	if err := lc.uvm.RemoveCombinedLayersLCOW(ctx, lc.guestCombinedLayersPath); err != nil {
 		log.G(ctx).WithError(err).Error("failed RemoveCombinedLayersLCOW")
-		if retErr == nil {
+		if retErr == nil { //nolint:govet // nilness: consistency with below
 			retErr = fmt.Errorf("first error: %w", err)
 		}
 	}
@@ -128,8 +128,8 @@ func MountLCOWLayers(ctx context.Context, containerID string, layers *LCOWLayers
 		Encrypted: vm.ScratchEncryptionEnabled(),
 		// For scratch disks, we support formatting the disk if it is not already
 		// formatted.
-		EnsureFileystem: true,
-		Filesystem:      "ext4",
+		EnsureFilesystem: true,
+		Filesystem:       "ext4",
 	}
 	if vm.ScratchEncryptionEnabled() {
 		// Encrypted scratch devices are formatted with xfs
@@ -307,7 +307,7 @@ type wcowIsolatedLayersCloser struct {
 func (lc *wcowIsolatedLayersCloser) Release(ctx context.Context) (retErr error) {
 	if err := lc.uvm.RemoveCombinedLayersWCOW(ctx, lc.guestCombinedLayersPath); err != nil {
 		log.G(ctx).WithError(err).Error("failed RemoveCombinedLayersWCOW")
-		if retErr == nil {
+		if retErr == nil { //nolint:govet // nilness: consistency with below
 			retErr = fmt.Errorf("first error: %w", err)
 		}
 	}
@@ -420,7 +420,16 @@ func addLCOWLayer(ctx context.Context, vm *uvm.UtilityVM, layer *LCOWLayer) (uvm
 		}
 	}
 
-	sm, err := vm.SCSIManager.AddVirtualDisk(ctx, layer.VHDPath, true, "", &scsi.MountConfig{Partition: layer.Partition, Options: []string{"ro"}})
+	sm, err := vm.SCSIManager.AddVirtualDisk(
+		ctx,
+		layer.VHDPath,
+		true,
+		"",
+		&scsi.MountConfig{
+			Partition: layer.Partition,
+			Options:   []string{"ro"},
+		},
+	)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to add SCSI layer: %s", err)
 	}

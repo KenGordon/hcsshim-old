@@ -9,10 +9,11 @@ import (
 	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/stats"
 	"github.com/Microsoft/hcsshim/internal/shimdiag"
-	v1 "github.com/containerd/cgroups/stats/v1"
+	"github.com/Microsoft/hcsshim/pkg/ctrdtaskapi"
+	v1 "github.com/containerd/cgroups/v3/cgroup1/stats"
+	task "github.com/containerd/containerd/api/runtime/task/v2"
 	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/runtime/v2/task"
-	"github.com/containerd/typeurl"
+	typeurl "github.com/containerd/typeurl/v2"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -71,18 +72,18 @@ func (tst *testShimTask) DeleteExec(ctx context.Context, eid string) (int, uint3
 	if eid != "" {
 		delete(tst.execs, eid)
 	}
-	return int(status.Pid), status.ExitStatus, status.ExitedAt, nil
+	return int(status.Pid), status.ExitStatus, status.ExitedAt.AsTime(), nil
 }
 
-func (tst *testShimTask) Pids(ctx context.Context) ([]options.ProcessDetails, error) {
-	pairs := []options.ProcessDetails{
+func (tst *testShimTask) Pids(ctx context.Context) ([]*options.ProcessDetails, error) {
+	pairs := []*options.ProcessDetails{
 		{
 			ProcessID: uint32(tst.exec.Pid()),
 			ExecID:    tst.exec.ID(),
 		},
 	}
 	for _, p := range tst.execs {
-		pairs = append(pairs, options.ProcessDetails{
+		pairs = append(pairs, &options.ProcessDetails{
 			ProcessID: uint32(p.pid),
 			ExecID:    p.id,
 		})
@@ -107,7 +108,24 @@ func (tst *testShimTask) Update(ctx context.Context, req *task.UpdateTaskRequest
 	if err != nil {
 		return errors.Wrapf(err, "failed to unmarshal resources for container %s update request", req.ID)
 	}
-	return verifyTaskUpdateResourcesType(data)
+	if err := verifyTaskUpdateResourcesType(data); err != nil {
+		return err
+	}
+
+	if tst.isWCOW {
+		switch request := data.(type) {
+		case *ctrdtaskapi.ContainerMount:
+			// Adding mount to a running container is currently only supported for windows containers
+			if isMountTypeSupported(request.HostPath, request.Type) {
+				return nil
+			} else {
+				return errNotSupportedResourcesRequest
+			}
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 func (tst *testShimTask) Share(ctx context.Context, req *shimdiag.ShareRequest) error {

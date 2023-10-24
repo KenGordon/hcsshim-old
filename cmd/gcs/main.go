@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/containerd/cgroups"
-	cgroupstats "github.com/containerd/cgroups/stats/v1"
+	cgroups "github.com/containerd/cgroups/v3/cgroup1"
+	cgroupstats "github.com/containerd/cgroups/v3/cgroup1/stats"
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -29,6 +29,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guestpath"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
+	"github.com/Microsoft/hcsshim/internal/version"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
 )
 
@@ -271,7 +272,11 @@ func main() {
 
 	baseLogPath := guestpath.LCOWRootPrefixInUVM
 
-	logrus.Info("GCS started")
+	logrus.WithFields(logrus.Fields{
+		"branch":  version.Branch,
+		"commit":  version.Commit,
+		"version": version.Version,
+	}).Info("GCS started")
 
 	// Set the process core dump location. This will be global to all containers as it's a kernel configuration.
 	// If no path is specified core dumps will just be placed in the working directory of wherever the process
@@ -342,7 +347,7 @@ func main() {
 		logrus.WithError(err).Fatal("failed to get sys info")
 	}
 	containersLimit := int64(sinfo.Totalram - *rootMemReserveBytes)
-	containersControl, err := cgroups.New(cgroups.V1, cgroups.StaticPath("/containers"), &oci.LinuxResources{
+	containersControl, err := cgroups.New(cgroups.StaticPath("/containers"), &oci.LinuxResources{
 		Memory: &oci.LinuxMemory{
 			Limit: &containersLimit,
 		},
@@ -352,7 +357,7 @@ func main() {
 	}
 	defer containersControl.Delete() //nolint:errcheck
 
-	gcsControl, err := cgroups.New(cgroups.V1, cgroups.StaticPath("/gcs"), &oci.LinuxResources{})
+	gcsControl, err := cgroups.New(cgroups.StaticPath("/gcs"), &oci.LinuxResources{})
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to create gcs cgroup")
 	}
