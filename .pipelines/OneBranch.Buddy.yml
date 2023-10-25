@@ -22,5 +22,7 @@ extends:
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
         suppressionSet: default
+      sbom:
+        enabled: true
     stages:
       - template: shared-build-stages.yml@self
