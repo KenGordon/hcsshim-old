@@ -334,7 +334,7 @@ func (hve *hcsVMExec) startInternal(ctx context.Context, initializeContainer boo
 				log.G(ctx).WithFields(logrus.Fields{
 					"host_path": m.Source,
 				}).Debug("adding pipe")
-				pm, err := hve.host.AddPipe(ctx, m.Source)
+				pm, err := hve.host.AddPipeMount(ctx, m.Source, m.Destination)
 				if err != nil {
 					return err
 				}

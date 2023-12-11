@@ -10,7 +10,8 @@ import (
 	"github.com/Microsoft/hcsshim/internal/hcs/resourcepaths"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 const pipePrefix = `\\.\pipe\`
@@ -40,6 +41,48 @@ func (uvm *UtilityVM) AddPipe(ctx context.Context, hostPath string) (*PipeMount,
 		return nil, err
 	}
 	return &PipeMount{uvm, hostPath}, nil
+}
+
+func (uvm *UtilityVM) AddPipeMount(ctx context.Context, hostPath, guestPath string) (*PipeMount, error) {
+	src, dst := GetContainerPipeMapping(uvm, specs.Mount{Source: hostPath, Destination: guestPath})
+	gr := guestrequest.ModificationRequest{
+		ResourceType: guestresource.ResourceTypeMappedPipe,
+		RequestType:  guestrequest.RequestTypeAdd,
+		Settings: hcsschema.MappedPipe{
+			HostPath:          src,
+			ContainerPipeName: dst,
+		},
+	}
+	modification := &hcsschema.ModifySettingRequest{
+		RequestType:  guestrequest.RequestTypeAdd,
+		ResourcePath: fmt.Sprintf(resourcepaths.MappedPipeResourceFormat, hostPath),
+		GuestRequest: gr,
+	}
+	if err := uvm.modify(ctx, modification); err != nil {
+		return nil, err
+	}
+	return &PipeMount{uvm, hostPath}, nil
+}
+
+func (uvm *UtilityVM) RemovePipeMount(ctx context.Context, hostPath, guestPath string) error {
+	src, dst := GetContainerPipeMapping(uvm, specs.Mount{Source: hostPath, Destination: guestPath})
+	gr := guestrequest.ModificationRequest{
+		ResourceType: guestresource.ResourceTypeMappedPipe,
+		RequestType:  guestrequest.RequestTypeRemove,
+		Settings: hcsschema.MappedPipe{
+			HostPath:          src,
+			ContainerPipeName: dst,
+		},
+	}
+	modification := &hcsschema.ModifySettingRequest{
+		RequestType:  guestrequest.RequestTypeRemove,
+		ResourcePath: fmt.Sprintf(resourcepaths.MappedPipeResourceFormat, hostPath),
+		GuestRequest: gr,
+	}
+	if err := uvm.modify(ctx, modification); err != nil {
+		return err
+	}
+	return nil
 }
 
 // RemovePipe removes a shared named pipe from the UVM.

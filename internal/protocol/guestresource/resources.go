@@ -15,6 +15,7 @@ import (
 const (
 	// These are constants for v2 schema modify guest requests.
 
+	ResourceTypeMappedPipe guestrequest.ResourceType = "MappedPipe"
 	// ResourceTypeMappedDirectory is the modify resource type for mapped
 	// directories
 	ResourceTypeMappedDirectory guestrequest.ResourceType = "MappedDirectory"
