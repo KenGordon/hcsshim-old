@@ -244,13 +244,7 @@ func Test_Container_UpdateResources_Memory(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			requireFeatures(t, test.requiredFeatures...)
-<<<<<<< HEAD
-			if test.runtimeHandler == wcowHypervisorRuntimeHandler {
-				pullRequiredImages(t, []string{test.sandboxImage})
-			}
-=======
 			pullRequiredImages(t, []string{test.sandboxImage})
->>>>>>> removeInternalTests2
 
 			podRequest := getRunPodSandboxRequest(t, test.runtimeHandler)
 
