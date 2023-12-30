@@ -38,7 +38,6 @@ func Test_Pod_UpdateResources_Memory(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			requireFeatures(t, test.requiredFeatures...)
 			pullRequiredImages(t, []string{test.sandboxImage})
-
 			var startingMemorySize int64 = 768 * memory.MiB
 			podRequest := getRunPodSandboxRequest(
 				t,
