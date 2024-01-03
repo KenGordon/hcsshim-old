@@ -1,0 +1,35 @@
+trigger: none
+
+schedules:
+  - cron: "0 2 * * 2,3,4,5,6" # runs at 7PM PST Mon-Fri
+    displayName: Daily build
+    branches:
+      include:
+        - main
+    always: true
+
+variables:
+  - template: common-variables.yml@self
+
+resources:
+  repositories:
+    - repository: ob-templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+    - repository: cplat
+      type: git
+      name: ContainerPlatform/ContainerPlatform
+      ref: refs/heads/main
+
+extends:
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
+  parameters:
+    globalSdl:
+      suppression:
+        suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
+        suppressionSet: default
+    stages:
+      - template: shared-build-stages.yml@self
+        parameters:
+          Nightly: true
