@@ -7,11 +7,11 @@ require (
 	github.com/Microsoft/hcsshim v0.10.0-rc.8
 	github.com/containerd/cgroups/v3 v3.0.2
 	github.com/containerd/containerd v1.7.0
+	github.com/containerd/errdefs v0.1.0
 	github.com/containerd/go-runc v1.0.0
 	github.com/containerd/ttrpc v1.2.2
 	github.com/google/go-containerregistry v0.17.0
 	github.com/josephspurrier/goversioninfo v1.4.0
-	github.com/kevpar/cri v1.11.1-0.20220302210600-4c5c347230b2
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.0-rc3
 	github.com/opencontainers/runtime-spec v1.1.0
@@ -101,14 +101,10 @@ require (
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/text v0.13.0 // indirect
 	golang.org/x/tools v0.14.0 // indirect
-	google.golang.org/genproto v0.0.0-20230822172742-b8732ec3820d // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20230822172742-b8732ec3820d // indirect
+	google.golang.org/genproto v0.0.0-20230920204549-e6e6cdab5c13 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20231002182017-d307bd883b97 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
-replace (
-	github.com/Microsoft/hcsshim => ../
-	// keep CRI version frozen for cri-containerd tests
-	k8s.io/cri-api => k8s.io/cri-api v0.25.8
-)
+replace github.com/Microsoft/hcsshim => ../

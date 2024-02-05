@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 func Test_Container_Network_Hostname(t *testing.T) {
