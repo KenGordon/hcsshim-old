@@ -21,4 +21,10 @@ const (
 
 	// ExtraVSockPorts adds additional ports to the list of ports that the UVM is allowed to use.
 	ExtraVSockPorts = "io.microsoft.virtualmachine.lcow.extra-vsock-ports"
+
+	// HRMCPUJobName specifies the job name of the HRM CPU job object that the underlying HCS system should be bound to.
+	HRMCPUJobName = "io.microsoft.virtualmachine.hrm.cpu-job-name"
+
+	// HRMMemoryJobName specifies the job name of the HRM memory job object that the underlying HCS system should be bound to.
+	HRMMemoryJobName = "io.microsoft.virtualmachine.hrm.memory-job-name"
 )
