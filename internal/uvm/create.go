@@ -102,6 +102,9 @@ type Options struct {
 
 	// DumpDirectoryPath is the path of the directory inside which all debug dumps etc are stored.
 	DumpDirectoryPath string
+
+	HRMMemoryJobName string
+	HRMCPUJobName    string
 }
 
 // Verifies that the final UVM options are correct and supported.
@@ -178,9 +181,9 @@ func (uvm *UtilityVM) OS() string {
 	return uvm.operatingSystem
 }
 
-func (uvm *UtilityVM) create(ctx context.Context, doc interface{}) error {
+func (uvm *UtilityVM) create(ctx context.Context, doc interface{}, rpOptions *hcs.ResourcePoolOptions) error {
 	uvm.exitCh = make(chan struct{})
-	system, err := hcs.CreateComputeSystem(ctx, uvm.id, doc, nil)
+	system, err := hcs.CreateComputeSystem(ctx, uvm.id, doc, rpOptions)
 	if err != nil {
 		return err
 	}

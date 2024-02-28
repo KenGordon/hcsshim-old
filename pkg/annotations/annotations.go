@@ -307,6 +307,12 @@ const (
 	// DumpDirectoryPath provides a path to the directory in which dumps for a UVM will be collected in
 	// case the UVM crashes.
 	DumpDirectoryPath = "io.microsoft.virtualmachine.dump-directory-path"
+
+	// HRMCPUJobName specifies the job name of the HRM CPU job object that the underlying HCS system should be bound to.
+	HRMCPUJobName = "io.microsoft.virtualmachine.hrm.cpu-job-name"
+
+	// HRMMemoryJobName specifies the job name of the HRM memory job object that the underlying HCS system should be bound to.
+	HRMMemoryJobName = "io.microsoft.virtualmachine.hrm.memory-job-name"
 )
 
 // AnnotationExpansions maps annotations that will be expanded into an array of

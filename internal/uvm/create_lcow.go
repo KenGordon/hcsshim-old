@@ -14,6 +14,7 @@ import (
 
 	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/go-winio/pkg/guid"
+	"github.com/Microsoft/hcsshim/internal/hcs"
 	"github.com/Microsoft/hcsshim/internal/security"
 	"github.com/Microsoft/hcsshim/internal/uvm/scsi"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
@@ -895,7 +896,12 @@ func CreateLCOW(ctx context.Context, opts *OptionsLCOW) (_ *UtilityVM, err error
 		return nil, err
 	}
 
-	if err = uvm.create(ctx, doc); err != nil {
+	rpOptions := &hcs.ResourcePoolOptions{
+		MemoryPoolJobName: opts.HRMMemoryJobName,
+		CPUPoolJobName:    opts.HRMCPUJobName,
+	}
+
+	if err = uvm.create(ctx, doc, rpOptions); err != nil {
 		return nil, fmt.Errorf("error while creating the compute system: %w", err)
 	}
 	log.G(ctx).WithField("uvm", uvm).Trace("create_lcow::CreateLCOW uvm.create result")

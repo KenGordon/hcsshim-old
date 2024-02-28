@@ -244,6 +244,8 @@ func specToUVMCreateOptionsCommon(ctx context.Context, opts *uvm.Options, s *spe
 	opts.ProcessDumpLocation = ParseAnnotationsString(s.Annotations, annotations.ContainerProcessDumpLocation, opts.ProcessDumpLocation)
 	opts.NoWritableFileShares = ParseAnnotationsBool(ctx, s.Annotations, annotations.DisableWritableFileShares, opts.NoWritableFileShares)
 	opts.DumpDirectoryPath = ParseAnnotationsString(s.Annotations, annotations.DumpDirectoryPath, opts.DumpDirectoryPath)
+	opts.HRMMemoryJobName = ParseAnnotationsString(s.Annotations, annotations.HRMMemoryJobName, opts.HRMMemoryJobName)
+	opts.HRMCPUJobName = ParseAnnotationsString(s.Annotations, annotations.HRMCPUJobName, opts.HRMCPUJobName)
 }
 
 // SpecToUVMCreateOpts parses `s` and returns either `*uvm.OptionsLCOW` or
