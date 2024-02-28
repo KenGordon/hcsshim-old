@@ -1,0 +1,18 @@
+#
+# common variables used
+#
+# pipeline needs `cplat` git resource
+
+variables:
+  - template: .pipelines/templates/onebranch/images.yml@cplat
+
+  # override linux container image
+  - name: LinuxContainerImage
+    value: cdpxa0712bf275644e58a9d28a8053e650ba00.azurecr.io/official/containerplatform/linux/golang:ms-1.19.9
+
+  # This needs to be removed when if we ever start building container images from this repository
+  - name: DisableDockerDetector
+    value: true
+
+  - name: DisableGoCliScan
+    value: true

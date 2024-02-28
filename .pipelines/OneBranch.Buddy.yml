@@ -1,0 +1,26 @@
+trigger:
+  - main
+
+variables:
+  - template: common-variables.yml@self
+
+resources:
+  repositories:
+    - repository: ob-templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+    - repository: cplat
+      type: git
+      name: ContainerPlatform/ContainerPlatform
+      ref: refs/heads/main
+
+extends:
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
+  parameters:
+    globalSdl:
+      suppression:
+        suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
+        suppressionSet: default
+    stages:
+      - template: shared-build-stages.yml@self
