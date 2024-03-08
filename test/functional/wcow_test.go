@@ -1,6 +1,5 @@
-//go:build windows && (functional || wcow)
-// +build windows
-// +build functional wcow
+//go:build windows && functional
+// +build windows,functional
 
 package functional
 
@@ -368,7 +367,7 @@ func generateShimLayersStruct(t *testing.T, imageLayers []string) []hcsshim.Laye
 func TestWCOWArgonShim(t *testing.T) {
 	t.Skip("not yet updated")
 
-	requireFeatures(t, featureWCOW)
+	requireFeatures(t, featureWCOW, featureContainer)
 
 	imageLayers := windowsServercoreImageLayers(context.Background(), t)
 
@@ -381,11 +380,16 @@ func TestWCOWArgonShim(t *testing.T) {
 	layers := generateShimLayersStruct(t, imageLayers)
 
 	id := "argon"
-	// This is a cheat but stops us re-writing exactly the same code just for test
-	argonShimLocalMountPath, closer, err := layerspkg.MountWCOWLayers(context.Background(), id, append(imageLayers, argonShimScratchDir), "", nil)
+	wcowLayers, err := layerspkg.ParseWCOWLayers(nil, append(imageLayers, argonShimScratchDir))
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	mountedLayers, closer, err := layerspkg.MountWCOWLayers(context.Background(), id, nil, wcowLayers)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	defer func() {
 		if closer != nil {
 			_ = closer.Release(context.Background())
@@ -394,7 +398,7 @@ func TestWCOWArgonShim(t *testing.T) {
 	argonShim, err := hcsshim.CreateContainer(id, &hcsshim.ContainerConfig{
 		SystemType:      "Container",
 		Name:            "argonShim",
-		VolumePath:      argonShimLocalMountPath,
+		VolumePath:      mountedLayers.RootFS,
 		LayerFolderPath: argonShimScratchDir,
 		Layers:          layers,
 		MappedDirectories: []schema1.MappedDir{
@@ -429,7 +433,7 @@ func TestWCOWArgonShim(t *testing.T) {
 func TestWCOWXenonShim(t *testing.T) {
 	t.Skip("not yet updated")
 
-	requireFeatures(t, featureWCOW)
+	requireFeatures(t, featureWCOW, featureUVM)
 
 	imageLayers := windowsServercoreImageLayers(context.Background(), t)
 
@@ -500,7 +504,7 @@ func generateWCOWOciTestSpec(t *testing.T, imageLayers []string, scratchPath, ho
 func TestWCOWArgonOciV1(t *testing.T) {
 	t.Skip("not yet updated")
 
-	requireFeatures(t, featureWCOW)
+	requireFeatures(t, featureWCOW, featureContainer)
 
 	imageLayers := windowsServercoreImageLayers(context.Background(), t)
 	argonOci1Mounted := false
@@ -548,7 +552,7 @@ func TestWCOWArgonOciV1(t *testing.T) {
 func TestWCOWXenonOciV1(t *testing.T) {
 	t.Skip("not yet updated")
 
-	requireFeatures(t, featureWCOW)
+	requireFeatures(t, featureWCOW, featureUVM)
 
 	imageLayers := windowsServercoreImageLayers(context.Background(), t)
 	xenonOci1Mounted := false
@@ -605,7 +609,7 @@ func TestWCOWArgonOciV2(t *testing.T) {
 	t.Skip("not yet updated")
 
 	require.Build(t, osversion.RS5)
-	requireFeatures(t, featureWCOW)
+	requireFeatures(t, featureWCOW, featureContainer)
 
 	imageLayers := windowsServercoreImageLayers(context.Background(), t)
 	argonOci2Mounted := false
@@ -655,7 +659,7 @@ func TestWCOWXenonOciV2(t *testing.T) {
 	t.Skip("not yet updated")
 
 	require.Build(t, osversion.RS5)
-	requireFeatures(t, featureWCOW)
+	requireFeatures(t, featureWCOW, featureUVM)
 
 	imageLayers := windowsServercoreImageLayers(context.Background(), t)
 	xenonOci2Mounted := false
@@ -692,7 +696,10 @@ func TestWCOWXenonOciV2(t *testing.T) {
 	}
 
 	xenonOciOpts := uvm.NewDefaultOptionsWCOW(xenonOci2UVMId, "")
-	xenonOciOpts.LayerFolders = append(imageLayers, xenonOci2UVMScratchDir)
+	xenonOciOpts.BootFiles, err = layerspkg.ParseWCOWUVMBootFilesFromLayers(context.Background(), nil, append(imageLayers, xenonOci2UVMScratchDir))
+	if err != nil {
+		t.Fatalf("Failed to parse UVM boot files: %s", err)
+	}
 	xenonOci2UVM, err = uvm.CreateWCOW(context.Background(), xenonOciOpts)
 	if err != nil {
 		t.Fatalf("Failed create UVM: %s", err)
