@@ -150,6 +150,15 @@ stages:
               make clean
               make out/delta-dev.tar.gz GO_BUILD_TAGS=rego
               cp out/delta-dev.tar.gz $OUT_DIR/delta-dev-rego.tar.gz
+
+              # cleanup and rebuild with rego enforcer support for SNP
+              # hack (maksiman): SNP kernel init scripts under boot/ are not setting default policy stance
+              # to deny, so we need to append that parameter here.
+              awk '/^\/init/{$0 = $0 " -initial-policy-stance deny"} 1' boot/startup.sh > boot/startup.sh.new
+              mv boot/startup.sh.new boot/startup.sh
+              make clean
+              make out/delta-snp.tar.gz GO_BUILD_TAGS=rego
+              cp out/delta-snp.tar.gz $OUT_DIR
             env:
               GOPROXY: off
               GOFLAGS: -mod=vendor
