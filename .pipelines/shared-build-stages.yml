@@ -130,8 +130,8 @@ stages:
                 nodenetsvc/v1/nodenetsvc.proto
               targetFolder: "$(Build.StagingDirectory)/out"
             displayName: Copy nodenetsvc api files
-
-          - bash: |
+            
+          - bash: | 
               set -eoux
 
               apt-get update
@@ -141,14 +141,14 @@ stages:
           - script: |
               set -eoux
 
-              make out/delta-dev.tar.gz # First make the linux gcs bits
+              make out/delta-dev.tar.gz CC=musl-gcc # First make the linux gcs bits
               cp out/delta.tar.gz $OUT_DIR
               cp out/delta-dev.tar.gz $OUT_DIR
               cp hack/catcpio.sh $OUT_DIR
 
               # cleanup and rebuild with rego enforcer support
               make clean
-              make out/delta-dev.tar.gz GO_BUILD_TAGS=rego
+              make out/delta-dev.tar.gz CC=musl-gcc GO_BUILD_TAGS=rego
               cp out/delta-dev.tar.gz $OUT_DIR/delta-dev-rego.tar.gz
 
               # cleanup and rebuild with rego enforcer support for SNP
