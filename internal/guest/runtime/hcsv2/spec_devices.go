@@ -42,11 +42,13 @@ func addAssignedDevice(ctx context.Context, spec *oci.Spec) error {
 			// validate that the device is available
 			fullPCIPath, err := pci.FindDeviceFullPath(ctx, d.ID)
 			if err != nil {
+				log.G(ctx).WithField("d.ID", d.ID).Debug("addAssignedDevice - silent fail")
 				return errors.Wrapf(err, "failed to find device pci path for device %v", d)
 			}
 			// find the device nodes that link to the pci path we just got
 			devs, err := devicePathsFromPCIPath(ctx, fullPCIPath)
 			if err != nil {
+				log.G(ctx).WithField("d.ID", d.ID).Debug("addAssignedDevice - silent fail - 2")
 				return errors.Wrapf(err, "failed to find dev node for device %v", d)
 			}
 			for _, dev := range devs {
@@ -64,12 +66,14 @@ func devicePathsFromPCIPath(ctx context.Context, pciPath string) ([]*devices.Dev
 	// get the full pci path to make sure that it's the final path
 	pciFullPath, err := filepath.EvalSymlinks(pciPath)
 	if err != nil {
+		log.G(ctx).WithField("pciPath", pciPath).Debug("devicePathsFromPCIPath - silent fail - 0")
 		return nil, err
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.G(ctx).WithField("pciPath", pciPath).Debug("devicePathsFromPCIPath - silent fail")
 			return nil, fmt.Errorf("find the device nodes for sysfs pci path cancelled: %w", ctx.Err())
 		default:
 		}
@@ -123,6 +127,7 @@ func devicePathsFromPCIPath(ctx context.Context, pciPath string) ([]*devices.Dev
 		// Best we can do is retry until we get results. However, it's still possible we
 		// will miss some /dev nodes since we don't know ahead of time how many to expect.
 		// TODO(katiewasnothere): find a better way to make sure we find all the nodes.
+		
 		time.Sleep(time.Millisecond * 500)
 	}
 }

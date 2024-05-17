@@ -444,7 +444,7 @@ func makeLCOWVMGSDoc(ctx context.Context, opts *OptionsLCOW, uvm *UtilityVM) (_ 
 	//		entropyVsockPort - 1 is the entropy port,
 	//		linuxLogVsockPort - 109 used by vsockexec to log stdout/stderr logging,
 	//		0x40000000 + 1 (LinuxGcsVsockPort + 1) is the bridge (see guestconnectiuon.go)
-	hvSockets := []uint32{entropyVsockPort, linuxLogVsockPort, gcs.LinuxGcsVsockPort, gcs.LinuxGcsVsockPort + 1}
+	hvSockets := []uint32{entropyVsockPort, linuxLogVsockPort, gcs.LinuxGcsVsockPort, gcs.LinuxGcsVsockPort + 1, 2056, 2057}
 	hvSockets = append(hvSockets, opts.ExtraVSockPorts...)
 	for _, whichSocket := range hvSockets {
 		key := winio.VsockServiceID(whichSocket).String()
@@ -466,32 +466,36 @@ func makeLCOWVMGSDoc(ctx context.Context, opts *OptionsLCOW, uvm *UtilityVM) (_ 
 	if uvm.scsiControllerCount > 0 {
 		logrus.Debug("makeLCOWVMGSDoc configuring scsi devices")
 		doc.VirtualMachine.Devices.Scsi = map[string]hcsschema.Scsi{}
-		if opts.DmVerityMode {
-			logrus.Debug("makeLCOWVMGSDoc DmVerityMode true")
-			doc.VirtualMachine.Devices.Scsi = map[string]hcsschema.Scsi{
-				"RootFileSystemVirtualDisk": {
-					Attachments: map[string]hcsschema.Attachment{
-						"0": {
-							Type_:    "VirtualDisk",
-							Path:     dmVerityRootFsFullPath,
-							ReadOnly: true,
-						},
-						"1": {
-							Type_:    "VirtualDisk",
-							Path:     dmVerityHashFullPath,
-							ReadOnly: true,
+		for i := 0; i < int(uvm.scsiControllerCount); i++ {
+			// add our rootfs and hash vhd files to the first controller
+			if opts.DmVerityMode && i == 0 {
+				logrus.Debug("makeLCOWVMGSDoc DmVerityMode true")
+				guid0 := guestrequest.ScsiControllerGuids[0]
+				doc.VirtualMachine.Devices.Scsi = map[string]hcsschema.Scsi{
+					guid0: {
+						Attachments: map[string]hcsschema.Attachment{
+							"0": {
+								Type_:    "VirtualDisk",
+								Path:     dmVerityRootFsFullPath,
+								ReadOnly: true,
+							},
+							"1": {
+								Type_:    "VirtualDisk",
+								Path:     dmVerityHashFullPath,
+								ReadOnly: true,
+							},
 						},
 					},
-				},
+				}
+				uvm.reservedSCSISlots = append(uvm.reservedSCSISlots, scsi.Slot{Controller: 0, LUN: 0})
+				uvm.reservedSCSISlots = append(uvm.reservedSCSISlots, scsi.Slot{Controller: 0, LUN: 1})
+			} else {
+				doc.VirtualMachine.Devices.Scsi[guestrequest.ScsiControllerGuids[i]] = hcsschema.Scsi{
+					Attachments: make(map[string]hcsschema.Attachment),
+				}
 			}
-			uvm.reservedSCSISlots = append(uvm.reservedSCSISlots, scsi.Slot{Controller: 0, LUN: 0})
-			uvm.reservedSCSISlots = append(uvm.reservedSCSISlots, scsi.Slot{Controller: 0, LUN: 1})
 		}
-		for i := 0; i < int(uvm.scsiControllerCount); i++ {
-			doc.VirtualMachine.Devices.Scsi[guestrequest.ScsiControllerGuids[i]] = hcsschema.Scsi{
-				Attachments: make(map[string]hcsschema.Attachment),
-			}
-		}
+
 	}
 
 	// Required by HCS for the isolated boot scheme, see also https://docs.microsoft.com/en-us/windows-server/virtualization/hyper-v/learn-more/generation-2-virtual-machine-security-settings-for-hyper-v

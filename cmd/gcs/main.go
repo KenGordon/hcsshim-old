@@ -19,6 +19,7 @@ import (
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/writer"
 	"go.opencensus.io/trace"
 
 	"github.com/Microsoft/hcsshim/internal/guest/bridge"
@@ -241,7 +242,8 @@ func main() {
 		logrus.SetOutput(logWriter)
 	case "deny":
 		initialEnforcer = &securitypolicy.ClosedDoorSecurityPolicyEnforcer{}
-		logrus.SetOutput(io.Discard)
+		// logrus.SetOutput(io.Discard)
+		logrus.SetOutput(logWriter)
 	default:
 		logrus.WithFields(logrus.Fields{
 			"initial-policy-stance": *initialPolicyStance,
@@ -265,6 +267,19 @@ func main() {
 	if err != nil {
 		logrus.Fatal(err)
 	}
+
+	// force logging to stdout so I can see it over vsock 2056
+	logrus.AddHook(&writer.Hook{ // Send info and debug logs to stdout
+		Writer: os.Stdout,
+		LogLevels: []logrus.Level{
+			logrus.InfoLevel,
+			logrus.DebugLevel,
+			logrus.TraceLevel,
+			logrus.FatalLevel,
+			logrus.ErrorLevel,
+			logrus.WarnLevel,
+		},
+	})
 
 	logrus.SetLevel(level)
 

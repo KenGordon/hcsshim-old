@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"time"
+	"github.com/Microsoft/hcsshim/internal/log"
 
 	"github.com/pkg/errors"
 )
@@ -26,12 +27,14 @@ func WaitForFileMatchingPattern(ctx context.Context, pattern string) (string, er
 		if len(files) == 0 {
 			select {
 			case <-ctx.Done():
+				log.G(ctx).WithField("pattern", pattern).Debug("WaitForFileMatchingPattern - silent fail")
 				return "", errors.Wrapf(ctx.Err(), "timed out waiting for file matching pattern %s to exist", pattern)
 			default:
 				time.Sleep(time.Millisecond * 10)
 				continue
 			}
 		} else if len(files) > 1 {
+			log.G(ctx).WithField("files", files).Debug("WaitForFileMatchingPattern - silent fail - 2")
 			return "", fmt.Errorf("more than one file could exist for pattern \"%s\"", pattern)
 		}
 		return files[0], nil

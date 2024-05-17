@@ -13,7 +13,7 @@ GO_FLAGS_EXTRA:=
 ifeq "$(GOMODVENDOR)" "1"
 GO_FLAGS_EXTRA += -mod=vendor
 endif
-GO_BUILD_TAGS:=
+GO_BUILD_TAGS:=rego
 ifneq ($(strip $(GO_BUILD_TAGS)),)
 GO_FLAGS_EXTRA += -tags="$(GO_BUILD_TAGS)"
 endif
@@ -46,7 +46,7 @@ IGVM_TOOL:=
 KERNEL_PATH:=
 TAR2EXT4_TOOL:=bin/cmd/tar2ext4
 
-.PHONY: all always rootfs test snp simple
+.PHONY: all always rootfs test snp simple combined
 
 .DEFAULT_GOAL := all
 
@@ -77,6 +77,9 @@ snp: Makefile.bootfiles $(DELTA_TARGET) $(TAR2EXT4_TOOL)
 
 simple: Makefile.bootfiles $(DELTA_TARGET) $(TAR2EXT4_TOOL)
 	make -f Makefile.bootfiles $(BOOTFILE_MAKEFILE_PARAMS) simple
+	
+combined: Makefile.bootfiles $(DELTA_TARGET) $(TAR2EXT4_TOOL)
+	make -f Makefile.bootfiles $(BOOTFILE_MAKEFILE_PARAMS) combined
 
 # This target includes utilities which may be useful for testing purposes.
 out/delta-dev.tar.gz: out/delta.tar.gz bin/internal/tools/snp-report

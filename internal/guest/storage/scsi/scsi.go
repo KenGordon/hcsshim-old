@@ -131,6 +131,9 @@ func Mount(
 	readonly bool,
 	options []string,
 	config *Config) (err error) {
+
+	log.G(ctx).Debug("scsi::Mount top")
+
 	spnCtx, span := oc.StartSpan(ctx, "scsi::Mount")
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
@@ -143,34 +146,47 @@ func Mount(
 
 	source, err := getDevicePath(spnCtx, controller, lun, partition)
 	if err != nil {
+		log.G(ctx).WithError(err).Debug("scsi::Mount getDevicePath failed")
 		return err
 	}
+
+	log.G(ctx).Debug("scsi::Mount second")
 
 	if readonly {
 		if config.VerityInfo != nil {
 			deviceHash := config.VerityInfo.RootDigest
 			dmVerityName := fmt.Sprintf(verityDeviceFmt, controller, lun, partition, deviceHash)
 			if source, err = createVerityTarget(spnCtx, source, dmVerityName, config.VerityInfo); err != nil {
+				log.G(ctx).WithError(err).Debug("scsi::Mount createVerityTarget failed")
 				return err
 			}
 			defer func() {
 				if err != nil {
+					log.G(ctx).WithError(err).Debug("scsi::Mount readonly defered cleanup called for err")
 					if err := removeDevice(dmVerityName); err != nil {
 						log.G(spnCtx).WithError(err).WithField("verityTarget", dmVerityName).Debug("failed to cleanup verity target")
 					}
+				} else {
+					log.G(ctx).Debug("scsi::Mount readonly defered cleanup called for success")
 				}
 			}()
 		}
 	}
 
+	log.G(ctx).Debug("scsi::Mount third")
+
 	if err := osMkdirAll(target, 0700); err != nil {
+		log.G(ctx).WithError(err).WithField("target", target).Debug("scsi::Mount osMkdirAll failed")
 		return err
 	}
 	defer func() {
 		if err != nil {
+			log.G(ctx).WithError(err).Debug("scsi::Mount fourth defered cleanup called for err")
 			_ = osRemoveAll(target)
 		}
 	}()
+
+	log.G(ctx).Debug("scsi::Mount fourth")
 
 	// we only care about readonly mount option when mounting the device
 	var flags uintptr
@@ -182,9 +198,11 @@ func Mount(
 
 	var deviceFS string
 	if config.Encrypted {
+		log.G(ctx).Debug("scsi::Mount config.Encrypted")
 		cryptDeviceName := fmt.Sprintf(cryptDeviceFmt, controller, lun, partition)
 		encryptedSource, err := encryptDevice(spnCtx, source, cryptDeviceName)
 		if err != nil {
+			log.G(ctx).WithField("cryptDeviceName", cryptDeviceName).Debug("scratch mount - sleep path")
 			// todo (maksiman): add better retry logic, similar to how SCSI device mounts are
 			// retried on unix.ENOENT and unix.ENXIO. The retry should probably be on an
 			// error message rather than actual error, because we shell-out to cryptsetup.
@@ -195,6 +213,7 @@ func Mount(
 		}
 		source = encryptedSource
 	} else {
+		log.G(ctx).Debug("scsi::Mount !config.Encrypted")
 		// Get the filesystem that is already on the device (if any) and use that
 		// as the mountType unless `Filesystem` was given.
 		deviceFS, err = _getDeviceFsType(source)
@@ -218,45 +237,58 @@ func Mount(
 		mountType = config.Filesystem
 	}
 
+	log.G(ctx).Debug("scsi::Mount fifth")
+
 	// if EnsureFilesystem is set, then we need to check if the device has the
 	// correct filesystem configured on it. If it does not, format the device
 	// with the corect filesystem. Right now, we only support formatting ext4
 	// and xfs.
 	if config.EnsureFilesystem {
+		log.G(ctx).Debug("scsi::Mount config.EnsureFilesystem")
 		// compare the actual fs found on the device to the filesystem requested
 		if deviceFS != config.Filesystem {
 			// re-format device to the correct fs
 			switch config.Filesystem {
 			case "ext4":
 				if err := ext4Format(ctx, source); err != nil {
+					log.G(ctx).WithError(err).Debug("ext4 format failed")
 					return fmt.Errorf("ext4 format: %w", err)
 				}
 			case "xfs":
 				if err = xfsFormat(source); err != nil {
+					log.G(ctx).WithError(err).Debug("xfs format failed")
 					return fmt.Errorf("xfs format: %w", err)
 				}
 			default:
+				log.G(ctx).Debugf("unsupported filesystem %s requested for device", config.Filesystem)
 				return fmt.Errorf("unsupported filesystem %s requested for device", config.Filesystem)
 			}
 		}
 	}
 
+	log.G(ctx).Debug("scsi::Mount sixth")
+
 	// device should already be present under /dev, so we should not get an error
 	// unless the command has actually errored out
 	if err := unixMount(source, target, mountType, flags, data); err != nil {
+		log.G(ctx).Errorf("mounting: %w", err)
 		return fmt.Errorf("mounting: %w", err)
 	}
+
+	log.G(ctx).Debug("scsi::Mount seventh")
 
 	// remount the target to account for propagation flags
 	_, pgFlags, _ := storage.ParseMountOptions(options)
 	if len(pgFlags) != 0 {
 		for _, pg := range pgFlags {
 			if err := unixMount(target, target, "", pg, ""); err != nil {
+				log.G(ctx).WithField("target", target).Errorf("unixMount: %w", err)
 				return err
 			}
 		}
 	}
 
+	log.G(ctx).Debug("scsi::Mount bottom")
 	return nil
 }
 
@@ -321,28 +353,37 @@ func GetDevicePath(ctx context.Context, controller, lun uint8, partition uint64)
 	// Devices matching the given SCSI code should each have a subdirectory
 	// under /sys/bus/scsi/devices/<scsiID>/block.
 	blockPath := filepath.Join(scsiDevicesPath, scsiID, "block")
+
+	log.G(ctx).WithField("blockPath", blockPath).Debug("looking for device at blockPath")
 	var deviceNames []os.DirEntry
 	for {
 		deviceNames, err = osReadDir(blockPath)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.G(ctx).WithField("blockPath", blockPath).Debug("silent fail 1")
 			return "", err
 		}
 		if len(deviceNames) == 0 {
 			select {
 			case <-ctx.Done():
+				log.G(ctx).WithField("blockPath", blockPath).Debug("silent fail 2 - ctx.Done exit")
 				return "", ctx.Err()
 			default:
-				time.Sleep(time.Millisecond * 10)
+				log.G(ctx).WithField("blockPath", blockPath).Debug("sleep loop")
+				time.Sleep(time.Millisecond * 50)
 				continue
 			}
 		}
+		log.G(ctx).WithField("blockPath", blockPath).Debug("found at least device path - breaking")
 		break
 	}
 
 	if len(deviceNames) > 1 {
+		log.G(ctx).WithField("scsiID", scsiID).Debug("too many matches")
 		return "", errors.Errorf("more than one block device could match SCSI ID \"%s\"", scsiID)
 	}
 	deviceName := deviceNames[0].Name()
+	
+	log.G(ctx).WithField("deviceName", deviceName).Debug("found exactly one device path")
 
 	// devices that have partitions have a subdirectory under
 	// /sys/bus/scsi/devices/<scsiID>/block/<deviceName> for each partition.
@@ -351,30 +392,37 @@ func GetDevicePath(ctx context.Context, controller, lun uint8, partition uint64)
 	if partition != 0 {
 		partitionName := fmt.Sprintf("%s%d", deviceName, partition)
 		partitionPath := filepath.Join(blockPath, deviceName, partitionName)
+		
+		log.G(ctx).WithField("partitionPath", partitionPath).Debug("entered partition logic")
 
 		// Wait for the device partition to show up
 		for {
 			fi, err := osStat(partitionPath)
 			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				log.G(ctx).WithField("devicePath", partitionPath).Debug("partition - silent fail")
 				return "", err
 			} else if fi == nil {
 				// if the fileinfo is nil that means we didn't find the device, keep
 				// trying until the context is done or the device path shows up
 				select {
 				case <-ctx.Done():
+					log.G(ctx).Warnf("partition - context timed out while retrying to find device %s: %v", partitionPath, err)
+					log.G(ctx).WithField("partitionPath", partitionPath).Debug("found device path - ctx.Done exit")
 					return "", ctx.Err()
 				default:
-					time.Sleep(time.Millisecond * 10)
+					log.G(ctx).WithField("partitionPath", partitionPath).Debug("found device path - sleep loop")
+					time.Sleep(time.Millisecond * 50)
 					continue
 				}
 			}
 			break
 		}
+		log.G(ctx).WithField("partitionName", partitionName).Debug("partition found device path - success")
 		deviceName = partitionName
 	}
 
 	devicePath := filepath.Join("/dev", deviceName)
-	log.G(ctx).WithField("devicePath", devicePath).Debug("found device path")
+	log.G(ctx).WithField("devicePath", devicePath).Debug("found device path - ok, made it, now looking in /dev")
 
 	// devicePath can take some time before its actually available under
 	// `/dev/sd*`. Retry while we wait for it to show up.
@@ -384,17 +432,21 @@ func GetDevicePath(ctx context.Context, controller, lun uint8, partition uint64)
 				select {
 				case <-ctx.Done():
 					log.G(ctx).Warnf("context timed out while retrying to find device %s: %v", devicePath, err)
+					log.G(ctx).WithField("devicePath", devicePath).Debug("found device path - ctx.Done exit")
 					return "", err
 				default:
-					time.Sleep(10 * time.Millisecond)
+					log.G(ctx).WithField("devicePath", devicePath).Debug("found device path - sleep loop")
+					time.Sleep(50 * time.Millisecond)
 					continue
 				}
 			}
+			log.G(ctx).WithField("devicePath", devicePath).Debug("found device path - silent fail")
 			return "", err
 		}
 		break
 	}
 
+	log.G(ctx).WithField("devicePath", devicePath).Debug("found device path - success")
 	return devicePath, nil
 }
 
