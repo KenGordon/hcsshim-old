@@ -118,8 +118,8 @@ out/v2056.bin: out/rootfs.vhd out/rootfs.hash.vhd $(PATH_PREFIX)/$(KERNEL_PATH) 
 #			ignore_corruption
 
 
-# combined typical 
-# dmverity,,,ro,0 196744 verity 1 /dev/sda /dev/sda 4096 4096 24593 24593 sha256 f090c0bd9a766e4f3cc489a6efb45d211531b304fa1bd951a853868507e0f792 35ad53730a6a47896143f81233c151ad2b87b885eb31e2f1b903464288ad3676 1 ignore_corruption"
+# combined typical (not bigger count of sectors for the whole device)
+# dmverity,,,ro,0 199672 verity 1 /dev/sda /dev/sda 4096 4096 24959 24959 sha256 4aa6e79866ee946ddbd9cddd6554bc6449272942fcc65934326817785a3bd374 adc4956274489c936395bab046a2d476f21ef436e571ba53da2fdf3aee59bf0a
 
 # it transpires that the /dev/sd* order is not deterministic wrt the scsi device order. Thus build a single userland fs + merkle tree device
 # and boot that
