@@ -977,10 +977,12 @@ func modifyMappedVirtualDisk(
 		if len(securityPolicy.EncodedSecurityPolicy()) > 0 {
 			devPath, err := scsi.GetDevicePath(ctx, mvd.Controller, mvd.Lun, mvd.Partition)
 			if err != nil {
+				log.G(ctx).Debugf("GetDevicePath failed %w", err)
 				return err
 			}
 			verityInfo, err = verity.ReadVeritySuperBlock(ctx, devPath)
 			if err != nil {
+				log.G(ctx).Debugf("ReadVeritySuperBlock failed %w", err)
 				return err
 			}
 		}

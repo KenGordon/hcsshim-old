@@ -33,6 +33,9 @@ func (t *VsockTransport) Dial(port uint32) (Connection, error) {
 	for i := 0; i < 10; i++ {
 		conn, err := vsock.Dial(vsock.CIDHost, port)
 		if err == nil {
+			logrus.WithFields(logrus.Fields{
+				"port": port,
+			}).Info("opengcs::VsockTransport::Dial - worked")
 			return conn, nil
 		}
 		// If the error was ETIMEDOUT retry, otherwise fail.
